@@ -3,4 +3,6 @@
 ./zones.json
 __pycache__/
 .pytest_cache/
-.claude/
+.claude/*
+# but check in shared skills (project-scope SKILL.md files etc.)
+!.claude/skills/

@@ -22,15 +22,18 @@ _This add-on allows you to create a polygonal zones from a list of entities._
 
 ## Releasing
 
-For version-bump PRs, use the helper script — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go:
+For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. This eliminates the gap where a merged version bump might reach HA users before the matching images exist on GHCR.
+
+**From a Claude Code session in this repo:** `/release-merge <pr-number>` (project-scope skill at `.claude/skills/release-merge/`). The skill runs a dry-run, asks you to confirm, then runs for real.
+
+**From a shell:**
 
 ```sh
-scripts/release-merge.sh <pr-number>
+scripts/release-merge.sh <pr-number>             # for real
+scripts/release-merge.sh --dry-run <pr-number>   # preview only
 ```
 
-This eliminates the gap where a merged version bump might reach HA users before the matching images exist on GHCR.
-
-For PRs that don't bump the version, the same script just squash-merges (no tag, no release).
+The script auto-resumes if the PR is already merged (e.g. after a transient failure mid-watch). For PRs that don't bump the version, it just squash-merges (no tag, no release).
 
 ### Manual fallback
 
