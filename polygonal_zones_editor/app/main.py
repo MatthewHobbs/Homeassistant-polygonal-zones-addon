@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, FileResponse, PlainTextResponse, HTMLResponse
 from starlette.routing import Route
 
-from helpers import init_logging, allow_request, allow_all_ips, load_options, get_file_list
+from helpers import init_logging, allow_request, allow_all_ips, load_options, get_file_list, atomic_write_json
 from const import DATA_FOLDER, ZONES_FILE
 
 _LOGGER = init_logging()
@@ -73,9 +73,8 @@ def save_zones_generator(options: dict):
             return PlainTextResponse('not allowed', status_code=403)
 
         geo_json = await request.json()
-        with open(ZONES_FILE, 'w') as f:
-            json.dump(geo_json, f)
-            _LOGGER.info("Saved zones.json")
+        atomic_write_json(ZONES_FILE, geo_json)
+        _LOGGER.info("Saved zones.json")
 
         return JSONResponse({'status': 'ok'})
 
