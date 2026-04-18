@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 — 2026-04-18
+
+- Run as root again. The non-root `app` user introduced in 0.2.0 could not read the Supervisor-mounted `/data/options.json`, so 0.2.1 failed to start with `PermissionError`. Proper privilege drop needs an s6 init script that chowns `/data` first; tracked in #14.
+
 ## 0.2.1 — 2026-04-18
 
 - Add `build.yaml` mapping each architecture to its Home Assistant base image. 0.2.0 failed to build under the Supervisor because `BUILD_FROM` was empty.

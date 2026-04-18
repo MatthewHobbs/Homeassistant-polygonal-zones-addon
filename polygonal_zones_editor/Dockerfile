@@ -13,14 +13,12 @@ RUN apk add --no-cache python3 py3-pip \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-RUN addgroup -S app && adduser -S -G app -u 1001 app \
- && mkdir -p /data/polygonal_zones \
- && chown -R app:app /data /app
-
 WORKDIR /app
-COPY --chown=app:app app /app
+COPY app /app
 
-USER app
+# HA addons run as root by Supervisor convention: /data/options.json is
+# mounted root-owned and the addon user must be able to read it. Dropping
+# privileges needs an s6 init script that chowns /data first; see #14.
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
