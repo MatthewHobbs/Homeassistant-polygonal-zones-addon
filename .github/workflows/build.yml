@@ -140,6 +140,59 @@ jobs:
           fi
           echo "OK web service runs as uid $WEB_UID (non-root)"
 
+      # Headless-browser smoke: load index.html, ensure no JS errors and that
+      # the zone we POSTed above actually renders. Catches client-side
+      # regressions that endpoint-only probing misses (e.g. the 0.2.6 ->
+      # 0.2.8 module-scope bug where /zones.json returned 200 but the page
+      # showed "Failed to load zones" because of a JS ReferenceError).
+      - name: Frontend smoke (Playwright)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet playwright
+          python3 -m playwright install --with-deps chromium >/dev/null
+
+          python3 - <<'PY'
+          import asyncio, sys
+          from playwright.async_api import async_playwright
+
+          async def main():
+              errors = []
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page()
+                  page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+                  page.on("console", lambda m: m.type == "error" and errors.append(f"console.error: {m.text}"))
+                  await page.goto("http://127.0.0.1:8000/", wait_until="networkidle")
+
+                  body = (await page.locator("body").text_content()) or ""
+                  if "Failed to load zones" in body:
+                      print("FAIL page shows 'Failed to load zones'")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # The smoke step POSTed one feature named 'smoke'; it must
+                  # appear in the sidebar zone list as a <zone-entry>.
+                  count = await page.locator("zone-entry").count()
+                  if count < 1:
+                      print(f"FAIL no <zone-entry> rendered (got {count})")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  if errors:
+                      print("FAIL JS errors during page load:")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  print(f"OK page loaded clean, {count} zone-entry rendered")
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+
+      - name: Container logs and cleanup
+        if: matrix.arch == 'amd64' && always()
+        run: |
           echo "--- container logs ---"
-          docker logs smoke
-          docker stop smoke >/dev/null
+          docker logs smoke || true
+          docker stop smoke >/dev/null 2>&1 || true
