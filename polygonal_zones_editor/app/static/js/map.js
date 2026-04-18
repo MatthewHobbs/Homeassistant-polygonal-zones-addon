@@ -1,6 +1,10 @@
-// Fetch the runtime config first so ZONE_COLOUR is set before we render any
-// existing zones (L.geoJSON style option needs it) and before we wire the
-// draw control. Falls back to 'green' if /config.json is unreachable.
+// Module-scope handles so render_zone_list / save_zones / load_bulk_json /
+// edit_zone_event can reference them via closure regardless of when
+// generate_map runs. Assigned once /config.json comes back (we need
+// ZONE_COLOUR set before any zones render).
+let map;
+let editableLayers;
+
 fetch('./config.json')
     .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
     .catch(err => {
@@ -9,7 +13,7 @@ fetch('./config.json')
     })
     .then(cfg => {
         window.ZONE_COLOUR = cfg.zone_colour || 'green';
-        const {map, editableLayers} = generate_map('./zones.json');
+        ({map, editableLayers} = generate_map('./zones.json'));
         setup_editing(map, editableLayers);
     });
 

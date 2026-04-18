@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.8 — 2026-04-18
+
+- **Bug fix**: zones failed to load with "Failed to load zones — check the log" after upgrading to 0.2.6. The /config.json refactor accidentally moved the `map` and `editableLayers` handles into a callback scope, so other functions (`render_zone_list`, `save_zones`, etc.) couldn't see them and threw `ReferenceError`. They are now declared at module scope and assigned once /config.json returns. The CI smoke test only boots the server — it doesn't load the page in a browser — so this slipped through.
+
 ## 0.2.7 — 2026-04-18
 
 - Existing zones loaded from `zones.json` are now drawn in the configured `zone_colour` instead of Leaflet's default blue. Newly drawn zones already used the correct colour; this brings the persisted zones into line.
