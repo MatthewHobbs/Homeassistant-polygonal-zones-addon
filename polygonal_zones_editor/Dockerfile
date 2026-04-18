@@ -29,6 +29,11 @@ RUN chmod +x /etc/cont-init.d/00-fix-perms \
              /etc/services.d/web/run \
              /etc/services.d/web/finish
 
+# Build-time sanity: the non-root user and s6-setuidgid must both be in
+# place, otherwise the image ships broken and the runtime fallback to root
+# would silently kick in on every user.
+RUN id app >/dev/null && command -v s6-setuidgid >/dev/null
+
 # No USER directive — s6 must start as root to fix /data permissions;
 # the web service itself runs as 'app'.
 

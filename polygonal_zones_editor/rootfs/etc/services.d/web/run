@@ -1,6 +1,26 @@
 #!/usr/bin/with-contenv bashio
-# Launch the addon web service as the unprivileged 'app' user. s6-overlay
-# starts this after cont-init.d has chowned /data.
+# Launch the addon web service. Prefer dropping to the unprivileged 'app'
+# user via s6-setuidgid; fall back to running as root with a loud warning
+# if the wiring isn't available, so the service never fails to start for
+# privilege-drop reasons alone.
 
 cd /app
+
+if ! command -v s6-setuidgid >/dev/null 2>&1; then
+    bashio::log.warning "s6-setuidgid not found; running as root"
+    exec python main.py
+fi
+
+if ! id app >/dev/null 2>&1; then
+    bashio::log.warning "'app' user not found; running as root"
+    exec python main.py
+fi
+
+# Verify the app user can actually read options.json; if not, running as
+# root is preferable to a startup crash.
+if [ -f /data/options.json ] && ! s6-setuidgid app sh -c 'test -r /data/options.json'; then
+    bashio::log.warning "options.json not readable by 'app'; running as root"
+    exec python main.py
+fi
+
 exec s6-setuidgid app python main.py
