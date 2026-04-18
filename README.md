@@ -22,7 +22,19 @@ _This add-on allows you to create a polygonal zones from a list of entities._
 
 ## Releasing
 
-Releases are cut by pushing a `vX.Y.Z` git tag whose version matches the current `polygonal_zones_editor/config.yaml`:
+For version-bump PRs, use the helper script — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go:
+
+```sh
+scripts/release-merge.sh <pr-number>
+```
+
+This eliminates the gap where a merged version bump might reach HA users before the matching images exist on GHCR.
+
+For PRs that don't bump the version, the same script just squash-merges (no tag, no release).
+
+### Manual fallback
+
+If you'd rather drive it by hand, push a `vX.Y.Z` git tag whose version matches the current `polygonal_zones_editor/config.yaml`:
 
 ```sh
 git tag v0.2.12
