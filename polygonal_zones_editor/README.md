@@ -3,7 +3,7 @@
 This add-on allows you to create and manage polygonal zones within Home Assistant. These zones can then be used for
 automations based on location.
 
-[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMichelGerding%2FHomeassistant-polygonal-zones-addon.git)
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMatthewHobbs%2FHomeassistant-polygonal-zones-addon.git)
 
 ## Installation
 
@@ -17,7 +17,7 @@ automations based on location.
 2. Alternatively, manually add the following repository URL to your Home Assistant Supervisor add-on store:
 
 ```
-https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon.git
+https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon.git
 ```
 
 ### Installing the Add-on:
