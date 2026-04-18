@@ -12,6 +12,20 @@ from const import ALLOWED_IPS, OPTIONS_FILE
 _LOGGER = logging.getLogger(__name__)
 
 
+_VALID_LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
+
+
+def resolve_log_level(value) -> int:
+    """Map a string log level (case-insensitive) to a ``logging`` constant.
+
+    Unknown or non-string values fall back to ``logging.INFO`` rather than
+    raising, so a typo'd ``log_level`` option doesn't crash the addon.
+    """
+    if isinstance(value, str) and value.lower() in _VALID_LOG_LEVELS:
+        return getattr(logging, value.upper())
+    return logging.INFO
+
+
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure the root logger once.
 
@@ -23,6 +37,10 @@ def configure_logging(level: int = logging.INFO) -> None:
         format="[%(levelname)s: %(asctime)s]: %(message)s",
         stream=sys.stdout,
     )
+    # basicConfig is a no-op when handlers already exist, so set the level
+    # explicitly to honour later calls (e.g. when options come in after a
+    # default setup).
+    logging.getLogger().setLevel(level)
 
 
 def allow_all_ips(options: dict) -> bool:

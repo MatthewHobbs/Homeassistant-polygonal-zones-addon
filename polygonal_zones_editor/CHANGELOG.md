@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.7 — 2026-04-18
+
+- Existing zones loaded from `zones.json` are now drawn in the configured `zone_colour` instead of Leaflet's default blue. Newly drawn zones already used the correct colour; this brings the persisted zones into line.
+- New `log_level` addon option (`debug` / `info` / `warning` / `error` / `critical`). Default `info`. Bump verbosity for a debug session without rebuilding the image.
+- `GET /zones.json` no longer parses + re-serialises the file on every request — it streams the file bytes through verbatim. Saves a JSON parse/serialise round-trip per request and preserves the file's exact byte representation.
+
 ## 0.2.6 — 2026-04-18
 
 - The `zone_colour` option is now exposed as `GET /config.json` instead of being inlined into `index.html` via template substitution. `index.html` is now a fully static file served by Starlette's `StaticFiles`; the per-request file open and string-replace are gone, and the HTML is cacheable. The frontend fetches `/config.json` once on load and falls back to "green" if the request fails.

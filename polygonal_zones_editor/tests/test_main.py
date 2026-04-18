@@ -50,7 +50,18 @@ def _valid_payload(name="Home"):
 def test_zones_json_returns_empty_collection(allow_all_client, tmp_zones_file):
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
     assert response.json() == {"type": "FeatureCollection", "features": []}
+
+
+def test_zones_json_passes_file_bytes_through(allow_all_client, tmp_zones_file):
+    # Write a payload with whitespace formatting that JSONResponse would
+    # normalise away — the passthrough must preserve the bytes verbatim.
+    raw = b'{"type": "FeatureCollection",\n    "features": []\n}'
+    tmp_zones_file.write_bytes(raw)
+    response = allow_all_client.get("/zones.json")
+    assert response.status_code == 200
+    assert response.content == raw
 
 
 def test_zones_json_sets_cache_headers(allow_all_client):
