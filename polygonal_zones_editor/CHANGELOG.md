@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.12 — 2026-04-18
+
+- Switched to pre-built images. `config.yaml` now declares `image: ghcr.io/matthewhobbs/{arch}-addon-polygonal_zones`, so the Home Assistant Supervisor pulls the published image instead of running a Docker build on your hardware. Updates are now fast on every architecture, especially ARM SBCs where local builds previously took several minutes. The Dockerfile and `build.yaml` still exist; they're used by CI and the release workflow to produce those images.
+
 ## 0.2.11 — 2026-04-18
 
 - Concurrent edits no longer silently clobber each other. `GET /zones.json` now returns a strong `ETag` header (sha256 of the file). `POST /save_zones` honours an `If-Match` precondition: when the on-disk ETag doesn't match, the server returns `412 Precondition Failed` with the current ETag in both header and body, and the addon UI shows a clear "Conflict — reload to fetch the current version" notice instead of overwriting. Clients that don't send `If-Match` (older `curl` scripts, the integration) keep working with last-write-wins semantics. Successful saves now also include the new `ETag` in the response so clients can track without an extra GET.
