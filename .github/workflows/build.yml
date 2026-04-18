@@ -6,6 +6,13 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docker-build:
     name: Build (${{ matrix.arch }})
@@ -35,3 +42,5 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: false
           load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
