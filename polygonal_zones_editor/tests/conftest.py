@@ -9,7 +9,8 @@ APP_DIR = Path(__file__).resolve().parent.parent / "app"
 
 @pytest.fixture(autouse=True)
 def chdir_to_app(monkeypatch):
-    # generate_static_file_routes walks 'static/' relative to cwd.
+    # StaticFiles(directory="static") and the index template read are
+    # resolved relative to cwd.
     monkeypatch.chdir(APP_DIR)
 
 
