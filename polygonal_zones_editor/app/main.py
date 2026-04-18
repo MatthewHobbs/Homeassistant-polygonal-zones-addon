@@ -176,9 +176,12 @@ if __name__ == "__main__":
             "restriction. Only enable this if you understand the risk."
         )
 
-    trusted = _parse_trusted_proxies(options)
-    if trusted:
-        _LOGGER.info("Trusting X-Forwarded-For from proxies: %s", trusted)
+    proxy_ip_allowlist = _parse_trusted_proxies(options)
+    if proxy_ip_allowlist:
+        _LOGGER.info(
+            "Honouring X-Forwarded-For from these proxies: %s",
+            proxy_ip_allowlist,
+        )
 
     app, log_config = generate_app(options)
     uvicorn.run(
@@ -186,6 +189,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         log_config=log_config,
-        proxy_headers=bool(trusted),
-        forwarded_allow_ips=",".join(trusted) if trusted else None,
+        proxy_headers=bool(proxy_ip_allowlist),
+        forwarded_allow_ips=",".join(proxy_ip_allowlist) if proxy_ip_allowlist else None,
     )
