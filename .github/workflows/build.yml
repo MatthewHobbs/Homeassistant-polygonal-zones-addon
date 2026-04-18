@@ -124,13 +124,15 @@ jobs:
             http://127.0.0.1:8000/save_zones | grep -q '"status":"ok"' && echo "OK /save_zones round-trip"
 
           # The web service must run as non-root (uid != 0). Regression guard
-          # for #14.
-          WEB_UID=$(docker exec smoke sh -c "ps -o uid= -p \$(pgrep -f 'python main.py' | head -n1)" | tr -d ' ')
-          if [ -z "$WEB_UID" ]; then
+          # for #14. BusyBox ps doesn't support -p, so read /proc directly.
+          PID=$(docker exec smoke pgrep -f 'python main.py' | head -n1 || true)
+          if [ -z "$PID" ]; then
             echo "FAIL could not locate python main.py process"
+            docker exec smoke ps || true
             docker logs smoke
             exit 1
           fi
+          WEB_UID=$(docker exec smoke awk '/^Uid:/{print $2}' "/proc/$PID/status")
           if [ "$WEB_UID" = "0" ]; then
             echo "FAIL web service is running as root (uid 0)"
             docker logs smoke
