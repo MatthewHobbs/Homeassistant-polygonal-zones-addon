@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.5 — 2026-04-18
+
+- Accessibility: the Save button's success/failure state is now announced to screen readers via an ARIA live region. Previously the only feedback was a 2-second CSS colour change, invisible to assistive tech. Network errors during save are also surfaced (visually and to readers) instead of being silently swallowed.
+
 ## 0.2.4 — 2026-04-18
 
 - Logging: root logger is now configured exactly once at startup via `basicConfig` instead of each module attaching its own handler. Prevents duplicate log lines if a future module calls `getLogger(__name__)` and logs at import time.
