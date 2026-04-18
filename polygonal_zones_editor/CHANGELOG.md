@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.6 — 2026-04-18
+
+- The `zone_colour` option is now exposed as `GET /config.json` instead of being inlined into `index.html` via template substitution. `index.html` is now a fully static file served by Starlette's `StaticFiles`; the per-request file open and string-replace are gone, and the HTML is cacheable. The frontend fetches `/config.json` once on load and falls back to "green" if the request fails.
+
 ## 0.2.5 — 2026-04-18
 
 - Accessibility: the Save button's success/failure state is now announced to screen readers via an ARIA live region. Previously the only feedback was a 2-second CSS colour change, invisible to assistive tech. Network errors during save are also surfaced (visually and to readers) instead of being silently swallowed.
