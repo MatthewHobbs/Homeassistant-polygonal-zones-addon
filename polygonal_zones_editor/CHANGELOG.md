@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.10 — 2026-04-18
+
+- New `save_token` addon option (password type, default empty). When set, `POST /save_zones` requires `X-Save-Token: <value>` for any non-ingress request, regardless of `allow_all_ips`. Ingress (the HA Save button) keeps working unauthenticated. Closes the LAN-write hole when `allow_all_ips: true`.
+- The token is user-set (not auto-generated): you control rotation, we never log it. `Loaded options: ...` now redacts `save_token: ***` so it can't leak via the addon log either.
+- Startup logs a clear warning when `allow_all_ips: true` is set without a `save_token` (the dangerous combo), and an info line when a token is configured (the safe combo).
+- Token comparison is constant-time via `secrets.compare_digest`.
+
+### Curl with save_token
+```sh
+curl -X POST -H 'Content-Type: application/json' \
+  -H 'X-Save-Token: yourvalue' \
+  --data-binary @zones-backup.json \
+  http://<host>:8000/save_zones
+```
+
 ## 0.2.9 — 2026-04-18
 
 - Reproducible builds: the Docker image now installs Python deps from a generated `requirements-lock.txt` with `pip install --require-hashes`. Two builds of the same git SHA on different days now produce identical Python dependency graphs (down to file hashes), and a tampered package file would fail the install instead of being silently used. `requirements.txt` remains the high-level spec; regenerate the lock with `uv pip compile requirements.txt --generate-hashes -o requirements-lock.txt`.

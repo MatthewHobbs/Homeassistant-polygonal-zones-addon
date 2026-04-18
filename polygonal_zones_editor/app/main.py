@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import secrets
 
 import uvicorn
 from starlette.applications import Starlette
@@ -11,14 +12,55 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from helpers import configure_logging, resolve_log_level, allow_request, allow_all_ips, load_options, atomic_write_json
+from helpers import (
+    allow_all_ips,
+    allow_request,
+    allowed_ip,
+    atomic_write_json,
+    configure_logging,
+    load_options,
+    resolve_log_level,
+)
 from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES
 
 _LOGGER = logging.getLogger(__name__)
 
-# Paths that bypass the IP allowlist (health probes need to work without any
-# client-IP constraints).
-AUTHZ_EXEMPT_PATHS = frozenset({"/healthz"})
+# Paths that bypass the IP allowlist middleware. /healthz is exempt so the
+# Docker HEALTHCHECK works. /save_zones runs its own authorisation logic
+# (allowing token-bearing requests through even when allow_all_ips is off),
+# so it bypasses the coarse middleware too.
+AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones"})
+
+
+def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
+    """Decide whether a /save_zones request is allowed.
+
+    Returns ``(allowed, reason)``. ``reason`` is ``"invalid_token"`` when a
+    token is configured but the request did not present a valid one (so the
+    handler can return 401 instead of 403), or ``"not_allowed"`` for a
+    plain block.
+
+    Order:
+      1. Ingress (172.30.32.2) is always allowed — the HA UI uses it.
+      2. If ``save_token`` is configured, require a constant-time-equal
+         ``X-Save-Token`` header. allow_all_ips no longer matters when a
+         token is set; the token is the stronger signal.
+      3. Otherwise fall back to allow_all_ips.
+    """
+    if allowed_ip(request):
+        return True, None
+
+    save_token = (options.get("save_token") or "").strip()
+    if save_token:
+        provided = request.headers.get("x-save-token", "")
+        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
+            return True, None
+        return False, "invalid_token"
+
+    if allow_all_ips(options):
+        return True, None
+
+    return False, "not_allowed"
 
 
 class IPAllowMiddleware(BaseHTTPMiddleware):
@@ -71,31 +113,51 @@ def _is_valid_feature_collection(obj) -> bool:
     return True
 
 
-async def save_zones(request: Request) -> JSONResponse:
-    content_length = request.headers.get("content-length")
-    if content_length is None or not content_length.isdigit() or int(content_length) > MAX_SAVE_BYTES:
-        return JSONResponse({"error": "payload too large or missing Content-Length"}, status_code=413)
+def save_zones_generator(options: dict):
+    async def save_zones(request: Request):
+        ok, reason = authorise_save(options, request)
+        if not ok:
+            if reason == "invalid_token":
+                _LOGGER.warning(
+                    "Rejected save from %s: missing or invalid X-Save-Token",
+                    request.client.host,
+                )
+                return JSONResponse(
+                    {"error": "missing or invalid X-Save-Token"},
+                    status_code=401,
+                )
+            _LOGGER.warning(
+                "Blocked request from %s on %s",
+                request.client.host, request.url.path,
+            )
+            return PlainTextResponse("not allowed", status_code=403)
 
-    body = await request.body()
-    if len(body) > MAX_SAVE_BYTES:
-        return JSONResponse({"error": "payload too large"}, status_code=413)
+        content_length = request.headers.get("content-length")
+        if content_length is None or not content_length.isdigit() or int(content_length) > MAX_SAVE_BYTES:
+            return JSONResponse({"error": "payload too large or missing Content-Length"}, status_code=413)
 
-    try:
-        geo_json = json.loads(body)
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid json"}, status_code=400)
+        body = await request.body()
+        if len(body) > MAX_SAVE_BYTES:
+            return JSONResponse({"error": "payload too large"}, status_code=413)
 
-    if not _is_valid_feature_collection(geo_json):
-        return JSONResponse({"error": "not a GeoJSON FeatureCollection"}, status_code=422)
+        try:
+            geo_json = json.loads(body)
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
 
-    try:
-        atomic_write_json(ZONES_FILE, geo_json)
-    except OSError:
-        _LOGGER.exception("Failed to write %s", ZONES_FILE)
-        return JSONResponse({"error": "write failed"}, status_code=500)
+        if not _is_valid_feature_collection(geo_json):
+            return JSONResponse({"error": "not a GeoJSON FeatureCollection"}, status_code=422)
 
-    _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
-    return JSONResponse({"status": "ok"})
+        try:
+            atomic_write_json(ZONES_FILE, geo_json)
+        except OSError:
+            _LOGGER.exception("Failed to write %s", ZONES_FILE)
+            return JSONResponse({"error": "write failed"}, status_code=500)
+
+        _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
+        return JSONResponse({"status": "ok"})
+
+    return save_zones
 
 
 def config_json_generator(options: dict):
@@ -130,7 +192,7 @@ async def healthz(_request: Request) -> PlainTextResponse:
 def generate_app(options: dict) -> tuple[Starlette, dict]:
     static_folder = "static"
     routes = [
-        Route("/save_zones", save_zones, methods=["POST"]),
+        Route("/save_zones", save_zones_generator(options), methods=["POST"]),
         Route("/zones.json", zones_json, methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
@@ -169,12 +231,16 @@ if __name__ == "__main__":
 
     options = load_options()
     configure_logging(resolve_log_level(options.get("log_level")))
-    _LOGGER.info("Loaded options: %s", options)
+    redacted = {k: ("***" if k == "save_token" and v else v) for k, v in options.items()}
+    _LOGGER.info("Loaded options: %s", redacted)
     if allow_all_ips(options):
-        _LOGGER.warning(
-            "allow_all_ips is enabled — the addon is reachable without IP "
-            "restriction. Only enable this if you understand the risk."
-        )
+        if (options.get("save_token") or "").strip():
+            _LOGGER.info("allow_all_ips is on; /save_zones requires X-Save-Token from non-ingress clients.")
+        else:
+            _LOGGER.warning(
+                "allow_all_ips is enabled and no save_token is set — /save_zones is reachable from any IP. "
+                "Set the save_token option to require an X-Save-Token header on non-ingress requests."
+            )
 
     proxy_ip_allowlist = _parse_trusted_proxies(options)
     if proxy_ip_allowlist:

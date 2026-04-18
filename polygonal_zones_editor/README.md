@@ -27,22 +27,73 @@ https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon.git
 
 ## Configuration
 
-This addon has just 3 configuration options: 
-- the port on which the web interface is exposed. By default, this is port **8000**.
-- If you can access the interface from all ips. By default, this is **false**
-- The colour of the newly added zones. By default, this is **purple**
+All options live under **Settings → Add-ons → Polygonal Zones → Configuration**. Defaults are sensible for a stock Home Assistant install — the only setting most people change is `zone_colour`.
 
+| Option            | Type     | Default   | What it does                                                                                                              |
+| ----------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `zone_colour`     | string   | `purple`  | Colour used to render zones on the map (any CSS colour name or `#rrggbb`).                                                |
+| `allow_all_ips`   | bool     | `false`   | When `true`, accept HTTP requests from any IP, not just the Home Assistant ingress sidecar. See **LAN access** below.     |
+| `save_token`      | password | *(empty)* | When set, `POST /save_zones` requires `X-Save-Token: <value>` for any non-ingress request. See **Securing /save_zones**.  |
+| `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the addon with your own reverse proxy. |
+| `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
 
+### Network ports
+
+The addon exposes its web interface on **TCP 8000** by default. Inside Home Assistant you reach it via the ingress UI (`Open Web UI` button) — that's the recommended path.
+
+Direct LAN access on `http://<your-ha-host>:8000/` is also enabled by default for backups and the integration. If you don't need it, change the host port in **Configuration → Network** to `disabled` (sets it to null).
+
+### LAN access (`allow_all_ips`)
+
+By default, only the HA ingress IP (`172.30.32.2`) can talk to the addon. With `allow_all_ips: true`, any client on your network can:
+
+- `GET /zones.json` — read the zone geometry (the integration uses this).
+- `POST /save_zones` — overwrite the zones.
+
+Enable it if your Home Assistant integration runs in a different container, or if you want to back up / restore zones via `curl`. Pair with `save_token` (below) to keep `POST /save_zones` protected.
+
+### Securing `/save_zones` (`save_token`)
+
+When `save_token` is set, the addon requires the header `X-Save-Token: <value>` on any `POST /save_zones` request that doesn't come from HA ingress. The Save button in the addon's UI keeps working unauthenticated because it goes through ingress.
+
+Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the addon — there is no migration needed.
+
+The token is **never** logged. The `Loaded options:` line at startup prints it as `***`.
+
+### Backing up / restoring zones with `curl`
+
+The zones are kept in `/data/polygonal_zones/zones.json` inside the container, but you don't need a shell to read them. If you have `allow_all_ips: true`:
+
+```sh
+# Backup
+curl http://<ha-host>:8000/zones.json > zones-backup.json
+
+# Restore (without save_token)
+curl -X POST -H 'Content-Type: application/json' \
+  --data-binary @zones-backup.json \
+  http://<ha-host>:8000/save_zones
+
+# Restore (with save_token set)
+curl -X POST -H 'Content-Type: application/json' \
+  -H 'X-Save-Token: <yourtoken>' \
+  --data-binary @zones-backup.json \
+  http://<ha-host>:8000/save_zones
+```
+
+Recommended: leave `save_token` set, only enable `allow_all_ips` while you're actively backing up, then disable it again.
+
+### Integration with the Polygonal Zones HA integration
+
+The companion integration ([Polygonal Zones](https://github.com/MichelGerding/Homeassistant-polygonal-zones-integration)) reads `/zones.json` from this addon. If the integration runs anywhere other than the HA ingress sidecar (different container or external host), set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.
 
 ## Usage
 
 ### Accessing the Web Interface:
 
-1. After installing and starting the add-on, you can access the web interface in two ways:
+After installing and starting the add-on, you can access the web interface in two ways:
 
-- Configuration Page: YOu can access the web interface by pressing the `open web ui` button on the info page of the
-  add-on.
-- Sidebar: You can add the add-on to the sidebar by enabling the `show in sidebar` option in the add-on configuration.
+- **Info page**: press the **Open Web UI** button on the addon's info page.
+- **Sidebar**: enable **Show in sidebar** in the addon configuration to add a permanent shortcut to the HA sidebar.
 
 ### Saving changes:
 
@@ -51,10 +102,7 @@ This addon has just 3 configuration options:
 
 ### Zones File:
 
-- The zones are stored in a file named `zones.json` located at `http(s)://[HOST]:[PORT]/zones.json`.
-  The default port is 8000. This file contains the zones stored as a geojson feature collection. this file is meant to
-  be used by the integration of the same name. this integration can be found
-  here: [Polygonal Zones](https://github.com/MichelGerding/Homeassistant-polygonal-zones-integration):
+The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (default port 8000), and on disk at `/data/polygonal_zones/zones.json` inside the container. The companion [Polygonal Zones integration](https://github.com/MichelGerding/Homeassistant-polygonal-zones-integration) reads this file. See the **Configuration → Backing up / restoring zones with curl** section for the recommended backup workflow.
 
 ### Features:
 
@@ -96,20 +144,9 @@ See the screenshots below for a better understanding of the add-on's features.
 - Delete button and its options:
   ![Screenshot of delete button](../screenshots/screenshot-delete-button.png)
 
-## TODO
+## Roadmap
 
-- [ ] Improve ui
-    - [ ] Make sidebar collapsable
-    - [ ] Make sidebar more responsive
-    - [ ] Use nicer map
-    - [ ] Add support for dark mode
-- [ ] Add more features
-    - [ ] Add functionality for multiple shaped zones
-        - [ ] Add ability to add circular zones
-        - [ ] Add ability to add polygons with holes
-        - [ ] Add ability to add zones with multiple shapes
-    - [ ] Add support for multiple zone files
-- [ ] Add testing to the add-on
+Planned improvements (UI polish, multi-shape zones, multiple zone files, etc.) are tracked as [GitHub issues](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/issues). Recent releases are documented in the [CHANGELOG](./CHANGELOG.md).
 
 ## Contributing
 
