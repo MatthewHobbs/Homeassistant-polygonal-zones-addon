@@ -13,15 +13,33 @@ RUN apk add --no-cache python3 py3-pip \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-WORKDIR /app
-COPY app /app
+# Non-root runtime user. Permissions on /data are fixed up at boot by
+# rootfs/etc/cont-init.d/00-fix-perms so the Supervisor-mounted
+# options.json is readable.
+RUN addgroup -S app && adduser -S -G app -u 1001 app \
+ && chown -R app:app /app
 
-# HA addons run as root by Supervisor convention: /data/options.json is
-# mounted root-owned and the addon user must be able to read it. Dropping
-# privileges needs an s6 init script that chowns /data first; see #14.
+WORKDIR /app
+COPY --chown=app:app app /app
+
+# s6-overlay init + service definitions. cont-init.d runs as root to chown
+# /data; services.d/web/run drops to the 'app' user via s6-setuidgid.
+COPY rootfs /
+RUN chmod +x /etc/cont-init.d/00-fix-perms \
+             /etc/services.d/web/run \
+             /etc/services.d/web/finish
+
+# Build-time sanity: the non-root user and s6-setuidgid must both be in
+# place, otherwise the image ships broken and the runtime fallback to root
+# would silently kick in on every user.
+RUN id app >/dev/null && command -v s6-setuidgid >/dev/null
+
+# No USER directive — s6 must start as root to fix /data permissions;
+# the web service itself runs as 'app'.
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8000/healthz || exit 1
 
-CMD ["python", "main.py"]
+# The base image's ENTRYPOINT (/init) runs cont-init.d then services.d.
+# No CMD needed.

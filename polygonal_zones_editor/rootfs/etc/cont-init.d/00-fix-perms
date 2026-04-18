@@ -1,0 +1,26 @@
+#!/usr/bin/with-contenv bashio
+# Fix up /data ownership so the unprivileged 'app' user can read the
+# Supervisor-mounted options.json and read/write the addon's own files.
+#
+# The Supervisor mounts /data/options.json root-owned. Without this fixup
+# the 'app' user hits PermissionError at startup. See issue #14.
+#
+# Failures are logged but non-fatal — services.d/web/run falls back to
+# running as root if the 'app' user isn't usable.
+
+mkdir -p /data/polygonal_zones 2>/dev/null || \
+    bashio::log.warning "Could not create /data/polygonal_zones"
+
+if id app >/dev/null 2>&1; then
+    chown -R app:app /data/polygonal_zones 2>/dev/null || \
+        bashio::log.warning "chown /data/polygonal_zones failed (read-only mount?)"
+
+    if [ -f /data/options.json ]; then
+        chown app:app /data/options.json 2>/dev/null || \
+            bashio::log.warning "chown /data/options.json failed; will rely on world-read"
+        # Belt-and-braces: make options.json readable even if chown didn't stick.
+        chmod o+r /data/options.json 2>/dev/null || true
+    fi
+else
+    bashio::log.warning "'app' user not found; addon will run as root"
+fi
