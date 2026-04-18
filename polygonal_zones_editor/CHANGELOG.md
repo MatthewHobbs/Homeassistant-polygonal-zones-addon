@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.9 — 2026-04-18
+
+- Reproducible builds: the Docker image now installs Python deps from a generated `requirements-lock.txt` with `pip install --require-hashes`. Two builds of the same git SHA on different days now produce identical Python dependency graphs (down to file hashes), and a tampered package file would fail the install instead of being silently used. `requirements.txt` remains the high-level spec; regenerate the lock with `uv pip compile requirements.txt --generate-hashes -o requirements-lock.txt`.
+
 ## 0.2.8 — 2026-04-18
 
 - **Bug fix**: zones failed to load with "Failed to load zones — check the log" after upgrading to 0.2.6. The /config.json refactor accidentally moved the `map` and `editableLayers` handles into a callback scope, so other functions (`render_zone_list`, `save_zones`, etc.) couldn't see them and threw `ReferenceError`. They are now declared at module scope and assigned once /config.json returns. The CI smoke test only boots the server — it doesn't load the page in a browser — so this slipped through.
