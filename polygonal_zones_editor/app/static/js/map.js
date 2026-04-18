@@ -2,8 +2,8 @@ const {map, editableLayers} = generate_map('./zones.json')
 setup_editing(map, editableLayers);
 
 function generate_map(zones_url) {
-    const osm_url = 'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    const osmAttrib = '&copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors';
+    const osm_url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const osmAttrib = '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors';
     const osm = L.tileLayer(osm_url, {maxZoom: 18, attribution: osmAttrib});
     const map = L.map('map', {layers: [osm], center: [52.96523540264812, 6.52002831753822], zoom: 13});
 
@@ -12,27 +12,35 @@ function generate_map(zones_url) {
 
     fetch(zones_url)
         .then(response => {
-            return response.text()
-        }).then(json => {
-        let data = JSON.parse(json)
-
-        L.geoJSON(data, {
-            onEachFeature: (feature, layer) => {
-                layer.bindPopup(feature.properties.name);
-                editableLayers.addLayer(layer);
-            },
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.text();
         })
+        .then(json => {
+            let data;
+            try { data = JSON.parse(json); }
+            catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
 
-        render_zone_list();
-        // fit the map to the bounds of the editable layers
-        // center map on the home zone
-        if (editableLayers.getLayers().length > 0) {
-            map.fitBounds(editableLayers.getBounds());
-            map.setView(editableLayers.getBounds().getCenter(), 13);
-        } else {
+            L.geoJSON(data, {
+                onEachFeature: (feature, layer) => {
+                    layer.bindPopup(name_popup_element(feature));
+                    editableLayers.addLayer(layer);
+                },
+            })
+
+            render_zone_list();
+            if (editableLayers.getLayers().length > 0) {
+                map.fitBounds(editableLayers.getBounds());
+                map.setView(editableLayers.getBounds().getCenter(), 13);
+            } else {
+                create_load_btn();
+            }
+        })
+        .catch(err => {
+            console.error('Failed to load zones:', err);
+            let list = document.querySelector('.zone-list');
+            if (list) list.textContent = 'Failed to load zones — check the log.';
             create_load_btn();
-        }
-    });
+        });
 
     return {map, editableLayers};
 }
@@ -144,7 +152,7 @@ function save_zones() {
     let geojson = {
         type: "FeatureCollection",
         features: Object.values(editableLayers._layers).map(value => {
-            points = value._latlngs[0].map(point => [point.lng, point.lat]);
+            const points = value._latlngs[0].map(point => [point.lng, point.lat]);
             return {
                 type: "Feature",
                 properties: {
@@ -191,11 +199,16 @@ function load_bulk_json() {
         let file = input.files[0];
         let reader = new FileReader();
         reader.onload = function (e) {
-            let data = JSON.parse(e.target.result);
+            let data;
+            try { data = JSON.parse(e.target.result); }
+            catch (err) {
+                alert('The selected file is not valid JSON.');
+                return;
+            }
             editableLayers.clearLayers();
             L.geoJSON(data, {
                 onEachFeature: (feature, layer) => {
-                    layer.bindPopup(feature.properties.name);
+                    layer.bindPopup(name_popup_element(feature));
                     editableLayers.addLayer(layer);
                 },
             })

@@ -65,7 +65,7 @@ class ZoneEntry extends HTMLElement {
         this.attachShadow({mode: 'open'});
 
         // listen to changes of the editing attribute
-        let observer = new MutationObserver((mutations) => {
+        this._observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 if (mutation.attributeName === 'editing') {
                     this.render(this.getAttribute('editing') === 'true');
@@ -73,32 +73,41 @@ class ZoneEntry extends HTMLElement {
             });
         });
 
-        observer.observe(this, {attributes: true});
+        this._observer.observe(this, {attributes: true});
 
         this.render(false);
     }
 
-    render(editing) {
-        let name = this.getAttribute('name');
+    disconnectedCallback() {
+        if (this._observer) this._observer.disconnect();
+    }
 
+    render(editing) {
+        let name = this.getAttribute('name') ?? '';
+
+        // Zone names come from user input in zones.json; insert via DOM APIs
+        // rather than innerHTML interpolation so names containing HTML do not
+        // execute script. The surrounding markup is static.
         this.shadowRoot.innerHTML = `
             ${this.styles}
 
             <div class="zone-entry ${editing ? 'editing' : ''}">
                 <div class="header">
-                    <span> ${name} </span>
-                    
-                    <span class="edit-btn-container"> </span>
+                    <span class="zone-name"></span>
+                    <span class="edit-btn-container"></span>
                 </div>
                 <div class="edit-zone ${!editing ? 'hidden' : ''}">
                     <div class="properties">
-                        <label for="name">Name</label>
-                        <input type="text" value="${name}">
+                        <label for="zone-name-input">Name</label>
+                        <input id="zone-name-input" type="text">
                     </div>
                 </div>
             </div>
             `;
 
+        this.shadowRoot.querySelector('.zone-name').textContent = name;
+        let input = this.shadowRoot.querySelector('input');
+        if (input) input.value = name;
 
         let edit_button = document.createElement('button');
         edit_button.classList.add('edit-btn');
