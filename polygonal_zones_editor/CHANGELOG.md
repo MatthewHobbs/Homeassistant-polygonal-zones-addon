@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 — 2026-04-18
+
+- Logging: root logger is now configured exactly once at startup via `basicConfig` instead of each module attaching its own handler. Prevents duplicate log lines if a future module calls `getLogger(__name__)` and logs at import time.
+- Resilience: a malformed or non-object `/data/options.json` no longer boot-loops the addon. The file is logged and the addon starts with default options, so a corrupted write from the Supervisor or a manual edit can't lock you out.
+- Supply-chain: pinned leaflet-draw with an SRI hash (browser refuses tampered bytes from the CDN).
+
 ## 0.2.3 — 2026-04-18
 
 - The addon now runs as a non-root `app` user (uid 1001). An s6-overlay init script runs first as root to chown `/data/options.json` and the addon's data directory to `app`, then `s6-setuidgid` drops privileges before launching the web service. A CI runtime smoke test asserts uid != 0 and guards against regression.
