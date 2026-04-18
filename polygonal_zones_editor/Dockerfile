@@ -1,33 +1,29 @@
 ARG BUILD_FROM
-#FROM $BUILD_FROM
-FROM alpine:latest
+FROM ${BUILD_FROM}
 
-RUN \
-    apk update && apk upgrade
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-RUN \
-  apk add --no-cache \
-    python3 \
-    py3-pip
-
-# setup env so we can install requirements using pip instead of apk.
-# uvicorn is not available in the homeassistant alpine image.
-ENV VIRTUAL_ENV=/opt/venv
-RUN python3 -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-RUN pip3 install --upgrade pip
-# install dependencies
+RUN apk add --no-cache python3 py3-pip \
+ && python3 -m venv "$VIRTUAL_ENV" \
+ && pip install --no-cache-dir --upgrade pip
 
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+RUN addgroup -S app && adduser -S -G app -u 1001 app \
+ && mkdir -p /data/polygonal_zones \
+ && chown -R app:app /data /app
 
 WORKDIR /app
+COPY --chown=app:app app /app
 
-COPY app /app
+USER app
+
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:8000/healthz || exit 1
 
-COPY app/static/zones.json /data/polygonal_zones/zones.json
-
-WORKDIR /app
 CMD ["python", "main.py"]

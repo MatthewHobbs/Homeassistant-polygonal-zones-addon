@@ -23,14 +23,19 @@ jobs:
         include:
           - arch: aarch64
             platform: linux/arm64
+            base: ghcr.io/home-assistant/aarch64-base:3.19
           - arch: amd64
             platform: linux/amd64
+            base: ghcr.io/home-assistant/amd64-base:3.19
           - arch: armhf
             platform: linux/arm/v6
+            base: ghcr.io/home-assistant/armhf-base:3.19
           - arch: armv7
             platform: linux/arm/v7
+            base: ghcr.io/home-assistant/armv7-base:3.19
           - arch: i386
             platform: linux/386
+            base: ghcr.io/home-assistant/i386-base:3.19
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -40,6 +45,8 @@ jobs:
         with:
           context: ./polygonal_zones_editor
           platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_FROM=${{ matrix.base }}
           push: false
           load: false
           cache-from: type=gha
