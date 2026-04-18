@@ -20,6 +20,8 @@ ports:
 options:
   allow_all_ips: false
   zone_colour: purple
+  trusted_proxies: ""
 schema:
   allow_all_ips: bool
   zone_colour: str
+  trusted_proxies: str?

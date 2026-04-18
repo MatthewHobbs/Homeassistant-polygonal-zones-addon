@@ -67,27 +67,6 @@ def test_allow_request_falls_back_to_ip_allowlist(monkeypatch, request_factory):
     assert helpers.allow_request({}, request_factory("10.0.0.1")) is False
 
 
-def test_get_file_list_walks_subdirectories(tmp_path):
-    import helpers
-
-    (tmp_path / "a.txt").write_text("a")
-    nested = tmp_path / "sub"
-    nested.mkdir()
-    (nested / "b.txt").write_text("b")
-
-    result = helpers.get_file_list(str(tmp_path))
-    assert sorted(result) == sorted([
-        str(tmp_path / "a.txt"),
-        str(nested / "b.txt"),
-    ])
-
-
-def test_get_file_list_empty_dir(tmp_path):
-    import helpers
-
-    assert helpers.get_file_list(str(tmp_path)) == []
-
-
 def test_load_options_returns_empty_dict_when_missing(tmp_options_file):
     import helpers
 

@@ -191,3 +191,30 @@ def test_healthz_returns_ok_without_authz(restricted_client):
 def test_referrer_policy_header_is_applied(allow_all_client):
     response = allow_all_client.get("/zones.json")
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+
+
+def test_static_file_served_to_authorized_client(allow_all_client):
+    response = allow_all_client.get("/js/map.js")
+    assert response.status_code == 200
+    assert "generate_map" in response.text
+
+
+def test_static_file_blocked_for_unauthorized_client(restricted_client):
+    response = restricted_client.get("/js/map.js")
+    assert response.status_code == 403
+
+
+def test_static_traversal_attempt_rejected(allow_all_client):
+    # StaticFiles normalises and rejects paths that escape the root directory.
+    response = allow_all_client.get("/..%2F..%2Fapp%2Fconst.py")
+    assert response.status_code in (400, 404)
+
+
+def test_parse_trusted_proxies_handles_empty_and_list(app_factory):
+    import main
+    assert main._parse_trusted_proxies({}) == []
+    assert main._parse_trusted_proxies({"trusted_proxies": ""}) == []
+    assert main._parse_trusted_proxies({"trusted_proxies": "172.30.32.2"}) == ["172.30.32.2"]
+    assert main._parse_trusted_proxies(
+        {"trusted_proxies": " 172.30.32.2 ,10.0.0.5 "}
+    ) == ["172.30.32.2", "10.0.0.5"]
