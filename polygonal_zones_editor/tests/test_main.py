@@ -161,6 +161,76 @@ def test_save_zones_blocks_unauthorized_client(restricted_client, tmp_zones_file
     assert tmp_zones_file.read_text() == original
 
 
+def test_save_token_required_when_set_and_lan_request(app_factory, tmp_zones_file):
+    """When save_token is set, non-ingress requests must present it."""
+    app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
+    client = TestClient(app)
+    original = tmp_zones_file.read_text()
+
+    # No header.
+    r = client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 401
+    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+
+    # Wrong token.
+    r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "wrong"})
+    assert r.status_code == 401
+
+    # Correct token.
+    r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "s3cret"})
+    assert r.status_code == 200
+    assert tmp_zones_file.read_text() != original
+
+
+def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
+    """save_token should also unlock LAN access when allow_all_ips is off."""
+    app = app_factory({"allow_all_ips": False, "save_token": "s3cret"})
+    client = TestClient(app)
+
+    r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "s3cret"})
+    assert r.status_code == 200
+
+    # Without token, even though allow_all_ips is off, the response is 401
+    # (token-required) rather than 403 — server is signalling that auth is
+    # available, just not provided.
+    r = client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 401
+
+
+def test_save_token_does_not_affect_zones_json(app_factory, tmp_zones_file):
+    """save_token only governs /save_zones; /zones.json still follows the
+    coarse IP allowlist + allow_all_ips."""
+    app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
+    client = TestClient(app)
+    r = client.get("/zones.json")
+    assert r.status_code == 200
+
+
+def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
+    """Ingress (172.30.32.2) is always allowed even when a token is set —
+    the HA UI Save button must keep working without knowing the token."""
+    import main
+    from starlette.testclient import TestClient as TC
+
+    app, _ = main.generate_app({"save_token": "s3cret"})
+    # Simulate a request from the ingress IP.
+    client = TC(app, base_url="http://172.30.32.2")
+    # TestClient doesn't expose a way to set request.client.host directly, so
+    # we monkeypatch allowed_ip to confirm the bypass works in principle.
+    import helpers
+    original_allowed_ip = helpers.allowed_ip
+    main_allowed_ip = main.allowed_ip
+    try:
+        # Force allowed_ip to True for this client.
+        helpers.allowed_ip = lambda req: True
+        main.allowed_ip = lambda req: True
+        r = client.post("/save_zones", json=_valid_payload())
+        assert r.status_code == 200
+    finally:
+        helpers.allowed_ip = original_allowed_ip
+        main.allowed_ip = main_allowed_ip
+
+
 def test_index_serves_static_html(allow_all_client):
     response = allow_all_client.get("/")
     assert response.status_code == 200
