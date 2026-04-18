@@ -66,7 +66,7 @@ log() { echo "  $*"; }
 fail() { echo "STATUS:FAILED $1" >&2; exit "${2:-1}"; }
 
 read_version_at_ref() {
-  gh -R "$REPO" api "repos/$REPO/contents/$CONFIG?ref=$1" --jq .content \
+  gh api "repos/$REPO/contents/$CONFIG?ref=$1" --jq .content \
     | base64 -d \
     | awk -F'"' '/^version:/{print $2; exit}'
 }
@@ -96,7 +96,7 @@ wait_for_main_head_change() {
   local prior="$1"
   local now
   for _ in $(seq 1 15); do
-    now=$(gh -R "$REPO" api "repos/$REPO/commits/main" --jq .sha)
+    now=$(gh api "repos/$REPO/commits/main" --jq .sha)
     if [ "$now" != "$prior" ]; then
       echo "$now"
       return 0
@@ -125,7 +125,7 @@ tag_and_watch() {
 
   say TAGGING "$tag at $sha"
   if [ "$DRY_RUN" = 0 ]; then
-    if ! gh -R "$REPO" api -X POST "repos/$REPO/git/refs" \
+    if ! gh api -X POST "repos/$REPO/git/refs" \
         -f ref="refs/tags/$tag" -f sha="$sha" >/dev/null; then
       fail "tag-push-failed: $tag" $EXIT_TAG
     fi
@@ -188,13 +188,13 @@ log "main version: $MAIN_VERSION"
 if [ "$STATE" = "MERGED" ]; then
   TAG="v$MAIN_VERSION"
   log "PR already merged; main is at $MAIN_VERSION"
-  if gh -R "$REPO" api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+  if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
     say RESUMING "$TAG (tag already exists)"
     watch_for_tag "$TAG"
     exit 0
   fi
   log "tag $TAG missing; finishing release"
-  MERGE_SHA=$(gh -R "$REPO" api "repos/$REPO/commits/main" --jq .sha)
+  MERGE_SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
   tag_and_watch "$MAIN_VERSION" "$MERGE_SHA"
   exit 0
 fi
@@ -247,12 +247,12 @@ fi
 TAG="v$PR_VERSION"
 say PLANNED_RELEASE "$MAIN_VERSION→$PR_VERSION as $TAG"
 
-if gh -R "$REPO" api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
   fail "tag-already-exists: $TAG (refusing to merge into inconsistent state)" \
     $EXIT_PREFLIGHT
 fi
 
-PRE_MERGE_HEAD=$(gh -R "$REPO" api "repos/$REPO/commits/main" --jq .sha)
+PRE_MERGE_HEAD=$(gh api "repos/$REPO/commits/main" --jq .sha)
 
 say MERGING "#$PR"
 if [ "$DRY_RUN" = 0 ]; then
