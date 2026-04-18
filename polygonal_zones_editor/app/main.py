@@ -7,11 +7,11 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from helpers import configure_logging, allow_request, allow_all_ips, load_options, atomic_write_json
+from helpers import configure_logging, resolve_log_level, allow_request, allow_all_ips, load_options, atomic_write_json
 from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,14 +106,21 @@ def config_json_generator(options: dict):
     return config_json
 
 
-async def zones_json(_request: Request) -> JSONResponse:
-    with open(ZONES_FILE, "r") as f:
-        data = json.load(f)
-    return JSONResponse(data, headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-    })
+async def zones_json(_request: Request) -> Response:
+    # Pass the file bytes through verbatim — atomic_write_json guarantees the
+    # file is always valid JSON, so re-parsing and re-serialising via
+    # JSONResponse would be a pointless round-trip.
+    with open(ZONES_FILE, "rb") as f:
+        body = f.read()
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
@@ -151,6 +158,8 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
 
 
 if __name__ == "__main__":
+    # Bring logging up at the default level first so any errors in
+    # load_options are visible, then re-apply the configured level.
     configure_logging()
 
     os.makedirs(DATA_FOLDER, exist_ok=True)
@@ -159,6 +168,7 @@ if __name__ == "__main__":
             json.dump({"type": "FeatureCollection", "features": []}, f)
 
     options = load_options()
+    configure_logging(resolve_log_level(options.get("log_level")))
     _LOGGER.info("Loaded options: %s", options)
     if allow_all_ips(options):
         _LOGGER.warning(

@@ -1,7 +1,6 @@
-const {map, editableLayers} = generate_map('./zones.json');
-
-// Fetch the runtime config (zone colour) before wiring the draw control so
-// the colour is applied. Falls back to 'green' if /config.json is unreachable.
+// Fetch the runtime config first so ZONE_COLOUR is set before we render any
+// existing zones (L.geoJSON style option needs it) and before we wire the
+// draw control. Falls back to 'green' if /config.json is unreachable.
 fetch('./config.json')
     .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
     .catch(err => {
@@ -10,6 +9,7 @@ fetch('./config.json')
     })
     .then(cfg => {
         window.ZONE_COLOUR = cfg.zone_colour || 'green';
+        const {map, editableLayers} = generate_map('./zones.json');
         setup_editing(map, editableLayers);
     });
 
@@ -33,6 +33,7 @@ function generate_map(zones_url) {
             catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
 
             L.geoJSON(data, {
+                style: () => ({color: window.ZONE_COLOUR}),
                 onEachFeature: (feature, layer) => {
                     layer.bindPopup(name_popup_element(feature));
                     editableLayers.addLayer(layer);
@@ -233,6 +234,7 @@ function load_bulk_json() {
             }
             editableLayers.clearLayers();
             L.geoJSON(data, {
+                style: () => ({color: window.ZONE_COLOUR}),
                 onEachFeature: (feature, layer) => {
                     layer.bindPopup(name_popup_element(feature));
                     editableLayers.addLayer(layer);

@@ -108,6 +108,36 @@ def test_configure_logging_is_idempotent():
     assert len(logging.getLogger().handlers) == before
 
 
+def test_configure_logging_applies_level_on_subsequent_call():
+    import logging
+
+    import helpers
+
+    helpers.configure_logging(logging.INFO)
+    helpers.configure_logging(logging.DEBUG)
+    assert logging.getLogger().level == logging.DEBUG
+    # Reset so other tests aren't affected.
+    helpers.configure_logging(logging.INFO)
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("debug", "DEBUG"),
+    ("INFO", "INFO"),
+    ("Warning", "WARNING"),
+    ("error", "ERROR"),
+    ("critical", "CRITICAL"),
+    (None, "INFO"),
+    ("nonsense", "INFO"),
+    (42, "INFO"),
+])
+def test_resolve_log_level(value, expected):
+    import logging
+
+    import helpers
+
+    assert helpers.resolve_log_level(value) == getattr(logging, expected)
+
+
 def test_load_options_falls_back_on_malformed_json(tmp_options_file, caplog):
     import logging
 
