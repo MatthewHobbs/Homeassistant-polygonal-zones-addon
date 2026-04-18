@@ -4,6 +4,8 @@ import os
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, FileResponse, PlainTextResponse, HTMLResponse
 from starlette.routing import Route
@@ -124,7 +126,18 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     log_config['loggers']['uvicorn.error']['handlers'] = []
     log_config['loggers']['uvicorn.access']['handlers'] = []
 
-    app = Starlette(debug=False, routes=routes)
+    # OpenStreetMap tile usage policy compliance: ensure a Referer is sent on
+    # tile requests. 'no-referrer' and 'same-origin' are non-compliant.
+    # https://operations.osmfoundation.org/policies/tiles/
+    class ReferrerPolicyMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+            return response
+
+    middleware = [Middleware(ReferrerPolicyMiddleware)]
+
+    app = Starlette(debug=False, routes=routes, middleware=middleware)
     return app, log_config
 
 
