@@ -14,28 +14,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  matrix:
+    name: Resolve build matrix from build.yaml
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.gen.outputs.include }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate matrix
+        id: gen
+        # build.yaml is the single source of truth for which architectures
+        # we support and which base image each one uses. The docker platform
+        # mapping is a GitHub Actions / QEMU concern and stays in the
+        # workflow.
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, yaml
+          with open("polygonal_zones_editor/build.yaml") as f:
+              data = yaml.safe_load(f)
+          arch_to_platform = {
+              "aarch64": "linux/arm64",
+              "amd64":   "linux/amd64",
+              "armhf":   "linux/arm/v6",
+              "armv7":   "linux/arm/v7",
+              "i386":    "linux/386",
+          }
+          includes = [
+              {"arch": arch, "platform": arch_to_platform[arch], "base": base}
+              for arch, base in data["build_from"].items()
+          ]
+          missing = set(data["build_from"]) - set(arch_to_platform)
+          if missing:
+              raise SystemExit(f"build.yaml declares unknown arches: {sorted(missing)}")
+          print("include=" + json.dumps(includes))
+          PY
+
   docker-build:
     name: Build (${{ matrix.arch }})
+    needs: matrix
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: aarch64
-            platform: linux/arm64
-            base: ghcr.io/home-assistant/aarch64-base:3.19
-          - arch: amd64
-            platform: linux/amd64
-            base: ghcr.io/home-assistant/amd64-base:3.19
-          - arch: armhf
-            platform: linux/arm/v6
-            base: ghcr.io/home-assistant/armhf-base:3.19
-          - arch: armv7
-            platform: linux/arm/v7
-            base: ghcr.io/home-assistant/armv7-base:3.19
-          - arch: i386
-            platform: linux/386
-            base: ghcr.io/home-assistant/i386-base:3.19
+        include: ${{ fromJson(needs.matrix.outputs.include) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
