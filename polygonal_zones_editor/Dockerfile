@@ -10,8 +10,11 @@ RUN apk add --no-cache python3 py3-pip \
  && python3 -m venv "$VIRTUAL_ENV" \
  && pip install --no-cache-dir --upgrade pip
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Install pinned, hash-verified deps from the generated lock file.
+# requirements.txt remains the high-level spec; regenerate the lock with
+#   uv pip compile requirements.txt --generate-hashes -o requirements-lock.txt
+COPY requirements-lock.txt /app/requirements-lock.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements-lock.txt
 
 # Non-root runtime user. Permissions on /data are fixed up at boot by
 # rootfs/etc/cont-init.d/00-fix-perms so the Supervisor-mounted
