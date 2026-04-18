@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.11 — 2026-04-18
+
+- Concurrent edits no longer silently clobber each other. `GET /zones.json` now returns a strong `ETag` header (sha256 of the file). `POST /save_zones` honours an `If-Match` precondition: when the on-disk ETag doesn't match, the server returns `412 Precondition Failed` with the current ETag in both header and body, and the addon UI shows a clear "Conflict — reload to fetch the current version" notice instead of overwriting. Clients that don't send `If-Match` (older `curl` scripts, the integration) keep working with last-write-wins semantics. Successful saves now also include the new `ETag` in the response so clients can track without an extra GET.
+
 ## 0.2.10 — 2026-04-18
 
 - New `save_token` addon option (password type, default empty). When set, `POST /save_zones` requires `X-Save-Token: <value>` for any non-ingress request, regardless of `allow_all_ips`. Ingress (the HA Save button) keeps working unauthenticated. Closes the LAN-write hole when `allow_all_ips: true`.

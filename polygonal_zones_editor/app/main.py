@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -30,6 +31,24 @@ _LOGGER = logging.getLogger(__name__)
 # (allowing token-bearing requests through even when allow_all_ips is off),
 # so it bypasses the coarse middleware too.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones"})
+
+
+def _etag_for_bytes(body: bytes) -> str:
+    """Strong ETag derived from the file contents.
+
+    Quoted per RFC 7232. Returned identically by /zones.json (response
+    header) and used by /save_zones (If-Match check).
+    """
+    return f'"{hashlib.sha256(body).hexdigest()}"'
+
+
+def _current_zones_etag() -> str | None:
+    """Compute the ETag for the on-disk zones file, or None if unreadable."""
+    try:
+        with open(ZONES_FILE, "rb") as f:
+            return _etag_for_bytes(f.read())
+    except OSError:
+        return None
 
 
 def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
@@ -148,14 +167,39 @@ def save_zones_generator(options: dict):
         if not _is_valid_feature_collection(geo_json):
             return JSONResponse({"error": "not a GeoJSON FeatureCollection"}, status_code=422)
 
+        # Optimistic concurrency: when the client provides If-Match, refuse to
+        # overwrite if the on-disk file has changed since they read it. There
+        # is a short TOCTOU window between this check and atomic_write_json;
+        # adequate for a single-user addon, where contention is rare.
+        if_match = request.headers.get("if-match", "").strip()
+        if if_match:
+            current = _current_zones_etag()
+            if current != if_match:
+                _LOGGER.info(
+                    "Conflict on save from %s: client If-Match=%s, current=%s",
+                    request.client.host, if_match, current,
+                )
+                return JSONResponse(
+                    {
+                        "error": "precondition failed",
+                        "current_etag": current,
+                    },
+                    status_code=412,
+                    headers={"ETag": current} if current else {},
+                )
+
         try:
             atomic_write_json(ZONES_FILE, geo_json)
         except OSError:
             _LOGGER.exception("Failed to write %s", ZONES_FILE)
             return JSONResponse({"error": "write failed"}, status_code=500)
 
+        new_etag = _current_zones_etag()
         _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
-        return JSONResponse({"status": "ok"})
+        return JSONResponse(
+            {"status": "ok", "etag": new_etag},
+            headers={"ETag": new_etag} if new_etag else {},
+        )
 
     return save_zones
 
@@ -181,6 +225,7 @@ async def zones_json(_request: Request) -> Response:
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Expires": "0",
+            "ETag": _etag_for_bytes(body),
         },
     )
 
