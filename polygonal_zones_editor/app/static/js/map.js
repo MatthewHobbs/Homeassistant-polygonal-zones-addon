@@ -4,6 +4,10 @@
 // ZONE_COLOUR set before any zones render).
 let map;
 let editableLayers;
+// Tracks the ETag of the last zones.json we read or wrote, sent as If-Match
+// on /save_zones so a concurrent edit by another tab can't silently overwrite
+// us — the server returns 412 and we surface a conflict notice.
+let zones_etag = null;
 
 fetch('./config.json')
     .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
@@ -29,6 +33,7 @@ function generate_map(zones_url) {
     fetch(zones_url)
         .then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            zones_etag = response.headers.get('ETag');
             return response.text();
         })
         .then(json => {
@@ -183,15 +188,27 @@ function save_zones() {
         })
     };
 
+    const headers = {'Content-Type': 'application/json'};
+    if (zones_etag) headers['If-Match'] = zones_etag;
+
     fetch('./save_zones', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
+        headers: headers,
         body: JSON.stringify(geojson)
     }).then(response => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
+        const new_etag = response.headers.get('ETag');
+        if (new_etag) zones_etag = new_etag;
+
+        if (response.status === 412) {
+            elem.classList.remove('success')
+            elem.classList.add('error')
+            // Don't auto-clear — conflict needs explicit user attention.
+            if (status) status.textContent =
+                'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.';
+            return;
+        }
         if (response.ok) {
             elem.classList.remove('error')
             elem.classList.add('success')

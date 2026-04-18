@@ -82,6 +82,8 @@ curl -X POST -H 'Content-Type: application/json' \
 
 Recommended: leave `save_token` set, only enable `allow_all_ips` while you're actively backing up, then disable it again.
 
+`GET /zones.json` returns an `ETag` header. Pass it back as `If-Match` on `POST /save_zones` to refuse the write if anything changed in between (the addon's own UI does this by default). Plain `curl` posts without `If-Match` keep their last-write-wins behaviour, so existing scripts are unaffected.
+
 ### Integration with the Polygonal Zones HA integration
 
 The companion integration ([Polygonal Zones](https://github.com/MichelGerding/Homeassistant-polygonal-zones-integration)) reads `/zones.json` from this addon. If the integration runs anywhere other than the HA ingress sidecar (different container or external host), set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.

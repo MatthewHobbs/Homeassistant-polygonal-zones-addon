@@ -64,6 +64,67 @@ def test_zones_json_passes_file_bytes_through(allow_all_client, tmp_zones_file):
     assert response.content == raw
 
 
+def test_zones_json_returns_etag(allow_all_client, tmp_zones_file):
+    response = allow_all_client.get("/zones.json")
+    assert response.status_code == 200
+    etag = response.headers.get("etag")
+    assert etag is not None
+    # Strong validator: quoted hex sha256.
+    assert etag.startswith('"') and etag.endswith('"')
+    assert len(etag) == 64 + 2  # sha256 hex + quotes
+
+
+def test_save_response_includes_new_etag(allow_all_client, tmp_zones_file):
+    # Initial GET ETag.
+    initial = allow_all_client.get("/zones.json").headers["etag"]
+    # POST a new payload.
+    r = allow_all_client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 200
+    assert "etag" in r.headers
+    # The new ETag must be in both the response header and the body, and
+    # must differ from the pre-write value.
+    assert r.headers["etag"] == r.json()["etag"]
+    assert r.headers["etag"] != initial
+
+
+def test_save_with_matching_if_match_succeeds(allow_all_client, tmp_zones_file):
+    etag = allow_all_client.get("/zones.json").headers["etag"]
+    r = allow_all_client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"If-Match": etag},
+    )
+    assert r.status_code == 200
+
+
+def test_save_with_stale_if_match_returns_412(allow_all_client, tmp_zones_file):
+    # First save advances the ETag.
+    initial = allow_all_client.get("/zones.json").headers["etag"]
+    allow_all_client.post("/save_zones", json=_valid_payload(name="One"))
+
+    # Now post with the stale ETag — should be refused.
+    r = allow_all_client.post(
+        "/save_zones",
+        json=_valid_payload(name="Two"),
+        headers={"If-Match": initial},
+    )
+    assert r.status_code == 412
+    body = r.json()
+    assert body["error"] == "precondition failed"
+    assert body["current_etag"] != initial
+    # The 412 response must surface the current ETag so the client can
+    # refetch and recover without a separate GET.
+    assert r.headers.get("etag") == body["current_etag"]
+
+
+def test_save_without_if_match_still_works(allow_all_client, tmp_zones_file):
+    # Backwards-compat: clients that don't send If-Match keep working
+    # (last-write-wins) so older curl scripts and the integration aren't
+    # forced to learn ETags.
+    r = allow_all_client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 200
+
+
 def test_zones_json_sets_cache_headers(allow_all_client):
     response = allow_all_client.get("/zones.json")
     assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
@@ -87,7 +148,9 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     response = allow_all_client.post("/save_zones", json=payload)
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "etag" in body  # new in 0.2.11
     assert json.loads(tmp_zones_file.read_text()) == payload
 
 
