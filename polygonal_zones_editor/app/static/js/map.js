@@ -174,17 +174,31 @@ function save_zones() {
         body: JSON.stringify(geojson)
     }).then(response => {
         let elem = document.querySelector('.save-btn');
+        let status = document.getElementById('save-status');
         if (response.ok) {
             elem.classList.remove('error')
             elem.classList.add('success')
+            if (status) status.textContent = 'Zones saved.';
         } else {
             elem.classList.remove('success')
             elem.classList.add('error')
+            if (status) status.textContent = `Save failed (${response.status}).`;
         }
 
         setTimeout(() => {
             elem.classList.remove('error')
             elem.classList.remove('success')
+            if (status) status.textContent = '';
+        }, 2000)
+    }).catch(err => {
+        let elem = document.querySelector('.save-btn');
+        let status = document.getElementById('save-status');
+        elem.classList.remove('success')
+        elem.classList.add('error')
+        if (status) status.textContent = `Save failed: ${err.message}`;
+        setTimeout(() => {
+            elem.classList.remove('error')
+            if (status) status.textContent = '';
         }, 2000)
     })
 }
