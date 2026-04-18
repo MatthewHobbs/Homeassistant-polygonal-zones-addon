@@ -1,7 +1,9 @@
+import contextlib
 import json
 import logging
 import os
 import sys
+import tempfile
 
 from starlette.requests import Request
 
@@ -77,6 +79,37 @@ def get_file_list(path: str) -> list[str]:
         for filename in filenames:
             files.append(os.path.join(root, filename))
     return files
+
+
+def atomic_write_json(path: str, data) -> None:
+    """Serialise ``data`` to ``path`` atomically.
+
+    Writes to a temporary file in the same directory, flushes and fsyncs it,
+    then renames it over the destination. Guarantees that a concurrent reader
+    (or a reader after a crash/power loss) never observes a partial or
+    truncated file: either the previous contents are visible, or the new
+    contents are visible — never an intermediate state.
+
+    ``os.replace`` is atomic on POSIX when source and destination are on the
+    same filesystem, which is why the temp file is created in the same
+    directory as the destination rather than ``/tmp``.
+
+    Args:
+        path (str): Destination file path.
+        data: Any JSON-serialisable object.
+    """
+    directory = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=directory)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def load_options() -> dict:
