@@ -72,3 +72,57 @@ jobs:
           load: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Smoke-test the amd64 image only — it can be loaded into the runner's
+      # docker daemon without QEMU. Verifies the addon actually boots under a
+      # Supervisor-style /data mount (root-owned options.json), which would
+      # have caught the regressions in 0.2.0 and 0.2.1.
+      - name: Build amd64 smoke image
+        if: matrix.arch == 'amd64'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./polygonal_zones_editor
+          platforms: linux/amd64
+          build-args: |
+            BUILD_FROM=${{ matrix.base }}
+          load: true
+          tags: polygonal-zones:smoke
+          cache-from: type=gha
+
+      - name: Boot container and probe endpoints
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          DATA=$(mktemp -d)
+          # Simulate the Supervisor mount: options.json is root-owned. The
+          # addon must still be able to read it.
+          sudo install -o root -g root -m 0644 /dev/stdin "$DATA/options.json" <<< '{"allow_all_ips":true,"zone_colour":"green"}'
+
+          docker run -d --name smoke -p 8000:8000 -v "$DATA":/data polygonal-zones:smoke
+
+          # Wait up to 30s for /healthz.
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/healthz | grep -q ok; then
+              echo "OK /healthz responded on attempt $i"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "FAIL /healthz never responded"
+              docker logs smoke
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # /zones.json must return a valid empty FeatureCollection (seeded at
+          # startup if /data/polygonal_zones/zones.json is absent).
+          curl -fsS http://127.0.0.1:8000/zones.json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("type")=="FeatureCollection" and isinstance(d.get("features"), list), d; print("OK /zones.json shape")'
+
+          # /save_zones round-trip with a minimal valid GeoJSON.
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"smoke"},"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}' \
+            http://127.0.0.1:8000/save_zones | grep -q '"status":"ok"' && echo "OK /save_zones round-trip"
+
+          echo "--- container logs ---"
+          docker logs smoke
+          docker stop smoke >/dev/null
