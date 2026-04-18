@@ -150,36 +150,50 @@ def test_save_zones_blocks_unauthorized_client(restricted_client, tmp_zones_file
     assert tmp_zones_file.read_text() == original
 
 
-def test_index_substitutes_zone_colour(allow_all_client):
+def test_index_serves_static_html(allow_all_client):
     response = allow_all_client.get("/")
     assert response.status_code == 200
-    # ZONE_COLOUR default is "green" when the option is absent.
-    assert '"green"' in response.text
+    # index.html is now served by StaticFiles (html=True) — no template
+    # rendering, no per-request file open.
+    assert "<title>Polygonal zones: Edit zones</title>" in response.text
+    # Placeholder must be gone now that ZONE_COLOUR comes from /config.json.
     assert "{{ ZONE_COLOUR }}" not in response.text
+    assert "ZONE_COLOUR" not in response.text
 
 
-def test_index_respects_zone_colour_option(app_factory):
+def test_config_json_default(allow_all_client):
+    response = allow_all_client.get("/config.json")
+    assert response.status_code == 200
+    assert response.json() == {"zone_colour": "green"}
+
+
+def test_config_json_respects_option(app_factory):
     app = app_factory({"allow_all_ips": True, "zone_colour": "purple"})
     client = TestClient(app)
-    response = client.get("/")
+    response = client.get("/config.json")
     assert response.status_code == 200
-    assert '"purple"' in response.text
+    assert response.json() == {"zone_colour": "purple"}
 
 
-def test_index_escapes_malicious_zone_colour(app_factory):
+def test_config_json_passes_arbitrary_string_safely(app_factory):
+    # JSONResponse encodes the value safely — no template injection surface.
     malicious = 'red"; alert(1); //'
     app = app_factory({"allow_all_ips": True, "zone_colour": malicious})
     client = TestClient(app)
-    response = client.get("/")
+    response = client.get("/config.json")
     assert response.status_code == 200
-    # Quote must be escaped so the injected payload stays inside the JS string literal.
-    assert '"red\\"; alert(1); //"' in response.text or '"red\\u0022; alert(1); //"' in response.text
+    assert response.json() == {"zone_colour": malicious}
 
 
 def test_index_blocks_unauthorized_client(restricted_client):
     response = restricted_client.get("/")
     assert response.status_code == 403
     assert response.text == "not allowed"
+
+
+def test_config_json_blocks_unauthorized_client(restricted_client):
+    response = restricted_client.get("/config.json")
+    assert response.status_code == 403
 
 
 def test_healthz_returns_ok_without_authz(restricted_client):

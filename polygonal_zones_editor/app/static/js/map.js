@@ -1,5 +1,17 @@
-const {map, editableLayers} = generate_map('./zones.json')
-setup_editing(map, editableLayers);
+const {map, editableLayers} = generate_map('./zones.json');
+
+// Fetch the runtime config (zone colour) before wiring the draw control so
+// the colour is applied. Falls back to 'green' if /config.json is unreachable.
+fetch('./config.json')
+    .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+    .catch(err => {
+        console.warn('config.json fetch failed, using defaults:', err);
+        return {};
+    })
+    .then(cfg => {
+        window.ZONE_COLOUR = cfg.zone_colour || 'green';
+        setup_editing(map, editableLayers);
+    });
 
 function generate_map(zones_url) {
     const osm_url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';

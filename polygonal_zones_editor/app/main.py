@@ -7,7 +7,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -98,16 +98,12 @@ async def save_zones(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-def index_html_generator(options: dict, static_folder: str):
-    async def get_index(_request: Request) -> HTMLResponse:
-        with open(os.path.join(static_folder, "index.html"), "r") as f:
-            content = f.read()
-        # json.dumps produces a safe JS string literal even if the option
-        # contains quotes or control characters.
-        safe_colour = json.dumps(options.get("zone_colour", "green"))
-        content = content.replace("{{ ZONE_COLOUR }}", safe_colour)
-        return HTMLResponse(content)
-    return get_index
+def config_json_generator(options: dict):
+    async def config_json(_request: Request) -> JSONResponse:
+        return JSONResponse({
+            "zone_colour": options.get("zone_colour", "green"),
+        })
+    return config_json
 
 
 async def zones_json(_request: Request) -> JSONResponse:
@@ -127,11 +123,13 @@ async def healthz(_request: Request) -> PlainTextResponse:
 def generate_app(options: dict) -> tuple[Starlette, dict]:
     static_folder = "static"
     routes = [
-        Route("/", index_html_generator(options, static_folder), methods=["GET"]),
         Route("/save_zones", save_zones, methods=["POST"]),
         Route("/zones.json", zones_json, methods=["GET"]),
+        Route("/config.json", config_json_generator(options), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
-        Mount("/", app=StaticFiles(directory=static_folder, html=False), name="static"),
+        # html=True makes "/" return index.html. Explicit Routes above take
+        # precedence on their exact paths.
+        Mount("/", app=StaticFiles(directory=static_folder, html=True), name="static"),
     ]
 
     log_config = uvicorn.config.LOGGING_CONFIG
