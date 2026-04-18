@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 import uvicorn
@@ -10,10 +11,10 @@ from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from helpers import init_logging, allow_request, allow_all_ips, load_options, atomic_write_json
+from helpers import configure_logging, allow_request, allow_all_ips, load_options, atomic_write_json
 from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES
 
-_LOGGER = init_logging()
+_LOGGER = logging.getLogger(__name__)
 
 # Paths that bypass the IP allowlist (health probes need to work without any
 # client-IP constraints).
@@ -152,6 +153,8 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
 
 
 if __name__ == "__main__":
+    configure_logging()
+
     os.makedirs(DATA_FOLDER, exist_ok=True)
     if not os.path.exists(ZONES_FILE):
         with open(ZONES_FILE, "w") as f:

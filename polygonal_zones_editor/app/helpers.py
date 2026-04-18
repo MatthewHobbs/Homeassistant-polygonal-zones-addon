@@ -9,59 +9,36 @@ from starlette.requests import Request
 
 from const import ALLOWED_IPS, OPTIONS_FILE
 
+_LOGGER = logging.getLogger(__name__)
 
-def init_logging() -> logging.Logger:
-    """Cretae a logger that formats the log messages.
 
-    Returns:
-        logging.Logger: A logger that formats the log messages.
+def configure_logging(level: int = logging.INFO) -> None:
+    """Configure the root logger once.
+
+    Call exactly once from ``__main__``. Uses ``logging.basicConfig`` so it
+    no-ops if handlers are already attached (e.g. by test frameworks).
     """
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('[%(levelname)s: %(asctime)s]: %(message)s')
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    return logger
+    logging.basicConfig(
+        level=level,
+        format="[%(levelname)s: %(asctime)s]: %(message)s",
+        stream=sys.stdout,
+    )
 
 
 def allow_all_ips(options: dict) -> bool:
-    """Check if the --allow-all-ips flag is passed or enabled in the options.
-
-    Args:
-        options (dict): A dictionary of options.
-
-    Returns:
-        bool: True if the --allow-all-ips flag is passed or enabled in the options, False otherwise.
-    """
+    """Check if the --allow-all-ips flag is passed or enabled in the options."""
     return '--allow-all-ips' in sys.argv or '-a' in sys.argv or options.get('allow_all_ips', False)
 
 
 def allowed_ip(request: Request) -> bool:
-    """Check if the request's client IP is allowed to access the web interface.
-
-    Args:
-        request (Request): A request object.
-
-    Returns:
-        bool: True if the request's client IP is allowed to access the web interface, False otherwise.
-    """
+    """Check if the request's client IP is allowed to access the web interface."""
     if not request.client.host:
         return False
-
     return request.client.host in ALLOWED_IPS
 
 
 def allow_request(options: dict, request: Request) -> bool:
-    """Check if the request is allowed to access the web interface.
-
-    Args:
-        options (dict): A dictionary of options.
-        request (Request): A request object.
-
-    Returns:
-        bool: True if the request is allowed to access the web interface, False otherwise.
-    """
+    """Check if the request is allowed to access the web interface."""
     return allow_all_ips(options) or allowed_ip(request)
 
 
@@ -73,14 +50,6 @@ def atomic_write_json(path: str, data) -> None:
     (or a reader after a crash/power loss) never observes a partial or
     truncated file: either the previous contents are visible, or the new
     contents are visible — never an intermediate state.
-
-    ``os.replace`` is atomic on POSIX when source and destination are on the
-    same filesystem, which is why the temp file is created in the same
-    directory as the destination rather than ``/tmp``.
-
-    Args:
-        path (str): Destination file path.
-        data: Any JSON-serialisable object.
     """
     directory = os.path.dirname(path) or '.'
     fd, tmp_path = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=directory)
@@ -97,13 +66,21 @@ def atomic_write_json(path: str, data) -> None:
 
 
 def load_options() -> dict:
-    """Load the options from the options file.
+    """Load the addon options from OPTIONS_FILE.
 
-    Returns:
-        dict: A dictionary of options.
+    Returns an empty dict when the file is missing. Invalid JSON or I/O
+    errors are logged and fall back to an empty dict so the addon can still
+    start with defaults — a corrupt options.json must not be a boot-loop.
     """
-    o = {}
-    if os.path.exists(OPTIONS_FILE):
+    if not os.path.exists(OPTIONS_FILE):
+        return {}
+    try:
         with open(OPTIONS_FILE, 'r') as f:
-            o = json.load(f)
-    return o
+            loaded = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        _LOGGER.exception("Failed to read %s; starting with default options.", OPTIONS_FILE)
+        return {}
+    if not isinstance(loaded, dict):
+        _LOGGER.warning("%s did not contain a JSON object; starting with default options.", OPTIONS_FILE)
+        return {}
+    return loaded

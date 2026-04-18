@@ -81,15 +81,53 @@ def test_load_options_reads_existing_file(tmp_options_file):
     assert helpers.load_options() == {"allow_all_ips": True, "zone_colour": "purple"}
 
 
-def test_init_logging_returns_configured_logger():
+def test_configure_logging_sets_root_handler():
     import logging
 
     import helpers
 
-    logger = helpers.init_logging()
-    assert isinstance(logger, logging.Logger)
-    assert logger.level == logging.INFO
-    assert logger.handlers, "expected at least one handler attached"
+    # Reset root logger so basicConfig actually runs.
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+    helpers.configure_logging()
+    assert root.level == logging.INFO
+    assert root.handlers, "expected at least one handler on root"
+
+
+def test_configure_logging_is_idempotent():
+    import logging
+
+    import helpers
+
+    helpers.configure_logging()
+    before = len(logging.getLogger().handlers)
+    helpers.configure_logging()
+    # basicConfig no-ops when handlers already exist; we must not accumulate.
+    assert len(logging.getLogger().handlers) == before
+
+
+def test_load_options_falls_back_on_malformed_json(tmp_options_file, caplog):
+    import logging
+
+    import helpers
+
+    tmp_options_file.write_text("{not valid json")
+    with caplog.at_level(logging.ERROR):
+        assert helpers.load_options() == {}
+    assert any("Failed to read" in rec.message for rec in caplog.records)
+
+
+def test_load_options_falls_back_when_not_an_object(tmp_options_file, caplog):
+    import logging
+
+    import helpers
+
+    tmp_options_file.write_text("[1, 2, 3]")
+    with caplog.at_level(logging.WARNING):
+        assert helpers.load_options() == {}
+    assert any("JSON object" in rec.message for rec in caplog.records)
 
 
 def test_atomic_write_json_writes_new_file(tmp_path):
