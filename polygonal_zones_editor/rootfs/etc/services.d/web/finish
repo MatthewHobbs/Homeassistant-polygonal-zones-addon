@@ -1,0 +1,6 @@
+#!/usr/bin/with-contenv bashio
+# If the web service exits, surface it and let s6 stop the container so the
+# Supervisor notices and restarts the addon.
+
+bashio::log.warning "Web service exited with status ${1:-unknown}; stopping container"
+exec /run/s6/basedir/bin/halt

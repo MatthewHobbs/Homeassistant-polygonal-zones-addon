@@ -1,0 +1,15 @@
+#!/usr/bin/with-contenv bashio
+# Fix up /data ownership so the unprivileged 'app' user can read the
+# Supervisor-mounted options.json and read/write the addon's own files.
+#
+# The Supervisor mounts /data/options.json root-owned. Without this chown,
+# the 'app' user hits PermissionError at startup. See issue #14.
+
+set -e
+
+mkdir -p /data/polygonal_zones
+chown -R app:app /data/polygonal_zones
+
+if [ -f /data/options.json ]; then
+    chown app:app /data/options.json
+fi

@@ -123,6 +123,21 @@ jobs:
             --data '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"smoke"},"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}' \
             http://127.0.0.1:8000/save_zones | grep -q '"status":"ok"' && echo "OK /save_zones round-trip"
 
+          # The web service must run as non-root (uid != 0). Regression guard
+          # for #14.
+          WEB_UID=$(docker exec smoke sh -c "ps -o uid= -p \$(pgrep -f 'python main.py' | head -n1)" | tr -d ' ')
+          if [ -z "$WEB_UID" ]; then
+            echo "FAIL could not locate python main.py process"
+            docker logs smoke
+            exit 1
+          fi
+          if [ "$WEB_UID" = "0" ]; then
+            echo "FAIL web service is running as root (uid 0)"
+            docker logs smoke
+            exit 1
+          fi
+          echo "OK web service runs as uid $WEB_UID (non-root)"
+
           echo "--- container logs ---"
           docker logs smoke
           docker stop smoke >/dev/null

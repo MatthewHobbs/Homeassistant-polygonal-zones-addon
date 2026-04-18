@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3 — 2026-04-18
+
+- The addon now runs as a non-root `app` user (uid 1001). An s6-overlay init script runs first as root to chown `/data/options.json` and the addon's data directory to `app`, then `s6-setuidgid` drops privileges before launching the web service. A CI runtime smoke test (added in 0.2.2's window) guards this against regression.
+
 ## 0.2.2 — 2026-04-18
 
 - Run as root again. The non-root `app` user introduced in 0.2.0 could not read the Supervisor-mounted `/data/options.json`, so 0.2.1 failed to start with `PermissionError`. Proper privilege drop needs an s6 init script that chowns `/data` first; tracked in #14.
