@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.22 — 2026-04-19
+
+### Fixed
+
+- **Hotfix: removed the custom AppArmor profile.** 0.2.21's `mrix` tweak addressed the `/init` read-permission gap visible during teardown, but the container still failed to bind port 8000 under the profile — Supervisor logged repeated `Ingress error: Cannot connect to host 172.30.33.1:8000` and the Web UI returned 502. Rather than iterate on the profile blind without a live Supervisor to test against, `polygonal_zones_editor/apparmor.txt` has been deleted. Supervisor falls back to the stock `docker-default` AppArmor profile, same as 0.2.14 and every earlier release. A hardened custom profile can return once it's been validated against a live HA OS instance under Supervisor — not against GHA's smoke container, which doesn't load addon profiles.
+
+  Users on 0.2.16–0.2.21 who hit the 502 / restart loop recover automatically once 0.2.22 lands on ghcr.io, or can roll back to 0.2.14 in the meantime via the Supervisor version picker.
+
 ## 0.2.21 — 2026-04-19
 
 ### Fixed
