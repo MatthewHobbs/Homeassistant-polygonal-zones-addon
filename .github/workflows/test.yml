@@ -13,7 +13,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Prefix with "tests-" so this doesn't share a group with lint.yml when
+  # both are called from release.yml. Reusable workflows inherit the
+  # caller's `github.workflow` and `github.ref`, so a plain
+  # "${{ github.workflow }}-${{ github.ref }}" group collides with lint's
+  # and cancels whichever runs second.
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
