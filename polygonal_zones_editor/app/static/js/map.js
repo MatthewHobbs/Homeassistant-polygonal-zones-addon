@@ -45,51 +45,142 @@ fetch('./config.json')
         window.PZUiState.initSidebarState(map);
     });
 
-function generate_map(zones_url) {
-    // Tile layers come from the PZBasemaps registry (basemaps.js) so #31
-    // can register additional providers without editing this file. The
-    // two seed entries (OSM, CARTO dark) are byte-identical to the
-    // literals this block previously inlined.
-    const osm = window.PZBasemaps.createLayer(
-        window.PZBasemaps.getDefaultBasemap('light').id);
-    const dark = window.PZBasemaps.createLayer(
-        window.PZBasemaps.getDefaultBasemap('dark').id);
+// User-facing labels for the basemap picker. Separate from the registry's
+// `label` field (which carries provider names like "OpenStreetMap") so the
+// picker can show friendlier copy without losing the provider identity in
+// the attribution control Leaflet renders on the map itself.
+const BASEMAP_PICKER_LABELS = {
+    'osm': 'Street map',
+    'carto-dark': 'Dark',
+    'esri-imagery': 'Satellite',
+};
 
-    const dark_mq = window.matchMedia('(prefers-color-scheme: dark)');
-    // Pick the initial tile layer to match the resolved theme.
-    let want_dark;
-    if (window.PZ_THEME === 'dark') want_dark = true;
-    else if (window.PZ_THEME === 'light') want_dark = false;
-    else want_dark = dark_mq.matches; // auto
+// Consecutive tileerror events across the active basemap. Threshold of 5
+// lets a single flaky tile or momentary DNS blip pass without nagging the
+// user, but catches a dead provider within a couple of seconds of panning.
+let consecutiveTileErrors = 0;
+const TILE_ERROR_THRESHOLD = 5;
+
+function reset_tile_error_banner() {
+    consecutiveTileErrors = 0;
+    const banner = document.getElementById('tile-error-banner');
+    if (banner) banner.hidden = true;
+}
+
+function attach_tile_error_watch(layer) {
+    layer.on('tileerror', () => {
+        consecutiveTileErrors++;
+        if (consecutiveTileErrors >= TILE_ERROR_THRESHOLD) {
+            const banner = document.getElementById('tile-error-banner');
+            if (banner) banner.hidden = false;
+        }
+    });
+    layer.on('tileload', () => {
+        if (consecutiveTileErrors > 0) reset_tile_error_banner();
+    });
+}
+
+function setup_basemap_picker(layers, onChange) {
+    const select = document.getElementById('pz-basemap-select');
+    if (!select) return;
+
+    select.innerHTML = '';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = 'auto';
+    autoOpt.textContent = 'Auto (follows theme)';
+    select.appendChild(autoOpt);
+
+    window.PZBasemaps.listBasemaps().forEach(b => {
+        if (!layers[b.id]) return;
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = BASEMAP_PICKER_LABELS[b.id] || b.label;
+        select.appendChild(opt);
+    });
+
+    // Reflect the current state. When pz:basemap is unset or 'auto', the
+    // picker shows 'auto'; otherwise it shows the stored id.
+    const stored = window.PZStorage.get('pz:basemap');
+    select.value = (stored && stored !== 'auto' && layers[stored]) ? stored : 'auto';
+
+    select.addEventListener('change', () => onChange(select.value));
+}
+
+
+function generate_map(zones_url) {
+    // Build one Leaflet layer instance per registered basemap. The picker
+    // (#31) swaps the active layer by add/remove rather than constructing
+    // fresh layer objects each time — cheaper, and the tile-error watch
+    // below gets attached exactly once per layer.
+    const layers = {};
+    window.PZBasemaps.listBasemaps().forEach(b => {
+        const layer = window.PZBasemaps.createLayer(b.id);
+        if (layer) {
+            layers[b.id] = layer;
+            attach_tile_error_watch(layer);
+        }
+    });
+
+    // Restore the user's persisted explicit choice, or fall back to the
+    // theme-appropriate default. userChoseTile tracks whether the user
+    // made an explicit pick: when true, the prefers-color-scheme auto-
+    // swap below is suppressed so the user's choice isn't overridden
+    // when the OS light/dark preference changes.
+    const stored = window.PZStorage.get('pz:basemap');
+    let userChoseTile = false;
+    let activeId;
+    if (stored && stored !== 'auto' && layers[stored]) {
+        activeId = stored;
+        userChoseTile = true;
+    } else {
+        activeId = window.PZBasemaps.getDefaultBasemap(window.PZ_THEME).id;
+    }
+
     const map = L.map('map', {
-        layers: [want_dark ? dark : osm],
+        layers: [layers[activeId]],
         center: [52.96523540264812, 6.52002831753822],
         zoom: 13,
     });
 
-    // Tracks whether the user has actively chosen a basemap (via the
-    // picker landing with #31). Once true, the theme-follow auto-swap
-    // below is suppressed so the user's explicit choice isn't overridden
-    // when the OS light/dark preference changes. baselayerchange fires
-    // for L.Control.Layers radio clicks; direct addLayer/removeLayer
-    // does not fire it, so the auto-swap itself won't flip this flag.
-    let userChoseTile = false;
-    map.on('baselayerchange', () => {
-        userChoseTile = true;
-        // #31 will persist the chosen layer id to pz:basemap here.
-    });
+    // swap_to drives every layer change the app makes — picker events,
+    // theme auto-swap, and the initial picker-populate — so it's the
+    // single place that resets the tile-error banner (stale errors from
+    // a dead provider shouldn't linger after the user switches).
+    function swap_to(newId) {
+        if (!layers[newId]) return;
+        if (newId === activeId) return;
+        Object.values(layers).forEach(l => {
+            if (l && map.hasLayer(l)) map.removeLayer(l);
+        });
+        layers[newId].addTo(map);
+        activeId = newId;
+        reset_tile_error_banner();
+    }
 
-    // Only follow OS changes when theme=auto AND the user hasn't
-    // manually picked a basemap yet.
+    // Prefers-color-scheme auto-swap: only runs when the user hasn't
+    // picked an explicit basemap AND the theme option is 'auto' (forced
+    // light/dark via config skips the OS-follow entirely).
     if (window.PZ_THEME !== 'light' && window.PZ_THEME !== 'dark') {
+        const dark_mq = window.matchMedia('(prefers-color-scheme: dark)');
         dark_mq.addEventListener('change', e => {
             if (userChoseTile) return;
-            const next = e.matches ? dark : osm;
-            const prev = e.matches ? osm : dark;
-            if (map.hasLayer(prev)) map.removeLayer(prev);
-            if (!map.hasLayer(next)) next.addTo(map);
+            const preferredId = window.PZBasemaps.getDefaultBasemap(
+                e.matches ? 'dark' : 'light').id;
+            swap_to(preferredId);
         });
     }
+
+    setup_basemap_picker(layers, (choice) => {
+        if (choice === 'auto') {
+            userChoseTile = false;
+            window.PZStorage.remove('pz:basemap');
+            swap_to(window.PZBasemaps.getDefaultBasemap(window.PZ_THEME).id);
+        } else {
+            userChoseTile = true;
+            window.PZStorage.set('pz:basemap', choice);
+            swap_to(choice);
+        }
+    });
 
     let editableLayers = new L.FeatureGroup();
     map.addLayer(editableLayers);

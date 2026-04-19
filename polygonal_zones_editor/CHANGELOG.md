@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.28 — 2026-04-19
+
+First user-visible UX slice after the 0.2.27 correctness batch — a tile-layer picker (#31). Scaffolding landed in 0.2.24; this release wires the actual control.
+
+### Added
+
+- **Basemap picker** in the sidebar (#31). A native `<select>` labelled "Map style" lives between the sidebar header and the zone list. Four options:
+  - `Auto (follows theme)` — follows the OS `prefers-color-scheme` (and the `theme` option in addon config if forced to light/dark). This is the default when you haven't made an explicit pick.
+  - `Street map` — OpenStreetMap light tiles.
+  - `Dark` — CARTO Dark tiles.
+  - `Satellite` — Esri World Imagery. Free, permissive-ToS satellite tiles; no API key required. Attribution auto-displayed in the Leaflet control.
+  The choice persists to `localStorage` under `pz:basemap` and survives reload. Picking `Auto` removes the stored key and re-engages the theme-follow behaviour. CSP was widened to permit `https://server.arcgisonline.com` as a new `img-src` origin for the satellite option.
+- **Tile-error banner** on the map. If the active basemap fails to serve five consecutive tiles (threshold chosen to ignore a single flaky tile or momentary DNS blip while catching a dead provider within a couple of seconds of panning), a small non-blocking banner appears at the bottom-centre of the map reading *"Map tiles failed to load. Try a different map style."* The banner clears on the next successful tile and resets whenever the user switches basemaps. Styled with existing design tokens (`--popup-bg`, `--border-color`, `--text-color`) so light/dark parity is free.
+
+### Release gate
+
+- Build-time Playwright smoke asserts the picker element exists, contains the four expected options in order, and that switching to Satellite swaps the active tile layer. Locks the picker UX into the release gate so silent regressions (script-ordering, option-list drift) can't reach users.
+
 ## 0.2.27 — 2026-04-19
 
 Installation and correctness — a batch of owned P0 fixes from this week's principal-engineer panel review. No new features; the next user-visible UX work is queued for 0.2.28.

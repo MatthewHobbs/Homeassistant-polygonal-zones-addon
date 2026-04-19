@@ -26,6 +26,19 @@
             options: {maxZoom: 19, subdomains: 'abcd'},
             darkAffinity: 'dark',
         },
+        {
+            // Esri World Imagery is the only free satellite option with a
+            // permissive ToS for embedded use (Mapbox / Google require API
+            // keys and a billing relationship). darkAffinity is 'neither' so
+            // it never gets picked by getDefaultBasemap's auto resolution —
+            // users explicitly opt in via the picker.
+            id: 'esri-imagery',
+            label: 'Esri World Imagery',
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+            options: {maxZoom: 19},
+            darkAffinity: 'neither',
+        },
     ];
 
     function getBasemap(id) {
