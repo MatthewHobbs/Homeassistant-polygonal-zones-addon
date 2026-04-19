@@ -117,9 +117,27 @@ body {
     color: var(--text-color);
 }
 
+/* Layout is keyed off data-sidebar on .body — owned by
+ * polygonal_zones_editor/app/static/js/ui-state.js. The default value
+ * is hardcoded in index.html; #29 adds a toggle that flips it to
+ * "collapsed" and #30 adds media-query-driven "drawer" behaviour. Both
+ * rules below are scaffolding in this refactor — nothing else sets the
+ * attribute to anything other than "open".
+ */
 .body {
     display: grid;
+}
+
+.body[data-sidebar="open"] {
     grid-template-columns: 1fr 300px;
+}
+
+.body[data-sidebar="collapsed"] {
+    /* wired in #29 */
+}
+
+.body[data-sidebar="drawer"] {
+    /* wired in #30 */
 }
 
 #map {
