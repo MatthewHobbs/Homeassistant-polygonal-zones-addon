@@ -712,16 +712,33 @@ def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_facto
     assert r.status_code == 200
 
 
-def test_zones_json_requires_ingress_when_save_token_set_and_allow_all_ips_off(
+def test_zones_json_returns_401_when_save_token_set_and_no_header(
     app_factory, tmp_zones_file,
 ):
-    """Authz matrix gap: save_token governs /save_zones but must not
-    accidentally open /zones.json. With allow_all_ips: false and a token
-    set, non-ingress GETs should still be rejected."""
+    """With save_token set and allow_all_ips off, a non-ingress GET with
+    no X-Save-Token header returns 401 (token required) rather than 403
+    (coarse block). This mirrors the /save_zones behaviour so a user
+    who sets save_token without also flipping allow_all_ips gets a
+    useful "auth is available, provide it" signal rather than a
+    flat forbidden."""
     app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
     client = TestClient(app)
     r = client.get("/zones.json")
-    assert r.status_code == 403
+    assert r.status_code == 401
+    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+
+
+def test_zones_json_token_unlocks_lan_without_allow_all_ips(
+    app_factory, tmp_zones_file,
+):
+    """Mirror of test_save_token_works_without_allow_all_ips for reads.
+    save_token is the stronger signal; setting it should unlock LAN
+    access without requiring allow_all_ips to also be flipped."""
+    app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
+    client = TestClient(app)
+    r = client.get("/zones.json", headers={"X-Save-Token": "sekrit"})
+    assert r.status_code == 200
+    assert r.headers.get("etag")
 
 
 def test_parse_trusted_proxies_handles_empty_and_list(app_factory):

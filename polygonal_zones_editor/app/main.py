@@ -32,8 +32,11 @@ _LOGGER = logging.getLogger(__name__)
 # Paths that bypass the IP allowlist middleware. /healthz is exempt so the
 # Docker HEALTHCHECK works. /save_zones runs its own authorisation logic
 # (allowing token-bearing requests through even when allow_all_ips is off),
-# so it bypasses the coarse middleware too.
-AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones"})
+# so it bypasses the coarse middleware too. /zones.json mirrors /save_zones
+# now that reads are also token-gated — a user setting save_token without
+# allow_all_ips: true expects the token to unlock BOTH LAN reads and LAN
+# writes, same as on /save_zones.
+AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json"})
 
 # Rate limit on /save_zones authorisation failures. Protects against brute-
 # forcing save_token when the port is exposed on LAN. Only failures count;
@@ -112,17 +115,15 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
 def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
     """Decide whether a GET /zones.json request is allowed.
 
-    Mirrors ``authorise_save`` so the sensitive geometry is gated at least
-    as strongly as the less-sensitive write action. Previously, setting
-    ``save_token`` protected POST /save_zones but left GET /zones.json
-    reachable by any LAN client once ``allow_all_ips`` was on —
-    reads were *less* protected than writes.
+    Full mirror of ``authorise_save``: ingress → token → allow_all_ips →
+    deny. Previously reads were gated only by the IPAllowMiddleware, which
+    meant save_token didn't unlock LAN reads the way it unlocks LAN writes
+    — a user who set save_token and left allow_all_ips off couldn't read
+    zones.json on LAN even with the correct token. That asymmetry made
+    the reading path harder to reason about than the write path.
 
-    IPAllowMiddleware still runs first, so when ``allow_all_ips`` is off
-    and the client isn't ingress, this handler never gets called; the
-    middleware blocks at 403. This helper exists to close the
-    ``allow_all_ips: true`` + ``save_token`` corner where the middleware
-    lets the request through.
+    /zones.json is now in AUTHZ_EXEMPT_PATHS, so the middleware lets every
+    request through and this function is the sole read gate.
     """
     if allowed_ip(request):
         return True, None
@@ -134,9 +135,10 @@ def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
             return True, None
         return False, "invalid_token"
 
-    # No token configured — IPAllowMiddleware already approved this request
-    # (allow_all_ips must have been true, or the client is ingress).
-    return True, None
+    if allow_all_ips(options):
+        return True, None
+
+    return False, "not_allowed"
 
 
 class IPAllowMiddleware(BaseHTTPMiddleware):
@@ -347,22 +349,23 @@ def zones_json_generator(options: dict):
                 {"error": "too many failed attempts"},
                 status_code=429,
             )
-        ok, _ = authorise_read(options, request)
+        ok, reason = authorise_read(options, request)
         if not ok:
-            # authorise_read only returns False with reason="invalid_token".
-            # The plain "not_allowed" path that authorise_save uses can't
-            # happen for reads because IPAllowMiddleware already gates
-            # non-ingress, non-allow_all_ips clients at 403 before this
-            # handler runs — /zones.json isn't in AUTHZ_EXEMPT_PATHS.
             _record_save_failure(client_host)
+            if reason == "invalid_token":
+                _LOGGER.warning(
+                    "Rejected /zones.json read from %s: missing or invalid X-Save-Token",
+                    client_host,
+                )
+                return JSONResponse(
+                    {"error": "missing or invalid X-Save-Token"},
+                    status_code=401,
+                )
             _LOGGER.warning(
-                "Rejected /zones.json read from %s: missing or invalid X-Save-Token",
+                "Blocked /zones.json read from %s (not ingress, no token configured, allow_all_ips off)",
                 client_host,
             )
-            return JSONResponse(
-                {"error": "missing or invalid X-Save-Token"},
-                status_code=401,
-            )
+            return PlainTextResponse("not allowed", status_code=403)
 
         # Pass the file bytes through verbatim — atomic_write_json guarantees
         # the file is always valid JSON, so re-parsing and re-serialising via
