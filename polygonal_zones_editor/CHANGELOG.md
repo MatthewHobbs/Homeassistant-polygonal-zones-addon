@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.26 — 2026-04-19
+
+### Removed
+
+- Dropped `armhf`, `armv7`, and `i386` from the published architectures. Home Assistant 2025.12 (released 2025-12-03) deprecated 32-bit ARM and x86 as supported host architectures for addons; keeping them listed was generating `Architecture '<arch>' is deprecated and no longer supported` warnings on every `hassfest`/`@home-assistant/builder` lint run. `config.yaml`'s `arch:` list and `build.yaml`'s `build_from:` map are now `aarch64` + `amd64` only. The matrix generators in `.github/workflows/build.yml` and `.github/workflows/release.yml`, plus `.github/base-images.yaml`, follow suit — no dead base-image digests, no unused platform entries in the `arch_to_platform` dict. Users on 32-bit hosts running HA < 2025.12 will stop receiving updates at 0.2.25; they can pin to that version via the Supervisor version picker until they upgrade their host.
+
 ## 0.2.25 — 2026-04-18
 
 ### Added

@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.2.25"
+version: "0.2.26"
 slug: "polygonal_zones"
 url: "https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/tree/main/polygonal_zones_editor"
 # Uncomment when the codenotary/cas signing pipeline has been enabled
@@ -22,9 +22,6 @@ init: false
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
 # The addon only serves data that the polygonal-zones integration polls from
 # Home Assistant Core, so it belongs in the `services` tier rather than
 # `system`. `system` is for DNS / Supervisor-level services that must come up
