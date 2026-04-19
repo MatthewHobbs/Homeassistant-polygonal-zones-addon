@@ -1,5 +1,18 @@
 # Polygonal zones addon.
 
+[![GitHub release](https://img.shields.io/github/v/release/MatthewHobbs/Homeassistant-polygonal-zones-addon?style=flat-square&logo=github)](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/releases)
+[![License](https://img.shields.io/github/license/MatthewHobbs/Homeassistant-polygonal-zones-addon?style=flat-square)](./LICENSE)
+[![Tests](https://img.shields.io/github/actions/workflow/status/MatthewHobbs/Homeassistant-polygonal-zones-addon/test.yml?branch=main&style=flat-square&label=tests&logo=github-actions&logoColor=white)](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/actions/workflows/test.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/MatthewHobbs/Homeassistant-polygonal-zones-addon/build.yml?branch=main&style=flat-square&label=build&logo=github-actions&logoColor=white)](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/actions/workflows/build.yml)
+[![Lint](https://img.shields.io/github/actions/workflow/status/MatthewHobbs/Homeassistant-polygonal-zones-addon/lint.yml?branch=main&style=flat-square&label=lint&logo=github-actions&logoColor=white)](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/actions/workflows/lint.yml)
+[![Home Assistant Addon](https://img.shields.io/badge/Home%20Assistant-Addon-41BDF5?style=flat-square&logo=home-assistant&logoColor=white)](https://www.home-assistant.io/addons/)
+
+![aarch64](https://img.shields.io/badge/aarch64-yes-green?style=flat-square)
+![amd64](https://img.shields.io/badge/amd64-yes-green?style=flat-square)
+![armhf](https://img.shields.io/badge/armhf-yes-green?style=flat-square)
+![armv7](https://img.shields.io/badge/armv7-yes-green?style=flat-square)
+![i386](https://img.shields.io/badge/i386-yes-green?style=flat-square)
+
 > **Fork Notice**
 >
 > This repository is a fork of [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon),
