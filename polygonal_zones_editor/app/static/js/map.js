@@ -188,6 +188,17 @@ function edit_zone_event(e) {
     }
 }
 
+// Return the number of polygon shapes a layer represents. 1 for a plain
+// Polygon; N for a MultiPolygon (read via public toGeoJSON so we don't
+// depend on Leaflet's internal _latlngs shape).
+function shape_count(layer) {
+    const geometry = layer.toGeoJSON().geometry;
+    if (geometry && geometry.type === 'MultiPolygon') {
+        return geometry.coordinates.length;
+    }
+    return 1;
+}
+
 function render_zone_list() {
     let zone_list = document.querySelector('.zone-list');
     zone_list.innerHTML = '';
@@ -195,6 +206,8 @@ function render_zone_list() {
         // render a zone-entry element and set attribute name
         let zone_entry = document.createElement('zone-entry');
         zone_entry.setAttribute('name', layer.feature.properties.name);
+        const count = shape_count(layer);
+        if (count > 1) zone_entry.setAttribute('shape-count', String(count));
         zone_entry.addEventListener('edit', edit_zone_event);
 
         zone_list.appendChild(zone_entry);
@@ -202,22 +215,21 @@ function render_zone_list() {
 }
 
 function save_zones() {
-    let geojson = {
-        type: "FeatureCollection",
-        features: Object.values(editableLayers._layers).map(value => {
-            const points = value._latlngs[0].map(point => [point.lng, point.lat]);
-            return {
-                type: "Feature",
-                properties: {
-                    name: value.feature.properties.name
-                },
-                geometry: {
-                    type: "Polygon",
-                    coordinates: [points]
-                }
-            }
-        })
-    };
+    // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
+    // round-trip. The previous hand-assembly read _latlngs[0] only, which
+    // silently converted MultiPolygon zones (loaded from zones.json or via
+    // bulk-load) back into a single-ring Polygon — losing every ring
+    // beyond the first.
+    const features = [];
+    editableLayers.eachLayer(layer => {
+        const feature = layer.toGeoJSON();
+        // toGeoJSON preserves the layer's original feature.properties when
+        // present, but we re-write `name` to pick up any rename that hasn't
+        // yet been flushed back onto the inner feature object.
+        feature.properties = {name: layer.feature.properties.name};
+        features.push(feature);
+    });
+    const geojson = {type: "FeatureCollection", features};
 
     const headers = {'Content-Type': 'application/json'};
     if (zones_etag) headers['If-Match'] = zones_etag;

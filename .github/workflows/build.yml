@@ -125,9 +125,20 @@ jobs:
           # startup if /data/polygonal_zones/zones.json is absent).
           curl -fsS http://127.0.0.1:8000/zones.json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("type")=="FeatureCollection" and isinstance(d.get("features"), list), d; print("OK /zones.json shape")'
 
-          # /save_zones round-trip with a minimal valid GeoJSON.
+          # /save_zones round-trip with a mix of Polygon and MultiPolygon
+          # features. The MultiPolygon exercises the frontend's shape-count
+          # indicator and the save path's toGeoJSON-based export (the
+          # previous hand-rolled export destroyed MultiPolygon rings).
           curl -fsS -X POST -H 'Content-Type: application/json' \
-            --data '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"smoke"},"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}' \
+            --data '{"type":"FeatureCollection","features":[
+              {"type":"Feature","properties":{"name":"smoke"},
+               "geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}},
+              {"type":"Feature","properties":{"name":"multi"},
+               "geometry":{"type":"MultiPolygon","coordinates":[
+                 [[[2,2],[3,2],[3,3],[2,2]]],
+                 [[[4,4],[5,4],[5,5],[4,4]]]
+               ]}}
+            ]}' \
             http://127.0.0.1:8000/save_zones | grep -q '"status":"ok"' && echo "OK /save_zones round-trip"
 
           # The web service must run as non-root (uid != 0). Regression guard
@@ -178,11 +189,25 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
-                  # The smoke step POSTed one feature named 'smoke'; it must
-                  # appear in the sidebar zone list as a <zone-entry>.
+                  # The smoke step POSTed a Polygon ("smoke") and a
+                  # MultiPolygon with two shapes ("multi"). Both must
+                  # render as <zone-entry> elements.
                   count = await page.locator("zone-entry").count()
-                  if count < 1:
-                      print(f"FAIL no <zone-entry> rendered (got {count})")
+                  if count < 2:
+                      print(f"FAIL expected 2 zone-entry elements, got {count}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # The MultiPolygon zone must surface a shape count in its
+                  # shadow DOM — regression guard for the save-round-trip
+                  # fix that preserves MultiPolygon geometry.
+                  shape_count_text = await page.evaluate(
+                      "() => Array.from(document.querySelectorAll('zone-entry'))"
+                      ".map(z => z.shadowRoot.querySelector('.shape-count').textContent)"
+                      ".filter(t => t.trim()).join('|')"
+                  )
+                  if "2 shapes" not in shape_count_text:
+                      print(f"FAIL expected '(2 shapes)' indicator on the MultiPolygon zone; got: {shape_count_text!r}")
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
@@ -191,7 +216,7 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
-                  print(f"OK page loaded clean, {count} zone-entry rendered")
+                  print(f"OK page loaded clean, {count} zone-entry rendered, shape-count ok")
                   await browser.close()
 
           asyncio.run(main())
