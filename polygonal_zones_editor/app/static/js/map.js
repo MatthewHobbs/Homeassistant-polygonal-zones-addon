@@ -367,10 +367,17 @@ function setup_editing(map, editableLayers) {
         // rejects with 422. Existed in the code since the handler was
         // written but not caught because no test exercised the
         // draw → save round-trip end-to-end.
+        //
+        // `properties.id` is the stable binding handle automations use
+        // across renames. Generated client-side via crypto.randomUUID()
+        // (available in every browser HA supports; ingress runs current
+        // Chromium/WebKit). Server backfills one if the client omits it,
+        // so curl restores of pre-versioned files still work.
         layer.feature = {
             type: 'Feature',
             properties: {
-                name: name
+                name: name,
+                id: crypto.randomUUID().replace(/-/g, '')
             }
         };
 
@@ -450,8 +457,12 @@ function save_zones() {
         const feature = layer.toGeoJSON();
         // toGeoJSON preserves the layer's original feature.properties when
         // present, but we re-write `name` to pick up any rename that hasn't
-        // yet been flushed back onto the inner feature object.
-        feature.properties = {name: layer.feature.properties.name};
+        // yet been flushed back onto the inner feature object. The id is
+        // preserved so renames stay bindable by the HA integration; the
+        // server backfills one for zones loaded from pre-versioned files.
+        const src = layer.feature.properties || {};
+        feature.properties = {name: src.name};
+        if (src.id) feature.properties.id = src.id;
         features.push(feature);
     });
     const geojson = {type: "FeatureCollection", features};

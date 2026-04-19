@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.2.33 — 2026-04-19
+
+Contract-marker slice. Adds a top-level `schema_version` and a per-zone stable `properties.id` to the `zones.json` contract so the companion integration (and future consumers) can bind automations through renames and branch on shape changes.
+
+Reimplements the intent of an earlier stalled [PR #132](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/pull/132) against the post-0.2.30 raise-style validator and the post-0.2.32 vendored-Leaflet frontend.
+
+### Added
+
+- **`schema_version: 1`** stamped on every persisted `zones.json` at write time. Purely informational today — readers are expected to ignore unknown top-level keys — but consumers that pin behaviour to a specific shape can branch on this. Optional on input for curl-restore backward compatibility with pre-versioned files; rejected if present-but-not-int (`bool` explicitly rejected because `isinstance(True, int)` is True in Python).
+- **`properties.id`** on every feature — the stable handle HA automations bind to through zone renames. Optional on input; the server **backfills** a fresh `uuid4().hex` for any feature missing one so a curl-restored pre-versioned file still writes cleanly. When supplied by a client (the editor now generates one via `crypto.randomUUID()` on `draw:created`), it must be a non-empty string **and unique** across the collection — duplicate ids would defeat the "stable binding handle" contract.
+- **`docs/EVALUATION.md`** — the 7-specialist panel review (chief-architect, product-manager, security-reviewer, lead-backend, sre-reliability, dpo, lead-frontend) that seeded issues #111–#131 earlier this week. Committed as the provenance record for that arc of work; lands unchanged from the original panel output.
+
+### Contract
+
+```json
+{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"name": "Home", "id": "a1b2c3d4…"},
+      "geometry": { "…": "…" }
+    }
+  ]
+}
+```
+
+### Backwards compatibility
+
+- `GET /zones.json` still serves the bytes on disk verbatim. Existing clients that don't know about `schema_version` / `id` see them as unknown keys and ignore per GeoJSON's open-extension convention.
+- Curl-restored pre-versioned files still write: validator accepts missing `schema_version` and missing `id`; normalise step stamps both before the file hits disk.
+- The `_valid_payload()`-based round-trip test was tightened: the persisted file is now a normalised superset of the incoming payload rather than byte-identical. Any downstream test doing byte-comparison will need the same treatment.
+
 ## 0.2.32 — 2026-04-19
 
 Web-surface hardening: self-host Leaflet + Leaflet-Draw, tighten CSP.
