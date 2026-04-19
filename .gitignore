@@ -3,6 +3,8 @@
 ./zones.json
 __pycache__/
 .pytest_cache/
+.coverage
+zones-backup.json
 .claude/*
 # but check in shared skills (project-scope SKILL.md files etc.)
 !.claude/skills/
