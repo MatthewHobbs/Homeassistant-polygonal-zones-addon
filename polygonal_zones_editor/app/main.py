@@ -204,10 +204,19 @@ def save_zones_generator(options: dict):
     return save_zones
 
 
+_ALLOWED_THEMES = ("auto", "light", "dark")
+
+
+def _normalised_theme(options: dict) -> str:
+    raw = options.get("theme", "auto")
+    return raw if raw in _ALLOWED_THEMES else "auto"
+
+
 def config_json_generator(options: dict):
     async def config_json(_request: Request) -> JSONResponse:
         return JSONResponse({
             "zone_colour": options.get("zone_colour", "green"),
+            "theme": _normalised_theme(options),
         })
     return config_json
 

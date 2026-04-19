@@ -17,6 +17,11 @@ fetch('./config.json')
     })
     .then(cfg => {
         window.ZONE_COLOUR = cfg.zone_colour || 'green';
+        // theme: 'auto' (default) follows OS prefers-color-scheme.
+        // 'light' / 'dark' force the choice, ignoring OS preference.
+        const theme = (cfg.theme === 'light' || cfg.theme === 'dark') ? cfg.theme : 'auto';
+        if (theme !== 'auto') document.documentElement.dataset.theme = theme;
+        window.PZ_THEME = theme;
         ({map, editableLayers} = generate_map('./zones.json'));
         setup_editing(map, editableLayers);
     });
@@ -32,16 +37,26 @@ function generate_map(zones_url) {
          attribution: osmAttrib + ' &copy; <a href="https://carto.com/attributions">CARTO</a>'});
 
     const dark_mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const initial_layer = dark_mq.matches ? dark : osm;
-    const map = L.map('map', {layers: [initial_layer], center: [52.96523540264812, 6.52002831753822], zoom: 13});
-
-    // Swap tile layer at runtime when the OS preference changes.
-    dark_mq.addEventListener('change', e => {
-        const next = e.matches ? dark : osm;
-        const prev = e.matches ? osm : dark;
-        if (map.hasLayer(prev)) map.removeLayer(prev);
-        if (!map.hasLayer(next)) next.addTo(map);
+    // Pick the initial tile layer to match the resolved theme.
+    let want_dark;
+    if (window.PZ_THEME === 'dark') want_dark = true;
+    else if (window.PZ_THEME === 'light') want_dark = false;
+    else want_dark = dark_mq.matches; // auto
+    const map = L.map('map', {
+        layers: [want_dark ? dark : osm],
+        center: [52.96523540264812, 6.52002831753822],
+        zoom: 13,
     });
+
+    // Only follow OS changes when theme=auto. theme=light/dark stay pinned.
+    if (window.PZ_THEME !== 'light' && window.PZ_THEME !== 'dark') {
+        dark_mq.addEventListener('change', e => {
+            const next = e.matches ? dark : osm;
+            const prev = e.matches ? osm : dark;
+            if (map.hasLayer(prev)) map.removeLayer(prev);
+            if (!map.hasLayer(next)) next.addTo(map);
+        });
+    }
 
     let editableLayers = new L.FeatureGroup();
     map.addLayer(editableLayers);
