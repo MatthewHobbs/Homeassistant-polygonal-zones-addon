@@ -91,21 +91,30 @@ The addon serves `/zones.json` from local disk; the companion integration polls 
 2. Common root causes: ownership drift on `/data` (rare, usually resolved by a container restart — `cont-init.d/00-fix-perms` re-chowns on boot), disk full, or file corruption after an ungraceful host shutdown.
 3. If the file is present but corrupted, the fastest path is to restore `/data/polygonal_zones/zones.json` from the latest HA snapshot that predates the failure (**Settings → System → Backups**). The integration's retained state means automations that were working before the outage keep working through the restore.
 
-> **Known limitation — private-IP URLs.** The integration hardens itself against SSRF by refusing to fetch URLs that resolve to a private (RFC-1918) address — that includes `192.168.x.x`, `10.x.x.x`, `172.16.0.0/12`, and local mDNS names that resolve to those. So a naive `zone_urls: http://<ha-host-lan-ip>:8000/zones.json` will be rejected by the integration **before** it ever reaches this addon, even when `allow_all_ips: true` is on.
->
-> **Recommended workaround — private reverse proxy with TLS on a non-RFC-1918 hostname.** Put the addon behind a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager addon) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Combine with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
->
-> **Tracking upstream.** An opt-in relaxation on the integration side (e.g. `allow_private_urls: true`) would remove the need for any of this. Tracked upstream as [Homeassistant-polygonal-zones#28](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/issues/28) (and mirrored in this repo as [issue #111](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/issues/111)); once shipped, the plain `http://<ha-host-lan-ip>:8000/zones.json` path will work out of the box.
->
-> **Last resort — public-CDN mirror (privacy warning).** Hosting `zones.json` on a public-facing server (GitHub Pages, S3, Cloudflare Pages, etc.) is occasionally suggested, but **do not do this without understanding the privacy cost**. Your polygon geometry encodes the precise shape and location of your home, workplace, school runs, and any other place you've drawn a zone. Publishing it to a public CDN means:
->
-> - The data is **world-readable** — any visitor, crawler, scraper or search engine can fetch it.
-> - Public CDNs **cache and replicate** content across their global edge networks. Once it's been served even once, you cannot assume you can fully revoke it.
-> - Major providers (GitHub, AWS, Cloudflare) are subject to the US CLOUD Act, so the data can be disclosed to US authorities regardless of where you live.
-> - Search engines **index** content hosted on common providers. Your home coordinates become discoverable by name/URL.
-> - Deleting the file later does **not** remove archived copies (Wayback Machine, third-party scrapers).
->
-> If you absolutely must go this route (e.g. you have no control over DNS and cannot stand up a reverse proxy), use a private / unlisted bucket with a strong pre-signed URL, rotate the URL regularly, and understand that any leak of the URL equates to a leak of the geometry.
+### Pointing the integration at the addon
+
+**Recommended (happy path) — LAN URL with `allow_private_urls: true`.** As of companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0), the integration has an opt-in boolean option `allow_private_urls` under its advanced-settings section. Turn it on, point `zone_urls` at the addon's LAN URL, and you're done:
+
+- In this addon: set `allow_all_ips: true` (and ideally `save_token: <value>` so `POST /save_zones` from LAN requires the header).
+- In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`.
+
+The integration keeps its SSRF defence in depth — loopback, link-local (cloud-metadata), multicast, and reserved ranges are still blocked; only RFC-1918 space unlocks. On a typical HA OS install where integration + addon share the same host, that's the only space you need.
+
+#### Alternative — private reverse proxy with TLS on a non-RFC-1918 hostname
+
+If you'd rather not enable `allow_private_urls`, or you're running integration v1.11.x or earlier, you can still front the addon with a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager addon) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Pair with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
+
+#### Last resort — public-CDN mirror (privacy warning)
+
+Hosting `zones.json` on a public-facing server (GitHub Pages, S3, Cloudflare Pages, etc.) is occasionally suggested, but **do not do this without understanding the privacy cost**. Your polygon geometry encodes the precise shape and location of your home, workplace, school runs, and any other place you've drawn a zone. Publishing it to a public CDN means:
+
+- The data is **world-readable** — any visitor, crawler, scraper or search engine can fetch it.
+- Public CDNs **cache and replicate** content across their global edge networks. Once it's been served even once, you cannot assume you can fully revoke it.
+- Major providers (GitHub, AWS, Cloudflare) are subject to the US CLOUD Act, so the data can be disclosed to US authorities regardless of where you live.
+- Search engines **index** content hosted on common providers. Your home coordinates become discoverable by name/URL.
+- Deleting the file later does **not** remove archived copies (Wayback Machine, third-party scrapers).
+
+If you absolutely must go this route (e.g. you have no control over DNS, cannot stand up a reverse proxy, and cannot upgrade the integration to v1.12.0+), use a private / unlisted bucket with a strong pre-signed URL, rotate the URL regularly, and understand that any leak of the URL equates to a leak of the geometry.
 
 ## Usage
 
