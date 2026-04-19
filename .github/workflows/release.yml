@@ -156,6 +156,37 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Notarize the pushed image with Codenotary CAS. Runs only when the
+      # CAS_API_KEY secret is configured on the repo — makes the whole
+      # signing pipeline opt-in per the #65 enablement procedure.
+      #
+      # Enablement:
+      #   1. Create a CAS identity at https://cas.codenotary.com (free for
+      #      community use).
+      #   2. Settings → Secrets and variables → Actions → new secret
+      #      CAS_API_KEY with the value from CAS.
+      #   3. Cut a release tag. This step signs each arch's image.
+      #   4. Once signing has succeeded on at least one release, uncomment
+      #      the `codenotary:` key in polygonal_zones_editor/config.yaml
+      #      so the Supervisor verifies the attestation on install/update.
+      #
+      # Keep the secret unset to skip signing — existing release flow works
+      # unchanged.
+      - name: Notarize image with codenotary/cas
+        env:
+          CAS_API_KEY: ${{ secrets.CAS_API_KEY }}
+        if: env.CAS_API_KEY != ''
+        run: |
+          set -euo pipefail
+          CAS_VERSION=1.0.4
+          curl -sSfL \
+            "https://github.com/codenotary/cas/releases/download/v${CAS_VERSION}/cas-v${CAS_VERSION}-linux-amd64" \
+            -o /tmp/cas
+          chmod +x /tmp/cas
+          /tmp/cas login --api-key "$CAS_API_KEY"
+          IMG="ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.arch }}-addon-polygonal_zones:${{ needs.matrix.outputs.version }}"
+          /tmp/cas notarize --hash "docker://${IMG}"
+
   release:
     name: Create GitHub Release
     needs: [matrix, publish]
