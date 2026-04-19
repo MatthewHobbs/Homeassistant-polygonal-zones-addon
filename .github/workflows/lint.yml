@@ -5,6 +5,10 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Release workflow calls this as a prerequisite gate, so a tag push never
+  # publishes an image with a broken config.yaml or addon-linter violation
+  # on the tagged SHA.
+  workflow_call:
 
 permissions:
   contents: read
