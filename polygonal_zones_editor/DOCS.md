@@ -2,6 +2,8 @@
 
 Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, name them, and have the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) consume them for location-based automations.
 
+> **Note — 32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for addons. The last release of this addon for those arches is **0.2.25** — from 0.2.26 onward, only `aarch64` and `amd64` images are published. If you're running on a 32-bit host (Raspberry Pi 0/1, 32-bit OS on a Pi 2/3, 32-bit Intel Atom, etc.) either pin to 0.2.25 via the Supervisor version picker or upgrade your host to a 64-bit HA OS installation. Supervisor stops offering updates automatically once the architecture mismatch is detected, so there's no risk of accidentally pulling an incompatible image.
+
 ## Configuration
 
 All options live under **Settings → Add-ons → Polygonal Zones → Configuration**. Defaults are sensible for a stock Home Assistant install — the only setting most people change is `zone_colour`.
@@ -66,6 +68,18 @@ Recommended: leave `save_token` set, only enable `allow_all_ips` while you're ac
 
 The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this addon. If the integration runs anywhere other than the HA ingress sidecar (different container or external host), set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.
 
+### Availability and failure modes
+
+The addon serves `/zones.json` from local disk; the companion integration polls it. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
+
+- **The addon** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails (since 0.2.17 `/healthz` reads the zones file rather than just checking that the process is alive), so Supervisor marks the container unhealthy and restarts it. If the underlying issue is transient (race with a snapshot, filesystem remount), the restart usually resolves it.
+- **The integration** sees the 503 on its next poll. Its default behaviour is to retain its last-known-good state — zone-based automations continue to fire based on the zone definitions it last successfully fetched, rather than silently losing geofencing coverage. If the addon is down entirely (process gone, port unreachable), the integration surfaces an unavailable state; automations that guard on `zone.* != 'unavailable'` will stop firing until the addon is back.
+
+**Recovery:**
+1. Pull the addon log from **Settings → Add-ons → Polygonal Zones → Log**. Look for `Failed to read /data/polygonal_zones/zones.json` or a JSON parse error during startup.
+2. Common root causes: ownership drift on `/data` (rare, usually resolved by a container restart — `cont-init.d/00-fix-perms` re-chowns on boot), disk full, or file corruption after an ungraceful host shutdown.
+3. If the file is present but corrupted, the fastest path is to restore `/data/polygonal_zones/zones.json` from the latest HA snapshot that predates the failure (**Settings → System → Backups**). The integration's retained state means automations that were working before the outage keep working through the restore.
+
 > **Known limitation — private-IP URLs.** The integration hardens itself against SSRF by refusing to fetch URLs that resolve to a private (RFC-1918) address — that includes `192.168.x.x`, `10.x.x.x`, `172.16.0.0/12`, and local mDNS names that resolve to those. So a naive `zone_urls: http://<ha-host-lan-ip>:8000/zones.json` will be rejected by the integration **before** it ever reaches this addon, even when `allow_all_ips: true` is on.
 >
 > **Recommended workaround — private reverse proxy with TLS on a non-RFC-1918 hostname.** Put the addon behind a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager addon) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Combine with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
@@ -98,6 +112,8 @@ After installing and starting the add-on, you can access the web interface in tw
 ### Zones File
 
 The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (default port 8000), and on disk at `/data/polygonal_zones/zones.json` inside the container. The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads this file. See the **Backing up / restoring zones with curl** section for the recommended backup workflow.
+
+**Backup visibility — important for privacy.** Because the zones file lives inside `/data`, it is included in every Home Assistant snapshot / backup that Supervisor takes. That means **deleting a zone from the editor does not remove it from snapshots that were taken before the deletion** — the old geometry is still present in those backup files until you delete the snapshots themselves. Your polygon geometry encodes precise home / workplace / school locations, so if you're removing zones for privacy reasons (after a move, after accidentally drawing over a sensitive area, or in response to a subject-access / deletion request) also purge old snapshots via **Settings → System → Backups → ⋮ → Remove**, and any off-HA backup copies you maintain.
 
 ### Features
 
