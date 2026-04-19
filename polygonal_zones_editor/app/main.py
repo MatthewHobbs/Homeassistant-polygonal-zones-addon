@@ -130,8 +130,9 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
 # in index.html) and 'unsafe-inline' for the one onclick handler on the
 # Save button + Leaflet's injected inline styles.
 #
-# img-src covers OSM (default) and CARTO (dark theme) tile servers; data:
-# and blob: cover Leaflet's inline-rendered tile markers.
+# img-src covers OSM (default) and CARTO (dark theme) tile servers, unpkg
+# for Leaflet-Draw's spritesheet SVG (dist/images/spritesheet.svg), and
+# data:/blob: for Leaflet's inline-rendered tile markers.
 #
 # frame-ancestors permits HA's ingress origin and Nabu Casa remote access
 # to iframe the addon UI; everything else is blocked (clickjacking defense).
@@ -139,7 +140,7 @@ _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://unpkg.com 'unsafe-inline'; "
     "style-src 'self' https://unpkg.com 'unsafe-inline'; "
-    "img-src 'self' https://*.tile.openstreetmap.org "
+    "img-src 'self' https://unpkg.com https://*.tile.openstreetmap.org "
     "https://*.basemaps.cartocdn.com data: blob:; "
     "connect-src 'self'; "
     "object-src 'none'; "
