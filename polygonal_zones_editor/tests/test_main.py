@@ -563,9 +563,11 @@ def test_security_headers_applied(allow_all_client):
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'self' https://*.home-assistant.io" in csp
     assert "object-src 'none'" in csp
-    # OSM + CARTO tile hosts must remain in img-src or the map breaks.
+    # OSM, CARTO, and Esri World Imagery tile hosts must remain in img-src
+    # or the corresponding basemap options (#31) break.
     assert "https://*.tile.openstreetmap.org" in csp
     assert "https://*.basemaps.cartocdn.com" in csp
+    assert "https://server.arcgisonline.com" in csp
 
 
 def test_security_headers_applied_to_static_files(allow_all_client):

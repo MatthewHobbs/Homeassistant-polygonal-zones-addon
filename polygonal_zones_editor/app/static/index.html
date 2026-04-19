@@ -26,7 +26,11 @@
 </head>
 <body>
 <div class="body" data-sidebar="open">
-    <div id="map"></div>
+    <div id="map">
+        <div id="tile-error-banner" class="tile-error-banner" role="status" aria-live="polite" hidden>
+            Map tiles failed to load. Try a different map style.
+        </div>
+    </div>
     <button class="sidebar-toggle" type="button"
             aria-label="Collapse sidebar"
             aria-controls="zone-sidebar"
@@ -45,6 +49,10 @@
             </p>
 
 
+        </div>
+        <div class="basemap-picker">
+            <label for="pz-basemap-select">Map style</label>
+            <select id="pz-basemap-select"></select>
         </div>
         <div class="center">
             <h2> Zones </h2>

@@ -251,6 +251,47 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # Tile-picker regression guard (#31, 0.2.28). Asserts the
+                  # <select> exists, carries the expected four options in
+                  # order (auto + three basemaps), defaults to 'auto' on
+                  # a fresh load, and that switching to satellite actually
+                  # swaps the active Leaflet tile layer to arcgisonline.
+                  picker_options = await page.evaluate(
+                      "() => Array.from(document.querySelectorAll('#pz-basemap-select option')).map(o => o.value)"
+                  )
+                  expected_options = ["auto", "osm", "carto-dark", "esri-imagery"]
+                  if picker_options != expected_options:
+                      print(f"FAIL picker options {picker_options!r} != {expected_options!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  picker_initial = await page.evaluate(
+                      "() => document.getElementById('pz-basemap-select').value"
+                  )
+                  if picker_initial != "auto":
+                      print(f"FAIL picker default value {picker_initial!r} != 'auto' on fresh load")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  await page.select_option("#pz-basemap-select", "esri-imagery")
+                  await page.wait_for_timeout(150)
+                  active_url = await page.evaluate(
+                      """() => {
+                          let url = null;
+                          map.eachLayer(l => { if (l instanceof L.TileLayer) url = l._url; });
+                          return url;
+                      }"""
+                  )
+                  if not active_url or "arcgisonline.com" not in active_url:
+                      print(f"FAIL active tile URL after switch to satellite doesn't mention arcgisonline: {active_url!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # Reset to 'auto' so the subsequent draw→save round-trip
+                  # runs on the default OSM layer (no stale satellite state).
+                  await page.select_option("#pz-basemap-select", "auto")
+                  await page.wait_for_timeout(150)
+
                   # Draw→save round-trip regression guard. Earlier versions
                   # of the draw:created handler set `layer.feature` without
                   # `type: "Feature"`; Leaflet's toGeoJSON then emitted a

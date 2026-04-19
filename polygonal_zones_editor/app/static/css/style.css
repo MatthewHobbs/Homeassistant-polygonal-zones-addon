@@ -287,3 +287,61 @@ body {
     flex-grow: 1;
 }
 
+/* Basemap picker (#31). Sits above .center / .zone-list inside the sidebar.
+ * Native <select> so it inherits keyboard + screen-reader affordances
+ * without any custom a11y plumbing. Styled with the existing input tokens
+ * so light/dark parity is free. */
+.basemap-picker {
+    display: flex;
+    flex-direction: column;
+    margin-top: 12px;
+    gap: 4px;
+}
+
+.basemap-picker label {
+    font-size: 0.9em;
+    color: var(--muted-text);
+}
+
+.basemap-picker select {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 1em;
+    background: var(--pz-input-bg);
+    color: var(--text-color);
+    border: 1px solid var(--pz-input-border);
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.basemap-picker select:focus-visible {
+    outline: 2px solid var(--save-button-color);
+    outline-offset: 2px;
+}
+
+/* Tile-error banner. Shown by map.js after 5 consecutive tileerror events
+ * on the active basemap; hidden on the next tileload. Absolutely
+ * positioned inside #map so it overlays tiles without shifting layout. */
+#map {
+    position: relative;        /* anchor for the banner */
+}
+
+.tile-error-banner {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 900;              /* above map tiles, below leaflet controls */
+    background: var(--popup-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 8px 16px;
+    border-radius: 2px;
+    font-size: 0.9em;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.tile-error-banner[hidden] {
+    display: none;
+}
+
