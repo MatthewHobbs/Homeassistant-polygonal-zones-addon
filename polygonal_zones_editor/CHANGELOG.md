@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.18 — 2026-04-19
+
+- Option labels in the Supervisor UI are now human-readable. Shipped `translations/en.yaml` so `zone_colour`, `theme`, `allow_all_ips`, `save_token`, `trusted_proxies`, and `log_level` get proper names + descriptions instead of raw YAML keys. The security-relevant options (`allow_all_ips`, `save_token`, `trusted_proxies`) each get a one-paragraph description so the Configuration page explains the trade-off inline. Other locales can be added by dropping in e.g. `translations/de.yaml`; the HA addon linter picks them up automatically.
+- `zone_colour` schema is now `match(^#[0-9a-fA-F]{3,8}$|^[a-zA-Z]+$)` instead of `str`. Supervisor rejects empty strings and `rgb()/hsl()` function notation at Configuration save time — values that would have silently broken the map render. Existing `purple`, `red`, `#800080`, etc. continue to work unchanged.
+
 ## 0.2.17 — 2026-04-19
 
 ### Reliability

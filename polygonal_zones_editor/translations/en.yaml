@@ -1,0 +1,38 @@
+configuration:
+  zone_colour:
+    name: Zone colour
+    description: >-
+      Colour used to render zones on the map. Any CSS colour name
+      (e.g. purple, red, teal) or hex value (e.g. #800080).
+  theme:
+    name: Theme
+    description: >-
+      auto follows your OS / browser prefers-color-scheme setting.
+      light or dark force the corresponding palette regardless of OS
+      preference.
+  allow_all_ips:
+    name: Allow LAN access
+    description: >-
+      When enabled, accept HTTP requests from any IP — not just the
+      Home Assistant ingress sidecar. Enable this if the companion
+      integration runs in a different container, or if you want to
+      back up / restore zones over curl. Pair with save_token (below)
+      to keep POST /save_zones protected.
+  save_token:
+    name: Save token
+    description: >-
+      When set, POST /save_zones requires the header
+      X-Save-Token:<value> on any non-ingress request. The addon's
+      own Save button keeps working because it goes through ingress.
+      Leave empty to disable. Never logged.
+  trusted_proxies:
+    name: Trusted proxies
+    description: >-
+      Comma-separated list of proxy IPs whose X-Forwarded-For header
+      should be honoured. Leave empty unless you front the addon with
+      your own reverse proxy. Wildcards (*, 0.0.0.0/0) and the HA
+      ingress IP (172.30.32.2) are refused and logged as errors.
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of the addon log. Bump to debug when troubleshooting.
