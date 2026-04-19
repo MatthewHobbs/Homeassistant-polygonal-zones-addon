@@ -150,9 +150,13 @@ jobs:
           build-args: |
             BUILD_FROM=${{ matrix.base }}
           push: true
+          # Supervisor resolves the addon image tag from config.yaml's
+          # `version:` field, not from `:latest`. Pushing :latest only
+          # creates a partial-release hazard (a mid-matrix failure leaves
+          # :latest pointing at mixed versions across arches). Removed.
+          # See docs/RUNBOOK.md for the release-recovery procedure.
           tags: |
             ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.arch }}-addon-polygonal_zones:${{ needs.matrix.outputs.version }}
-            ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.arch }}-addon-polygonal_zones:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
