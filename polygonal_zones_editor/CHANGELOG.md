@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.31 — 2026-04-19
+
+UX polish slice: two small editor fixes that addressed friction points flagged in the principal-engineer panel review.
+
+### Changed
+
+- **Save-error state persists until the next save attempt (#123).** Previously, a network blip or 4xx response flashed the Save button red for two seconds and then cleared — users who tapped Save on mobile and then looked away often missed it entirely, leaving them unsure whether their zones had actually saved. The error message now stays on screen until the user clicks Save again (the "next action"), which both dismisses it and reattempts the save. Success still auto-clears at 2s; 412 conflicts still stay until manually resolved. Matches the pattern 412 already used.
+
+### Added
+
+- **Map viewport persists across reloads (#130).** The first-load experience previously centred the map on Groningen (the original upstream author's home, hardcoded at `map.js:48`). Users outside the Netherlands had to scroll-and-zoom on every visit before they could draw any zone. The map now remembers `center` and `zoom` per user in `localStorage` under `pz:viewport` on `moveend` / `zoomend` (debounced 500 ms), and restores on load. Existing users with zones but no persisted viewport still get the auto-fit-to-zones behaviour on first post-upgrade load — the persisted viewport only wins once the user has actively panned or zoomed. Genuine first-time users with no zones and no persisted viewport still see Groningen as an obvious "not-my-area" signal that prompts a pan to their actual location.
+
+### Release gate
+
+Build-time Playwright smoke extended to regression-guard both items: a failing-save response leaves the status text and `.error` class visible (not auto-cleared), and a `moveend` write followed by reload restores the center/zoom.
+
 ## 0.2.30 — 2026-04-19
 
 Durability slice (part 2): tighten save-time GeoJSON validation so geometrically invalid zones are rejected at the boundary rather than silently persisted where they produce undefined point-in-polygon behaviour downstream. Partner to 0.2.29's conditional-GET hardening.

@@ -80,6 +80,37 @@ function attach_tile_error_watch(layer) {
     });
 }
 
+// Default to Groningen (the original upstream author's home) only when no
+// persisted viewport is available AND the user has no existing zones. It's
+// an obvious "not-my-area" signal rather than a plausible-looking wrong
+// location, so users outside the Netherlands know to pan immediately.
+const DEFAULT_CENTER = [52.96523540264812, 6.52002831753822];
+const DEFAULT_ZOOM = 13;
+
+// Read pz:viewport from PZStorage and validate its shape. Returns an
+// object carrying the initial center / zoom to hand L.map(), and a
+// `restored` flag the caller uses to decide whether to auto-fit to zone
+// bounds on first load.
+function restore_viewport() {
+    const raw = window.PZStorage.get('pz:viewport');
+    if (!raw) return {center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, restored: false};
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch (e) { return {center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, restored: false}; }
+    const c = parsed && parsed.center;
+    const z = parsed && parsed.zoom;
+    const validCenter = Array.isArray(c) && c.length === 2
+        && typeof c[0] === 'number' && typeof c[1] === 'number'
+        && isFinite(c[0]) && isFinite(c[1])
+        && c[0] >= -90 && c[0] <= 90 && c[1] >= -180 && c[1] <= 180;
+    const validZoom = typeof z === 'number' && isFinite(z) && z >= 0 && z <= 25;
+    if (!validCenter || !validZoom) {
+        return {center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, restored: false};
+    }
+    return {center: c, zoom: z, restored: true};
+}
+
+
 function setup_basemap_picker(layers, onChange) {
     const select = document.getElementById('pz-basemap-select');
     if (!select) return;
@@ -136,11 +167,34 @@ function generate_map(zones_url) {
         activeId = window.PZBasemaps.getDefaultBasemap(window.PZ_THEME).id;
     }
 
+    // Viewport restoration (#130). If the user has panned / zoomed before,
+    // we remembered where — no more dumping Groningen (the original
+    // upstream author's home) on users outside the Netherlands every first
+    // load. Falls back to the Groningen default if no viewport is stored.
+    const {center: initialCenter, zoom: initialZoom, restored: restoredViewport} =
+        restore_viewport();
+
     const map = L.map('map', {
         layers: [layers[activeId]],
-        center: [52.96523540264812, 6.52002831753822],
-        zoom: 13,
+        center: initialCenter,
+        zoom: initialZoom,
     });
+
+    // Persist viewport changes on moveend/zoomend, debounced so a single
+    // user pan doesn't hammer localStorage.
+    let viewportSaveTimer = null;
+    const schedule_viewport_save = () => {
+        if (viewportSaveTimer) clearTimeout(viewportSaveTimer);
+        viewportSaveTimer = setTimeout(() => {
+            const c = map.getCenter();
+            window.PZStorage.set('pz:viewport', JSON.stringify({
+                center: [c.lat, c.lng],
+                zoom: map.getZoom(),
+            }));
+        }, 500);
+    };
+    map.on('moveend', schedule_viewport_save);
+    map.on('zoomend', schedule_viewport_save);
 
     // swap_to drives every layer change the app makes — picker events,
     // theme auto-swap, and the initial picker-populate — so it's the
@@ -205,9 +259,16 @@ function generate_map(zones_url) {
             })
 
             render_zone_list();
+            // Only auto-fit to the zones when the user hasn't manually
+            // positioned the viewport before (#130). Otherwise their
+            // remembered center/zoom wins — someone who bounced around
+            // multiple HA installs shouldn't get snapped to the zone
+            // bounding box on every first load.
             if (editableLayers.getLayers().length > 0) {
-                map.fitBounds(editableLayers.getBounds());
-                map.setView(editableLayers.getBounds().getCenter(), 13);
+                if (!restoredViewport) {
+                    map.fitBounds(editableLayers.getBounds());
+                    map.setView(editableLayers.getBounds().getCenter(), 13);
+                }
             } else {
                 create_load_btn();
             }
@@ -361,6 +422,17 @@ function render_zone_list() {
 }
 
 function save_zones() {
+    // Clear any prior error state on a fresh save attempt. #123: previous
+    // errors persist on screen until the next user action, so this is the
+    // "next action" that dismisses them. Success auto-clears at the
+    // setTimeout below; 412 conflicts stay until explicitly dismissed here.
+    const save_btn = document.querySelector('.save-btn');
+    const save_status = document.getElementById('save-status');
+    if (save_btn) save_btn.classList.remove('error');
+    if (save_status && save_status.textContent && save_status.textContent !== 'Zones saved.') {
+        save_status.textContent = '';
+    }
+
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
     // round-trip. The previous hand-assembly read _latlngs[0] only, which
     // silently converted MultiPolygon zones (loaded from zones.json or via
@@ -404,27 +476,30 @@ function save_zones() {
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
             mark_clean();
+            // Success auto-clears at 2s (same as before). #123 only changed
+            // the error paths below — they used to auto-clear in 2s too,
+            // which was too short for a user not looking at the button
+            // (especially on mobile). Error state now persists until the
+            // user's next save click, handled at the top of save_zones().
+            setTimeout(() => {
+                elem.classList.remove('success');
+                if (status && status.textContent === 'Zones saved.') status.textContent = '';
+            }, 2000);
         } else {
             elem.classList.remove('success')
             elem.classList.add('error')
             if (status) status.textContent = `Save failed (${response.status}).`;
+            // No setTimeout: stay visible until the next save attempt.
         }
-
-        setTimeout(() => {
-            elem.classList.remove('error')
-            elem.classList.remove('success')
-            if (status) status.textContent = '';
-        }, 2000)
     }).catch(err => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
         elem.classList.remove('success')
         elem.classList.add('error')
         if (status) status.textContent = `Save failed: ${err.message}`;
-        setTimeout(() => {
-            elem.classList.remove('error')
-            if (status) status.textContent = '';
-        }, 2000)
+        // No setTimeout: an intermittent ingress failure flashing red for
+        // 2s and disappearing left users unsure whether their zones saved.
+        // The error stays until the next save click (#123).
     })
 }
 

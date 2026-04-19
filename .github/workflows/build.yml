@@ -323,6 +323,55 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # #130 viewport-persistence regression guard (0.2.31).
+                  # Programmatically pan to LA, wait past the 500ms debounce,
+                  # reload, assert the persisted center/zoom is honoured.
+                  await page.evaluate("() => map.setView([34.0522, -118.2437], 11)")
+                  await page.wait_for_timeout(800)
+                  stored_viewport = await page.evaluate(
+                      "() => window.PZStorage.get('pz:viewport')"
+                  )
+                  if not stored_viewport or "34.0522" not in stored_viewport:
+                      print(f"FAIL pz:viewport not written after setView: {stored_viewport!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+                  await page.reload(wait_until="domcontentloaded")
+                  await page.wait_for_selector("zone-entry", timeout=5000)
+                  post_reload_center = await page.evaluate(
+                      "() => ({lat: map.getCenter().lat, lng: map.getCenter().lng})"
+                  )
+                  if abs(post_reload_center["lat"] - 34.0522) > 0.01:
+                      print(f"FAIL viewport not restored across reload: {post_reload_center!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # #123 save-error-persistence regression guard (0.2.31).
+                  # Intercept /save_zones, force a 500, trigger a save,
+                  # wait past the old 2s auto-clear, assert the error is
+                  # still visible. Kept at the very end of the smoke
+                  # because page.route applies to subsequent requests only
+                  # and doesn't need to be unrouted before browser.close.
+                  async def fail_save(route, request):
+                      if request.url.endswith("/save_zones") and request.method == "POST":
+                          await route.fulfill(status=500, body="boom")
+                      else:
+                          await route.continue_()
+                  await page.route("**/*", fail_save)
+                  await page.evaluate("() => save_zones()")
+                  await page.wait_for_function(
+                      "() => document.querySelector('.save-btn').classList.contains('error')",
+                      timeout=5000,
+                  )
+                  await page.wait_for_timeout(2500)
+                  still_error = await page.evaluate(
+                      "() => document.querySelector('.save-btn').classList.contains('error') && "
+                      "!!document.getElementById('save-status')?.textContent"
+                  )
+                  if not still_error:
+                      print("FAIL save error cleared within 2.5s (regression of #123)")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
                   if errors:
                       print("FAIL JS errors during page load:")
                       for e in errors: print(" -", e)
