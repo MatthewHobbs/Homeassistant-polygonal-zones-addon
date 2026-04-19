@@ -18,6 +18,12 @@ updates:
         patterns:
           - "*"
 
+  # Dockerfile in /polygonal_zones_editor uses `ARG BUILD_FROM` + `FROM
+  # ${BUILD_FROM}`, so Dependabot's docker manager sees no pinned FROM line
+  # to update. Base-image digests actually live in
+  # polygonal_zones_editor/build.yaml and are updated by Renovate's custom
+  # regex manager (.github/renovate.json5). Leaving this entry here so any
+  # future Dockerfile FROM ghcr.io/... line still gets tracked.
   - package-ecosystem: "docker"
     directory: "/polygonal_zones_editor"
     schedule:
