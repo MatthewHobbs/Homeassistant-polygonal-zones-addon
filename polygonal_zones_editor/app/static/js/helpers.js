@@ -16,9 +16,12 @@ function create_load_btn() {
 }
 
 function delete_load_btn() {
-    document.querySelector('#load-btn').remove();
-    document.querySelector('#load-text').remove();
-
+    // Null-guard: draw:created fires delete_load_btn every time a user draws,
+    // but the load button only exists when the editor started empty. On an
+    // editor that loaded non-empty zones, the button was never created —
+    // querying and calling .remove() on null threw a TypeError mid-draw.
+    document.querySelector('#load-btn')?.remove();
+    document.querySelector('#load-text')?.remove();
 }
 
 // Build a DOM node for a Leaflet popup so feature.properties.name is inserted

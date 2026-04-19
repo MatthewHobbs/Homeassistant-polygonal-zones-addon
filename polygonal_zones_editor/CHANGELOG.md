@@ -13,6 +13,11 @@ Installation and correctness — a batch of owned P0 fixes from this week's prin
 - **`beforeunload` guard on unsaved edits** (#115). Drawing a polygon, deleting, renaming, finishing an edit, or bulk-loading now marks the editor as dirty. Navigating away (sidebar tap, back button, tab close) while dirty triggers the browser's standard "Leave site?" confirmation. The dirty flag clears on a successful save (200); a 412 conflict keeps the flag set because the edit still isn't flushed.
 - **Removed two `console.log(layer)` / `console.log(geojson)` calls** in `map.js`'s `draw:created` handler (#115). These were leaking the full GeoJSON — including real home/work coordinates — into browser devtools on every polygon draw, where any console-capturing RUM or mid-screen-share inadvertently exposed them.
 
+### Fixed (latent bugs surfaced during local-Docker verification of the above)
+
+- **Drawn polygons now save.** `draw:created` was building `layer.feature = {properties: {...}}` without a `type` field. Leaflet's `toGeoJSON()` uses `layer.feature` as a template when present and only overrides `geometry`, so the emitted Feature was missing `"type":"Feature"` — which the server-side validator rejects with 422. This bug had existed since the handler was written but was never caught because no automated test exercised the full draw→save round-trip (the build-time smoke POSTs a pre-made valid payload). Build-time Playwright smoke now exercises the path as a regression guard.
+- **`delete_load_btn` null-guard.** `helpers.js`'s `delete_load_btn()` called `querySelector('#load-btn').remove()` without null-checking. The load button only exists when the editor starts empty; if a user drew a new zone on a non-empty editor the handler threw a TypeError mid-draw. Added optional-chaining on both queries.
+
 ### Accessibility
 
 - **Zone-entry rename input** (#116). Replaced the broken `<label for="zone-name-input">` + `<input id="zone-name-input">` pattern with an `aria-label="Zone name"` on the input. Per spec, the `for`/`id` attribute does not cross the shadow-DOM boundary, so the previous implementation never programmatically associated the label — and every zone-entry shared the same id, compounding the bug. Screen readers now announce the field correctly. (WCAG 2.2 SC 1.3.1.)

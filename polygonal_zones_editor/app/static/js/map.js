@@ -200,7 +200,16 @@ function setup_editing(map, editableLayers) {
 
         // generate a name according to `zone {n}`
         let name = `Zone ${editableLayers.getLayers().length + 1}`;
+        // `type: 'Feature'` is required. Leaflet's toGeoJSON() uses this
+        // object as a template — when `layer.feature` is already set it
+        // extends it with a `geometry` field but does NOT auto-add the
+        // `type`. Without this, saving a drawn polygon POSTed features
+        // missing `"type":"Feature"`, which the server-side validator
+        // rejects with 422. Existed in the code since the handler was
+        // written but not caught because no test exercised the
+        // draw → save round-trip end-to-end.
         layer.feature = {
+            type: 'Feature',
             properties: {
                 name: name
             }

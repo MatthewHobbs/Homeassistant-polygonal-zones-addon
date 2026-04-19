@@ -251,6 +251,37 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # Draw→save round-trip regression guard. Earlier versions
+                  # of the draw:created handler set `layer.feature` without
+                  # `type: "Feature"`; Leaflet's toGeoJSON then emitted a
+                  # feature missing the type field, which the server-side
+                  # validator rejected with 422. No test covered the full
+                  # draw→save path (the smoke above POSTs a pre-made
+                  # payload). This assertion closes the gap.
+                  save_status = await page.evaluate(
+                      """async () => {
+                          const layer = L.polygon([[50, 10], [50, 11], [51, 10]]);
+                          map.fire('draw:created', {layerType: 'polygon', layer});
+                          const headers = {'Content-Type': 'application/json'};
+                          const features = [];
+                          editableLayers.eachLayer(l => {
+                              const f = l.toGeoJSON();
+                              f.properties = {name: l.feature.properties.name};
+                              features.push(f);
+                          });
+                          const r = await fetch('./save_zones', {
+                              method: 'POST',
+                              headers: headers,
+                              body: JSON.stringify({type: 'FeatureCollection', features}),
+                          });
+                          return r.status;
+                      }"""
+                  )
+                  if save_status != 200:
+                      print(f"FAIL draw→save round-trip returned {save_status} (expected 200)")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
                   if errors:
                       print("FAIL JS errors during page load:")
                       for e in errors: print(" -", e)
