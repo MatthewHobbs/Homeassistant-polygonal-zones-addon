@@ -564,10 +564,19 @@ def test_security_headers_applied(allow_all_client):
     assert "frame-ancestors 'self' https://*.home-assistant.io" in csp
     assert "object-src 'none'" in csp
     # OSM, CARTO, and Esri World Imagery tile hosts must remain in img-src
-    # or the corresponding basemap options (#31) break.
+    # or the corresponding basemap options (#31) break. The Esri origin uses
+    # a tokenised check (CSP split into whitespace-separated sources) rather
+    # than a plain substring — a bare `in csp` trips CodeQL's
+    # js/incomplete-url-substring-sanitization rule, which expects any URL
+    # check to be bounded.
     assert "https://*.tile.openstreetmap.org" in csp
     assert "https://*.basemaps.cartocdn.com" in csp
-    assert "https://server.arcgisonline.com" in csp
+    img_src_sources = next(
+        d.strip().split()
+        for d in csp.split(";")
+        if d.strip().startswith("img-src")
+    )
+    assert "https://server.arcgisonline.com" in img_src_sources
 
 
 def test_security_headers_applied_to_static_files(allow_all_client):
