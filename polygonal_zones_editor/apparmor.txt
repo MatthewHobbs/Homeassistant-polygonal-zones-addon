@@ -1,0 +1,95 @@
+#include <tunables/global>
+
+# Tailored AppArmor profile for the Polygonal Zones addon.
+#
+# Container runs a single uvicorn/Starlette process. It needs to:
+#   - read /app and /opt/venv (code + deps)
+#   - read /data/options.json (Supervisor-mounted config)
+#   - read+write /data/polygonal_zones/ (persistent zones.json)
+#   - bind TCP (ingress + optional LAN port)
+#   - write to /tmp (atomic_write_json's temp file)
+#   - run s6-overlay's /init + services.d scripts at boot
+#
+# It must NOT:
+#   - write outside /data or /tmp
+#   - open raw sockets
+#   - hold sys_admin / net_admin / sys_ptrace capabilities
+#
+# attach_disconnected is required because Supervisor's ingress mounts the
+# addon's filesystem root from outside the mount namespace, so paths
+# inside the container appear "disconnected" to AppArmor without this flag.
+profile addon_polygonal_zones flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/python>
+
+  # s6-overlay entrypoint and service machinery.
+  /init                        ix,
+  /bin/**                      ix,
+  /usr/bin/**                  ix,
+  /usr/lib/**                  r,
+  /lib/**                      r,
+  /lib64/**                    r,
+  /run/{s6,s6-rc*,service}/**  ix,
+  /package/**                  ix,
+  /command/**                  ix,
+  /etc/services.d/**           rwix,
+  /etc/cont-init.d/**          rwix,
+  /etc/cont-finish.d/**        rwix,
+  /etc/s6-overlay/**           rwix,
+  /run/{,**}                   rwk,
+  /dev/tty                     rw,
+  /dev/null                    rw,
+  /dev/urandom                 r,
+  /dev/random                  r,
+
+  # bashio helpers used by cont-init.d + services.d scripts.
+  /usr/lib/bashio/**           ix,
+
+  # Python virtual environment (code + dependencies, read-only + execute).
+  /opt/venv/**                 rix,
+
+  # Addon code.
+  /app/**                      r,
+
+  # Persistent data. options.json is Supervisor-mounted; zones.json + its
+  # tempfiles live in the polygonal_zones/ subdir.
+  /data/**                     rw,
+  /data/**/                    rw,
+
+  # Temp files for atomic_write_json (tempfile.mkstemp in /data writes
+  # there directly, but /tmp is used by bashio and Python internals).
+  /tmp/**                      rwk,
+
+  # Allow reading process metadata (healthcheck, logging).
+  /proc/*/status               r,
+  /proc/*/stat                 r,
+  /proc/*/cmdline              r,
+  /proc/*/mounts               r,
+  /proc/sys/kernel/ngroups_max r,
+  /proc/sys/net/core/somaxconn r,
+
+  # Capabilities: nothing privileged. Default-deny covers sys_admin,
+  # net_admin, sys_ptrace, net_raw, etc. We need chown (cont-init.d
+  # chowns /data) and setuid/setgid (s6-setuidgid drops to app user).
+  capability chown,
+  capability dac_override,
+  capability dac_read_search,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability net_bind_service,
+
+  # Deny explicit dangerous paths as defence-in-depth, even though the
+  # default-deny for paths we didn't list above already covers them.
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+  deny /root/** rw,
+  deny /home/** rw,
+  deny /boot/** rw,
+  deny /sys/kernel/** w,
+  deny mount,
+  deny umount,
+  deny ptrace,
+}

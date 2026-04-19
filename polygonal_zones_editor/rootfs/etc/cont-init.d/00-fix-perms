@@ -16,10 +16,13 @@ if id app >/dev/null 2>&1; then
         bashio::log.warning "chown /data/polygonal_zones failed (read-only mount?)"
 
     if [ -f /data/options.json ]; then
+        # options.json may hold save_token (a password-type option), so we
+        # keep it 0640 app:app. If chown fails (read-only mount, unexpected
+        # FS), services.d/web/run detects that `app` can't read options.json
+        # and falls back to running as root, which preserves readability
+        # without making the secret world-readable.
         chown app:app /data/options.json 2>/dev/null || \
-            bashio::log.warning "chown /data/options.json failed; will rely on world-read"
-        # Belt-and-braces: make options.json readable even if chown didn't stick.
-        chmod o+r /data/options.json 2>/dev/null || true
+            bashio::log.warning "chown /data/options.json failed; web service will fall back to running as root"
     fi
 else
     bashio::log.warning "'app' user not found; addon will run as root"

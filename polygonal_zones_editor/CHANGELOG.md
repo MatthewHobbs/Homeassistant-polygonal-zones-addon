@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.16 — 2026-04-19
+
+### Security
+
+- **Breaking: direct LAN access to the addon is now opt-in.** `config.yaml`'s default port mapping `8000/tcp: 8000` is now `8000/tcp: null`, so the Supervisor does not publish the port to the host network by default. Users who rely on `curl` backups or run the companion integration in another container must enable the port under **Settings → Add-ons → Polygonal Zones → Network** and choose a host port. Ingress (the `Open Web UI` button and the companion integration running under the same HA install) is unaffected.
+- `trusted_proxies` now refuses wildcard and ingress-IP values (`*`, `0.0.0.0/0`, `::/0`, `172.30.32.2`). Previously these could be handed to uvicorn unchecked, which let any on-path client forge `X-Forwarded-For: 172.30.32.2` and bypass `save_token` on `POST /save_zones`. The parser drops these entries with a logged error and keeps the addon running with safe entries — a typo can no longer lock you out, but it also can no longer silently open a hole.
+- `/data/options.json` is no longer `chmod o+r`'d after boot. The previous belt-and-braces made the file (which contains `save_token` when configured) world-readable inside the container. If `chown app:app` fails (read-only mount, unexpected FS), `services.d/web/run`'s existing fallback to root-run handles readability without a world-readable secret.
+- Shipped a tailored AppArmor profile (`apparmor.txt`). The Supervisor loads it in place of the generic `docker-default`. The profile denies writes outside `/data` and `/tmp`, denies `ptrace` / `mount` / `net_admin`, and restricts the process to the paths it actually needs.
+
 ## 0.2.15 — 2026-04-19
 
 - Home Assistant addon metadata brought into line with current conventions. `config.yaml` now declares `url` (link back to the addon folder) and the startup tier is `services` instead of `system` since the addon only serves data Core polls rather than being a core-boot dependency. The root `repository.yaml` is updated to point at this fork's URL and maintainer instead of the deprecated upstream. No behaviour change for users already running 0.2.14.
