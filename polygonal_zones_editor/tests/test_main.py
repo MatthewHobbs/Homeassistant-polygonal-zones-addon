@@ -5,6 +5,16 @@ import pytest
 from starlette.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def reset_save_rate_limit():
+    """Each test gets a clean rate-limit state. Without this, accumulated
+    failures leak between tests and later suites spuriously hit 429."""
+    import main
+    main._save_failures.clear()
+    yield
+    main._save_failures.clear()
+
+
 @pytest.fixture
 def app_factory(tmp_zones_file, monkeypatch):
     # Keep sys.argv clean so allow_all_ips doesn't flip via CLI flags.
@@ -382,6 +392,90 @@ def test_static_traversal_attempt_rejected(allow_all_client):
     # StaticFiles normalises and rejects paths that escape the root directory.
     response = allow_all_client.get("/..%2F..%2Fapp%2Fconst.py")
     assert response.status_code in (400, 404)
+
+
+def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, tmp_zones_file):
+    """The companion integration's first action on every poll is
+    json.loads(body) + a type check. Byte-identity passthrough isn't
+    enough — the response must remain parseable GeoJSON with the right
+    Content-Type. Previously only byte-identity and empty-file shape
+    were tested.
+    """
+    payload = _valid_payload(name="Home")
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+
+    r = allow_all_client.get("/zones.json")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/json"
+    data = r.json()
+    assert data["type"] == "FeatureCollection"
+    assert isinstance(data["features"], list)
+    assert data["features"][0]["properties"]["name"] == "Home"
+
+
+def test_zones_json_returns_503_when_file_unreadable(allow_all_client, tmp_zones_file):
+    """Unguarded open() previously produced a 500 with no log line. Now
+    returns 503 with a JSON body."""
+    tmp_zones_file.unlink()
+    response = allow_all_client.get("/zones.json")
+    assert response.status_code == 503
+    assert response.json() == {"error": "zones file unreadable"}
+
+
+def test_healthz_returns_503_when_zones_missing(restricted_client, tmp_zones_file):
+    """Healthcheck now reflects zones-file readability so the Docker
+    HEALTHCHECK surfaces a broken state instead of staying green while
+    /zones.json 500s."""
+    tmp_zones_file.unlink()
+    r = restricted_client.get("/healthz")
+    assert r.status_code == 503
+    assert r.text == "zones file unreadable"
+
+
+def test_save_zones_rate_limits_after_10_failures(app_factory, tmp_zones_file):
+    """When save_token is set, repeated unauthorised attempts eventually
+    return 429 instead of 401 — defends against LAN token-brute-force."""
+    app = app_factory({"save_token": "sekrit"})
+    client = TestClient(app)
+
+    for attempt in range(10):
+        r = client.post("/save_zones", json=_valid_payload())
+        assert r.status_code == 401, f"attempt {attempt} unexpectedly {r.status_code}"
+
+    r = client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 429
+    assert r.json() == {"error": "too many failed attempts"}
+
+
+def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_factory, tmp_zones_file):
+    """Rate limit doesn't count successful saves; a valid token before the
+    budget is exhausted always succeeds."""
+    app = app_factory({"save_token": "sekrit"})
+    client = TestClient(app)
+
+    # Nine failures — within the window of 10.
+    for _ in range(9):
+        client.post("/save_zones", json=_valid_payload())
+    # Tenth request with the correct token.
+    r = client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"X-Save-Token": "sekrit"},
+    )
+    assert r.status_code == 200
+
+
+def test_zones_json_requires_ingress_when_save_token_set_and_allow_all_ips_off(
+    app_factory, tmp_zones_file,
+):
+    """Authz matrix gap: save_token governs /save_zones but must not
+    accidentally open /zones.json. With allow_all_ips: false and a token
+    set, non-ingress GETs should still be rejected."""
+    app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
+    client = TestClient(app)
+    r = client.get("/zones.json")
+    assert r.status_code == 403
 
 
 def test_parse_trusted_proxies_handles_empty_and_list(app_factory):

@@ -68,6 +68,11 @@ def atomic_write_json(path: str, data) -> None:
     (or a reader after a crash/power loss) never observes a partial or
     truncated file: either the previous contents are visible, or the new
     contents are visible — never an intermediate state.
+
+    Also fsyncs the parent directory after the rename so the new directory
+    entry is durable on hard power-off. Without this, on some filesystems
+    (overlayfs as used by HA OS, vfat, tmpfs) the rename may not be
+    persisted to the directory inode before power is lost.
     """
     directory = os.path.dirname(path) or '.'
     fd, tmp_path = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=directory)
@@ -81,6 +86,19 @@ def atomic_write_json(path: str, data) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
         raise
+    # Best-effort directory fsync. Swallow failures (e.g. on platforms that
+    # don't support directory fsync) rather than propagating — the file
+    # write has already succeeded; durability of the directory entry is a
+    # separate concern.
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        with contextlib.suppress(OSError):
+            os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def load_options() -> dict:

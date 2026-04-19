@@ -206,6 +206,33 @@ def test_atomic_write_json_leaves_existing_file_intact_on_serialisation_failure(
     assert siblings == ["zones.json"], f"temp file leaked: {siblings}"
 
 
+def test_atomic_write_json_fsyncs_parent_directory(tmp_path, monkeypatch):
+    """After the rename, the parent directory must be fsynced so the new
+    directory entry is durable on hard power-off. Without this, on some
+    filesystems (overlayfs, vfat, tmpfs) the rename may not be persisted
+    before power is lost.
+    """
+    import os
+
+    import helpers
+
+    fsynced_fds = []
+    original_fsync = os.fsync
+
+    def track_fsync(fd):
+        fsynced_fds.append(fd)
+        return original_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", track_fsync)
+
+    target = tmp_path / "zones.json"
+    helpers.atomic_write_json(str(target), {"type": "FeatureCollection", "features": []})
+
+    # Two fsyncs expected: one on the temp file (data durability), one on
+    # the parent directory (rename durability).
+    assert len(fsynced_fds) == 2, f"expected 2 fsync calls, got {len(fsynced_fds)}"
+
+
 def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(
     tmp_path, monkeypatch
 ):

@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.2.16"
+version: "0.2.17"
 slug: "polygonal_zones"
 url: "https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/tree/main/polygonal_zones_editor"
 panel_icon: "mdi:map"

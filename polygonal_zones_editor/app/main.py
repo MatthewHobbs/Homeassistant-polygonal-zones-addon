@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import secrets
+import time
+from collections import defaultdict, deque
 
 import uvicorn
 from starlette.applications import Starlette
@@ -31,6 +33,28 @@ _LOGGER = logging.getLogger(__name__)
 # (allowing token-bearing requests through even when allow_all_ips is off),
 # so it bypasses the coarse middleware too.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones"})
+
+# Rate limit on /save_zones authorisation failures. Protects against brute-
+# forcing save_token when the port is exposed on LAN. Only failures count;
+# a client presenting a valid token or coming from ingress never increments
+# the counter.
+_SAVE_FAILURE_LIMIT = 10
+_SAVE_FAILURE_WINDOW_SECONDS = 60
+_save_failures: dict[str, deque] = defaultdict(deque)
+
+
+def _rate_limit_exceeded(client_host: str) -> bool:
+    """Check whether client_host has hit the failure budget in the window."""
+    now = time.time()
+    cutoff = now - _SAVE_FAILURE_WINDOW_SECONDS
+    failures = _save_failures[client_host]
+    while failures and failures[0] < cutoff:
+        failures.popleft()
+    return len(failures) >= _SAVE_FAILURE_LIMIT
+
+
+def _record_save_failure(client_host: str) -> None:
+    _save_failures[client_host].append(time.time())
 
 
 def _etag_for_bytes(body: bytes) -> str:
@@ -134,12 +158,24 @@ def _is_valid_feature_collection(obj) -> bool:
 
 def save_zones_generator(options: dict):
     async def save_zones(request: Request):
+        client_host = request.client.host or "unknown"
+        if _rate_limit_exceeded(client_host):
+            _LOGGER.warning(
+                "Rate limit hit on /save_zones for %s (%d failures in %ds). "
+                "Further attempts refused for the remainder of the window.",
+                client_host, _SAVE_FAILURE_LIMIT, _SAVE_FAILURE_WINDOW_SECONDS,
+            )
+            return JSONResponse(
+                {"error": "too many failed attempts"},
+                status_code=429,
+            )
         ok, reason = authorise_save(options, request)
         if not ok:
+            _record_save_failure(client_host)
             if reason == "invalid_token":
                 _LOGGER.warning(
                     "Rejected save from %s: missing or invalid X-Save-Token",
-                    request.client.host,
+                    client_host,
                 )
                 return JSONResponse(
                     {"error": "missing or invalid X-Save-Token"},
@@ -147,7 +183,7 @@ def save_zones_generator(options: dict):
                 )
             _LOGGER.warning(
                 "Blocked request from %s on %s",
-                request.client.host, request.url.path,
+                client_host, request.url.path,
             )
             return PlainTextResponse("not allowed", status_code=403)
 
@@ -225,8 +261,18 @@ async def zones_json(_request: Request) -> Response:
     # Pass the file bytes through verbatim — atomic_write_json guarantees the
     # file is always valid JSON, so re-parsing and re-serialising via
     # JSONResponse would be a pointless round-trip.
-    with open(ZONES_FILE, "rb") as f:
-        body = f.read()
+    try:
+        with open(ZONES_FILE, "rb") as f:
+            body = f.read()
+    except OSError:
+        # File missing or unreadable (ownership drift after a Supervisor
+        # remount, disk error, etc.). Return 503 with a log line rather than
+        # letting Starlette emit a generic 500 traceback.
+        _LOGGER.exception("Failed to read %s", ZONES_FILE)
+        return JSONResponse(
+            {"error": "zones file unreadable"},
+            status_code=503,
+        )
     return Response(
         content=body,
         media_type="application/json",
@@ -240,6 +286,14 @@ async def zones_json(_request: Request) -> Response:
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
+    # Verify the zones file is accessible — /healthz drives the Docker
+    # HEALTHCHECK which drives Supervisor's container-restart signal. A
+    # process-alive-only check would leave users in a broken-but-"running"
+    # state when zones.json becomes unreadable.
+    try:
+        os.stat(ZONES_FILE)
+    except OSError:
+        return PlainTextResponse("zones file unreadable", status_code=503)
     return PlainTextResponse("ok")
 
 
@@ -321,6 +375,18 @@ if __name__ == "__main__":
     configure_logging(resolve_log_level(options.get("log_level")))
     redacted = {k: ("***" if k == "save_token" and v else v) for k, v in options.items()}
     _LOGGER.info("Loaded options: %s", redacted)
+    if os.getuid() == 0:
+        # The s6 init in rootfs/etc/services.d/web/run is supposed to drop
+        # privileges to the 'app' user. If we got here as root, one of its
+        # fallbacks fired (missing s6-setuidgid, missing app user, or
+        # options.json unreadable). Log prominently on every boot so a
+        # fallback-running install can't go unnoticed — the AppArmor profile
+        # is less effective when the workload runs as uid 0.
+        _LOGGER.warning(
+            "Running as uid 0 (root). The s6 service script fell back from "
+            "dropping privileges to the 'app' user — check the service log "
+            "for a warning explaining which condition fired."
+        )
     if allow_all_ips(options):
         if (options.get("save_token") or "").strip():
             _LOGGER.info("allow_all_ips is on; /save_zones requires X-Save-Token from non-ingress clients.")
