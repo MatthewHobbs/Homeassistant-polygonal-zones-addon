@@ -161,7 +161,119 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     body = response.json()
     assert body["status"] == "ok"
     assert "etag" in body  # new in 0.2.11
-    assert json.loads(tmp_zones_file.read_text()) == payload
+    # Geometry and name round-trip intact; the server additionally stamps a
+    # schema_version and backfills a stable per-zone id.
+    persisted = json.loads(tmp_zones_file.read_text())
+    assert persisted["type"] == "FeatureCollection"
+    assert persisted["schema_version"] == 1
+    assert persisted["features"][0]["geometry"] == payload["features"][0]["geometry"]
+    assert persisted["features"][0]["properties"]["name"] == "Home"
+    assert isinstance(persisted["features"][0]["properties"]["id"], str)
+    assert persisted["features"][0]["properties"]["id"]
+
+
+def test_save_zones_backfills_missing_ids_and_schema_version(
+    allow_all_client, tmp_zones_file,
+):
+    """Pre-versioned payload (no schema_version, no per-zone ids) is accepted
+    and augmented on write. Guards the backward-compat path for curl restores
+    from older zones.json backups."""
+    payload = _valid_payload()
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 200
+
+    persisted = json.loads(tmp_zones_file.read_text())
+    assert persisted["schema_version"] == 1
+    feature = persisted["features"][0]
+    generated_id = feature["properties"]["id"]
+    # Backfilled IDs are uuid4-hex strings (no dashes, 32 hex chars).
+    assert isinstance(generated_id, str)
+    assert len(generated_id) == 32
+    assert all(c in "0123456789abcdef" for c in generated_id)
+
+
+def test_save_zones_preserves_client_supplied_id(
+    allow_all_client, tmp_zones_file,
+):
+    payload = _valid_payload()
+    payload["features"][0]["properties"]["id"] = "zone-kitchen-east-wing"
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 200
+
+    persisted = json.loads(tmp_zones_file.read_text())
+    assert (
+        persisted["features"][0]["properties"]["id"]
+        == "zone-kitchen-east-wing"
+    )
+
+
+def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
+    payload = _valid_payload()
+    payload["features"][0]["properties"]["id"] = 42
+    original = tmp_zones_file.read_text()
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 422
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_rejects_empty_string_id(allow_all_client, tmp_zones_file):
+    payload = _valid_payload()
+    payload["features"][0]["properties"]["id"] = ""
+    original = tmp_zones_file.read_text()
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 422
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_rejects_non_int_schema_version(
+    allow_all_client, tmp_zones_file,
+):
+    payload = _valid_payload()
+    payload["schema_version"] = "1"
+    original = tmp_zones_file.read_text()
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 422
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_rejects_bool_schema_version(
+    allow_all_client, tmp_zones_file,
+):
+    """``bool`` is a subclass of ``int`` in Python — the validator must
+    exclude it explicitly, not accept ``True`` as a valid version."""
+    payload = _valid_payload()
+    payload["schema_version"] = True
+    original = tmp_zones_file.read_text()
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 422
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_normalises_null_properties_to_dict_with_id(
+    allow_all_client, tmp_zones_file,
+):
+    """A feature with ``properties: null`` is valid GeoJSON; after
+    normalisation it must have a dict properties with a backfilled id."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": None,
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    response = allow_all_client.post("/save_zones", json=payload)
+    assert response.status_code == 200
+
+    persisted = json.loads(tmp_zones_file.read_text())
+    props = persisted["features"][0]["properties"]
+    assert isinstance(props, dict)
+    assert isinstance(props["id"], str) and props["id"]
 
 
 def test_save_zones_rejects_non_geojson(allow_all_client, tmp_zones_file):

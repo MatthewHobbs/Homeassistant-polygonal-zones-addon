@@ -170,7 +170,12 @@ function setup_editing(map, editableLayers) {
         let name = `Zone ${editableLayers.getLayers().length + 1}`;
         layer.feature = {
             properties: {
-                name: name
+                name: name,
+                // Stable per-zone id so the HA integration can bind
+                // automations through renames. crypto.randomUUID() is
+                // available in every browser HA supports (ingress runs
+                // current Chromium/WebKit).
+                id: crypto.randomUUID().replace(/-/g, '')
             }
         };
 
@@ -240,8 +245,12 @@ function save_zones() {
         const feature = layer.toGeoJSON();
         // toGeoJSON preserves the layer's original feature.properties when
         // present, but we re-write `name` to pick up any rename that hasn't
-        // yet been flushed back onto the inner feature object.
-        feature.properties = {name: layer.feature.properties.name};
+        // yet been flushed back onto the inner feature object. The id is
+        // preserved so renames stay bindable by the HA integration; the
+        // server backfills one for zones loaded from pre-versioned files.
+        const src = layer.feature.properties || {};
+        feature.properties = {name: src.name};
+        if (src.id) feature.properties.id = src.id;
         features.push(feature);
     });
     const geojson = {type: "FeatureCollection", features};

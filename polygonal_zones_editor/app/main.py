@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import time
+import uuid
 from collections import defaultdict, deque
 
 import uvicorn
@@ -25,7 +26,7 @@ from helpers import (
     load_options,
     resolve_log_level,
 )
-from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES
+from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES, SCHEMA_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,6 +172,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 def _is_valid_feature_collection(obj) -> bool:
     if not isinstance(obj, dict) or obj.get("type") != "FeatureCollection":
         return False
+    # schema_version is optional on input for backward compat with curl
+    # restores of pre-versioned files. When present it must be an int so a
+    # consumer can do a straight numeric comparison. isinstance(x, bool)
+    # also matches isinstance(x, int), so exclude bools explicitly.
+    schema_version = obj.get("schema_version")
+    if schema_version is not None and (
+        isinstance(schema_version, bool) or not isinstance(schema_version, int)
+    ):
+        return False
     features = obj.get("features")
     if not isinstance(features, list):
         return False
@@ -191,7 +201,34 @@ def _is_valid_feature_collection(obj) -> bool:
             name = props.get("name")
             if name is not None and not isinstance(name, str):
                 return False
+            # id is optional on input (older clients, curl restores) but
+            # when present must be a non-empty string — a consumer binding
+            # automations to id needs a stable, truthy handle.
+            feature_id = props.get("id")
+            if feature_id is not None and (
+                not isinstance(feature_id, str) or not feature_id
+            ):
+                return False
     return True
+
+
+def _normalise_feature_collection(obj: dict) -> dict:
+    """Stamp schema_version and backfill missing per-feature IDs.
+
+    Run immediately before the on-disk write. Guarantees that every
+    persisted zones.json carries a top-level ``schema_version`` and that
+    every feature has a stable ``properties.id`` the integration can
+    bind automations to across renames. Mutates and returns ``obj``.
+    """
+    obj["schema_version"] = SCHEMA_VERSION
+    for feature in obj.get("features", []):
+        props = feature.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            feature["properties"] = props
+        if not props.get("id"):
+            props["id"] = uuid.uuid4().hex
+    return obj
 
 
 def save_zones_generator(options: dict):
@@ -267,6 +304,7 @@ def save_zones_generator(options: dict):
                     headers={"ETag": current} if current else {},
                 )
 
+        _normalise_feature_collection(geo_json)
         try:
             atomic_write_json(ZONES_FILE, geo_json)
         except OSError:
