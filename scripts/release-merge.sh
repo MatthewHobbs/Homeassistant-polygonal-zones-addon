@@ -245,7 +245,7 @@ fi
 # ───── bump path: merge, tag, watch ────────────────────────────────
 
 TAG="v$PR_VERSION"
-say PLANNED_RELEASE "$MAIN_VERSION→$PR_VERSION as $TAG"
+say PLANNED_RELEASE "${MAIN_VERSION} -> ${PR_VERSION} as $TAG"
 
 if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
   fail "tag-already-exists: $TAG (refusing to merge into inconsistent state)" \
