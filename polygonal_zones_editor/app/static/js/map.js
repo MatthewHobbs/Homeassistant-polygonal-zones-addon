@@ -24,6 +24,7 @@ fetch('./config.json')
         window.PZ_THEME = theme;
         ({map, editableLayers} = generate_map('./zones.json'));
         setup_editing(map, editableLayers);
+        window.PZUiState.initSidebarState(map);
     });
 
 function generate_map(zones_url) {
