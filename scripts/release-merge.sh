@@ -30,9 +30,6 @@ CONFIG="polygonal_zones_editor/config.yaml"
 REQUIRED_CHECKS=(
   "Build (amd64)"
   "Build (aarch64)"
-  "Build (armhf)"
-  "Build (armv7)"
-  "Build (i386)"
   "lint"
   "pytest"
 )

@@ -9,9 +9,6 @@
 
 ![aarch64](https://img.shields.io/badge/aarch64-yes-green?style=flat-square)
 ![amd64](https://img.shields.io/badge/amd64-yes-green?style=flat-square)
-![armhf](https://img.shields.io/badge/armhf-yes-green?style=flat-square)
-![armv7](https://img.shields.io/badge/armv7-yes-green?style=flat-square)
-![i386](https://img.shields.io/badge/i386-yes-green?style=flat-square)
 
 > **Fork Notice**
 >
