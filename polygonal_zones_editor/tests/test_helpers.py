@@ -206,6 +206,33 @@ def test_atomic_write_json_leaves_existing_file_intact_on_serialisation_failure(
     assert siblings == ["zones.json"], f"temp file leaked: {siblings}"
 
 
+def test_atomic_write_json_swallows_dir_open_error(tmp_path, monkeypatch):
+    """If opening the parent directory for fsync fails, the write still
+    succeeds — durability of the directory entry is best-effort. Covers
+    the `os.open → OSError → return` branch in helpers.py.
+    """
+    import os
+
+    import helpers
+
+    real_open = os.open
+
+    def selective_open(path, *args, **kwargs):
+        # Reject *directory* opens (O_RDONLY on the parent dir) but let
+        # the tempfile.mkstemp open still succeed.
+        if os.path.isdir(path):
+            raise OSError("simulated directory open failure")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", selective_open)
+
+    target = tmp_path / "zones.json"
+    payload = {"type": "FeatureCollection", "features": []}
+    # The write should complete regardless of the directory-fsync failure.
+    helpers.atomic_write_json(str(target), payload)
+    assert json.loads(target.read_text()) == payload
+
+
 def test_atomic_write_json_fsyncs_parent_directory(tmp_path, monkeypatch):
     """After the rename, the parent directory must be fsynced so the new
     directory entry is durable on hard power-off. Without this, on some

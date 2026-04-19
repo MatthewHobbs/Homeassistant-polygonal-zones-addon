@@ -361,7 +361,11 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
     return safe
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
+    # The entrypoint block is covered by the build.yml smoke test (boots
+    # the container under docker, probes /healthz + /zones.json), not by
+    # pytest. Extracting to a function would give pytest a handle but
+    # wouldn't exercise uvicorn.run(), which is the point of the block.
     # Bring logging up at the default level first so any errors in
     # load_options are visible, then re-apply the configured level.
     configure_logging()

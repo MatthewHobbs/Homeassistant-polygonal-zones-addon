@@ -171,17 +171,107 @@ def test_save_zones_rejects_non_geojson(allow_all_client, tmp_zones_file):
     assert tmp_zones_file.read_text() == original
 
 
-@pytest.mark.parametrize("payload", [[], "string", 42,
-                                      {"type": "FeatureCollection", "features": "oops"},
-                                      {"type": "FeatureCollection",
-                                       "features": [{"type": "Feature",
-                                                     "geometry": {"type": "Point",
-                                                                  "coordinates": [0, 0]}}]}])
+@pytest.mark.parametrize("payload", [
+    # Top-level not a FeatureCollection.
+    [],
+    "string",
+    42,
+    # Features not a list.
+    {"type": "FeatureCollection", "features": "oops"},
+    # Feature is not a dict.
+    {"type": "FeatureCollection", "features": ["not a dict"]},
+    # Feature missing 'type' key (treated as wrong type).
+    {"type": "FeatureCollection", "features": [{"geometry": {"type": "Polygon", "coordinates": []}}]},
+    # Geometry not a dict.
+    {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": "oops"}]},
+    # Geometry type not in Polygon/MultiPolygon.
+    {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}}]},
+    # Coordinates not a list.
+    {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": "oops"}}]},
+    # Properties is a non-None non-dict value.
+    {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": "oops", "geometry": {"type": "Polygon", "coordinates": []}}]},
+])
 def test_save_zones_rejects_malformed_shapes(allow_all_client, tmp_zones_file, payload):
     original = tmp_zones_file.read_text()
     response = allow_all_client.post("/save_zones", json=payload)
     assert response.status_code == 422
     assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_accepts_multipolygon(allow_all_client, tmp_zones_file):
+    """MultiPolygon is an accepted geometry type alongside Polygon. Exercises
+    the branch in _is_valid_feature_collection that allows MultiPolygon."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Two shapes"},
+                "geometry": {
+                    "type": "MultiPolygon",
+                    "coordinates": [
+                        [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                        [[[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 2.0]]],
+                    ],
+                },
+            }
+        ],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+
+
+def test_save_zones_accepts_null_properties(allow_all_client, tmp_zones_file):
+    """`properties` may be absent or null per GeoJSON — the validator only
+    rejects non-None non-dict values."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": None,
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+
+
+def test_save_zones_rejects_body_over_cap_with_small_content_length(
+    allow_all_client, tmp_zones_file, monkeypatch,
+):
+    """Client lies about Content-Length — header says small, body is large.
+    The pre-read gate (content-length check) passes, but the post-read
+    length check catches the oversize body and returns 413."""
+    import main
+
+    # Force the pre-read gate to pass by temporarily dropping MAX_SAVE_BYTES
+    # cap. Then restore it before the post-read check runs.
+    # Simpler approach: monkeypatch request.body() to return oversize bytes.
+    original_payload = b'{"type": "FeatureCollection", "features": []}'
+    huge_body = b"x" * (main.MAX_SAVE_BYTES + 10)
+
+    # Patch request body reading to return huge bytes after header check.
+    from starlette.requests import Request
+    original_body = Request.body
+
+    async def lying_body(self):
+        return huge_body
+
+    monkeypatch.setattr(Request, "body", lying_body)
+
+    # content-length header small, triggering the post-read len(body) > cap.
+    r = allow_all_client.post(
+        "/save_zones",
+        content=original_payload,
+        headers={"content-type": "application/json", "content-length": str(len(original_payload))},
+    )
+    assert r.status_code == 413
+    assert r.json() == {"error": "payload too large"}
 
 
 def test_save_zones_rejects_non_string_name(allow_all_client, tmp_zones_file):
@@ -446,6 +536,52 @@ def test_save_zones_rate_limits_after_10_failures(app_factory, tmp_zones_file):
     r = client.post("/save_zones", json=_valid_payload())
     assert r.status_code == 429
     assert r.json() == {"error": "too many failed attempts"}
+
+
+def test_save_zones_rate_limit_window_expires(app_factory, tmp_zones_file, monkeypatch):
+    """Failures older than the window are evicted on the next check. Without
+    this, a client hitting the limit would be locked out forever. Exercises
+    the `failures.popleft()` branch in `_rate_limit_exceeded`.
+    """
+    import main
+
+    # Freeze time at t0, record 10 failures, advance past the window, then
+    # a fresh attempt should succeed (old failures get popped).
+    t = [1000.0]
+    monkeypatch.setattr(main.time, "time", lambda: t[0])
+
+    app = app_factory({"save_token": "sekrit"})
+    client = TestClient(app)
+
+    for _ in range(10):
+        client.post("/save_zones", json=_valid_payload())
+
+    # 11th attempt is rate-limited.
+    r = client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 429
+
+    # Advance time beyond the window.
+    t[0] += main._SAVE_FAILURE_WINDOW_SECONDS + 1
+
+    # Now a request with the correct token should succeed, and the old
+    # failures should have been popped during the check.
+    r = client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"X-Save-Token": "sekrit"},
+    )
+    assert r.status_code == 200
+
+
+def test_current_zones_etag_returns_none_when_file_unreadable(tmp_zones_file):
+    """_current_zones_etag returns None when the file can't be opened —
+    used by save_zones during If-Match comparison. Covers the OSError
+    branch that tests hitting /save_zones with If-Match on a missing
+    file would otherwise not reach directly."""
+    import main
+
+    tmp_zones_file.unlink()
+    assert main._current_zones_etag() is None
 
 
 def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_factory, tmp_zones_file):
