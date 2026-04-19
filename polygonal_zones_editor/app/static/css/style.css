@@ -1,7 +1,56 @@
 :root {
     --sidebar-color: #ffffff;
     --save-button-color: #000000;
+    --save-button-text: #ffffff;
     --text-color: #000000;
+    --muted-text: #666666;
+    --border-color: #e0e0e0;
+    --popup-bg: #ffffff;
+    --popup-text: #000000;
+    color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --sidebar-color: #1f1f1f;
+        --save-button-color: #3a86ff;
+        --save-button-text: #ffffff;
+        --text-color: #e8e8e8;
+        --muted-text: #aaaaaa;
+        --border-color: #3a3a3a;
+        --popup-bg: #2a2a2a;
+        --popup-text: #e8e8e8;
+        color-scheme: dark;
+    }
+
+    /* Leaflet popup adopts our palette so it stops blinding people on dark
+       tiles. The library's default arrow + content-wrapper are white. */
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-tip {
+        background: var(--popup-bg) !important;
+        color: var(--popup-text) !important;
+        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.6) !important;
+    }
+    .leaflet-container a.leaflet-popup-close-button {
+        color: var(--popup-text) !important;
+    }
+
+    /* Leaflet-draw toolbar buttons ship a white sprite with dark glyphs.
+       Invert keeps them visible on the dark map without changing the
+       toolbar layout. */
+    .leaflet-draw-toolbar a,
+    .leaflet-bar a {
+        filter: invert(0.9) hue-rotate(180deg);
+    }
+
+    /* Attribution control on dark tiles. */
+    .leaflet-control-attribution {
+        background: rgba(0, 0, 0, 0.6) !important;
+        color: var(--muted-text) !important;
+    }
+    .leaflet-control-attribution a {
+        color: #88baff !important;
+    }
 }
 
 .sr-only {
@@ -58,9 +107,10 @@ body {
     font-size: 1.2em;
 
     align-self: end;
-    background-color: black;
-    color: white;
+    background-color: var(--save-button-color);
+    color: var(--save-button-text);
     border: none;
+    cursor: pointer;
 }
 
 

@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.2.12"
+version: "0.2.13"
 slug: "polygonal_zones"
 panel_icon: "mdi:map"
 # Pre-built images published by .github/workflows/release.yml on each
