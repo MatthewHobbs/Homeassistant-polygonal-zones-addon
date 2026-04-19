@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -95,7 +96,9 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
 
     save_token = (options.get("save_token") or "").strip()
     if save_token:
-        provided = request.headers.get("x-save-token", "")
+        # Strip both stored and provided — symmetric handling so a trailing
+        # whitespace in either doesn't silently break a correct token match.
+        provided = request.headers.get("x-save-token", "").strip()
         if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
             return True, None
         return False, "invalid_token"
@@ -121,12 +124,47 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class ReferrerPolicyMiddleware(BaseHTTPMiddleware):
-    # OpenStreetMap tile usage policy compliance.
-    # https://operations.osmfoundation.org/policies/tiles/
+# Content-Security-Policy tailored to the addon's frontend.
+#
+# script-src/style-src allow unpkg for Leaflet + Leaflet-Draw (SRI-pinned
+# in index.html) and 'unsafe-inline' for the one onclick handler on the
+# Save button + Leaflet's injected inline styles.
+#
+# img-src covers OSM (default) and CARTO (dark theme) tile servers, unpkg
+# for Leaflet-Draw's spritesheet SVG (dist/images/spritesheet.svg), and
+# data:/blob: for Leaflet's inline-rendered tile markers.
+#
+# frame-ancestors permits HA's ingress origin and Nabu Casa remote access
+# to iframe the addon UI; everything else is blocked (clickjacking defense).
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://unpkg.com 'unsafe-inline'; "
+    "style-src 'self' https://unpkg.com 'unsafe-inline'; "
+    "img-src 'self' https://unpkg.com https://*.tile.openstreetmap.org "
+    "https://*.basemaps.cartocdn.com data: blob:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'self' https://*.home-assistant.io https://*.ui.nabu.casa"
+)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds standard security headers to every response.
+
+    Referrer-Policy is required for OSM tile usage policy compliance
+    (https://operations.osmfoundation.org/policies/tiles/). The rest are
+    defense-in-depth: X-Content-Type-Options blocks MIME sniffing,
+    X-Frame-Options + CSP frame-ancestors block clickjacking, the CSP
+    baseline contains XSS to the already-loaded origins.
+    """
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Content-Security-Policy"] = _CSP
         return response
 
 
@@ -215,11 +253,16 @@ def save_zones_generator(options: dict):
                     "Conflict on save from %s: client If-Match=%s, current=%s",
                     request.client.host, if_match, current,
                 )
+                # Omit current_etag from the body when the file is
+                # unreadable — a JSON `null` would force clients into
+                # defensive null-checks for a field that is semantically
+                # "resource missing". Clients that care fall back to GET
+                # /zones.json and read the fresh ETag from the response.
+                body = {"error": "precondition failed"}
+                if current is not None:
+                    body["current_etag"] = current
                 return JSONResponse(
-                    {
-                        "error": "precondition failed",
-                        "current_etag": current,
-                    },
+                    body,
                     status_code=412,
                     headers={"ETag": current} if current else {},
                 )
@@ -315,7 +358,7 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
 
     middleware = [
         Middleware(IPAllowMiddleware, options=options),
-        Middleware(ReferrerPolicyMiddleware),
+        Middleware(SecurityHeadersMiddleware),
     ]
 
     app = Starlette(debug=False, routes=routes, middleware=middleware)
@@ -334,7 +377,26 @@ _TRUSTED_PROXIES_WILDCARDS = frozenset({"*", "0.0.0.0", "0.0.0.0/0", "::", "::/0
 _INGRESS_IP_STR = "172.30.32.2"
 
 
+_INGRESS_IP_OBJ = ipaddress.ip_address(_INGRESS_IP_STR)
+
+
 def _parse_trusted_proxies(options: dict) -> list[str]:
+    """Parse + validate the trusted_proxies option.
+
+    Rejects, with a logged error, any entry that would let an on-path
+    attacker forge X-Forwarded-For: 172.30.32.2 and be treated as the
+    HA ingress sidecar by allowed_ip(). Each rejection logs a constant
+    string (no value interpolation) so CodeQL's taint analysis doesn't
+    flag the options-derived value.
+
+    Rejection criteria (any one disqualifies):
+      1. Literal wildcards (*, 0.0.0.0, 0.0.0.0/0, ::, ::/0).
+      2. The ingress IP itself.
+      3. Unparseable as an IP or CIDR (hostnames, garbage).
+      4. A CIDR that contains the ingress IP (e.g. 172.30.0.0/16,
+         0.0.0.0/8, 172.30.32.2/24) — closes the "supernet bypass"
+         vector a naive literal match would miss.
+    """
     raw = options.get("trusted_proxies", "") or ""
     entries = [p.strip() for p in raw.split(",") if p.strip()]
     safe = []
@@ -352,6 +414,29 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
             _LOGGER.error(
                 "Refusing the HA ingress IP (172.30.32.2) as a "
                 "trusted_proxies entry. It would let any client forge "
+                "X-Forwarded-For and bypass the ingress-IP check on "
+                "/save_zones. Dropping this entry; fix the option in "
+                "the addon configuration."
+            )
+            continue
+        try:
+            net = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            _LOGGER.error(
+                "Refusing an unparseable trusted_proxies entry "
+                "(expected an IPv4/IPv6 address or CIDR). Dropping "
+                "this entry; fix the option in the addon "
+                "configuration."
+            )
+            continue
+        # If the entry is an IPv4 network that contains the ingress IP,
+        # it's a supernet bypass (e.g. 172.30.0.0/16 covers the ingress
+        # IP 172.30.32.2). Reject. IPv6 networks can't contain an IPv4
+        # address so no check is needed there.
+        if isinstance(net, ipaddress.IPv4Network) and _INGRESS_IP_OBJ in net:
+            _LOGGER.error(
+                "Refusing a trusted_proxies entry whose CIDR covers "
+                "the HA ingress IP. It would let any client forge "
                 "X-Forwarded-For and bypass the ingress-IP check on "
                 "/save_zones. Dropping this entry; fix the option in "
                 "the addon configuration."
