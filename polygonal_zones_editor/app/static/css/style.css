@@ -1,3 +1,13 @@
+/* ── Theme palette ──────────────────────────────────────────────────
+ * Three resolution paths (highest precedence first):
+ *   1. data-theme="dark"  on <html>  → forced dark (theme=dark option)
+ *   2. data-theme="light" on <html>  → forced light (theme=light option)
+ *   3. no data-theme + prefers-color-scheme: dark → auto-dark
+ *
+ * Variables on :root cascade through shadow DOM, so zone-entry inherits
+ * them without duplicating values.
+ */
+
 :root {
     --sidebar-color: #ffffff;
     --save-button-color: #000000;
@@ -7,11 +17,15 @@
     --border-color: #e0e0e0;
     --popup-bg: #ffffff;
     --popup-text: #000000;
+    --pz-input-bg: #ffffff;
+    --pz-input-border: #cccccc;
+    --pz-edit-bg: rgba(0, 0, 0, 0.05);
     color-scheme: light;
 }
 
+/* Auto dark: OS prefers dark AND user hasn't forced light. */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
         --sidebar-color: #1f1f1f;
         --save-button-color: #3a86ff;
         --save-button-text: #ffffff;
@@ -20,37 +34,65 @@
         --border-color: #3a3a3a;
         --popup-bg: #2a2a2a;
         --popup-text: #e8e8e8;
+        --pz-input-bg: #2a2a2a;
+        --pz-input-border: #4a4a4a;
+        --pz-edit-bg: rgba(255, 255, 255, 0.06);
         color-scheme: dark;
     }
+}
 
-    /* Leaflet popup adopts our palette so it stops blinding people on dark
-       tiles. The library's default arrow + content-wrapper are white. */
-    .leaflet-popup-content-wrapper,
-    .leaflet-popup-tip {
-        background: var(--popup-bg) !important;
-        color: var(--popup-text) !important;
-        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.6) !important;
-    }
-    .leaflet-container a.leaflet-popup-close-button {
-        color: var(--popup-text) !important;
-    }
+/* Forced dark (theme=dark option) overrides regardless of OS preference. */
+:root[data-theme="dark"] {
+    --sidebar-color: #1f1f1f;
+    --save-button-color: #3a86ff;
+    --save-button-text: #ffffff;
+    --text-color: #e8e8e8;
+    --muted-text: #aaaaaa;
+    --border-color: #3a3a3a;
+    --popup-bg: #2a2a2a;
+    --popup-text: #e8e8e8;
+    --pz-input-bg: #2a2a2a;
+    --pz-input-border: #4a4a4a;
+    --pz-edit-bg: rgba(255, 255, 255, 0.06);
+    color-scheme: dark;
+}
 
-    /* Leaflet-draw toolbar buttons ship a white sprite with dark glyphs.
-       Invert keeps them visible on the dark map without changing the
-       toolbar layout. */
-    .leaflet-draw-toolbar a,
-    .leaflet-bar a {
+/* Variable-driven leaflet overrides — apply on every theme; values flip
+   via the rules above. */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+    background: var(--popup-bg) !important;
+    color: var(--popup-text) !important;
+}
+.leaflet-container a.leaflet-popup-close-button {
+    color: var(--popup-text) !important;
+}
+
+/* The leaflet-draw white-sprite icons need a filter only on dark, so this
+   one rule has to be applied conditionally rather than driven by a var. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .leaflet-draw-toolbar a,
+    :root:not([data-theme="light"]) .leaflet-bar a {
         filter: invert(0.9) hue-rotate(180deg);
     }
-
-    /* Attribution control on dark tiles. */
-    .leaflet-control-attribution {
+    :root:not([data-theme="light"]) .leaflet-control-attribution {
         background: rgba(0, 0, 0, 0.6) !important;
         color: var(--muted-text) !important;
     }
-    .leaflet-control-attribution a {
+    :root:not([data-theme="light"]) .leaflet-control-attribution a {
         color: #88baff !important;
     }
+}
+:root[data-theme="dark"] .leaflet-draw-toolbar a,
+:root[data-theme="dark"] .leaflet-bar a {
+    filter: invert(0.9) hue-rotate(180deg);
+}
+:root[data-theme="dark"] .leaflet-control-attribution {
+    background: rgba(0, 0, 0, 0.6) !important;
+    color: var(--muted-text) !important;
+}
+:root[data-theme="dark"] .leaflet-control-attribution a {
+    color: #88baff !important;
 }
 
 .sr-only {

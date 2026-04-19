@@ -36,6 +36,7 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `save_token`      | password | *(empty)* | When set, `POST /save_zones` requires `X-Save-Token: <value>` for any non-ingress request. See **Securing /save_zones**.  |
 | `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the addon with your own reverse proxy. |
 | `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
+| `theme`           | list     | `auto`    | One of `auto` (follow OS dark-mode setting), `light`, `dark`. Override is useful when HA is dark but your OS is light.    |
 
 ### Network ports
 

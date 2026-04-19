@@ -308,7 +308,7 @@ def test_index_serves_static_html(allow_all_client):
 def test_config_json_default(allow_all_client):
     response = allow_all_client.get("/config.json")
     assert response.status_code == 200
-    assert response.json() == {"zone_colour": "green"}
+    assert response.json() == {"zone_colour": "green", "theme": "auto"}
 
 
 def test_config_json_respects_option(app_factory):
@@ -316,7 +316,7 @@ def test_config_json_respects_option(app_factory):
     client = TestClient(app)
     response = client.get("/config.json")
     assert response.status_code == 200
-    assert response.json() == {"zone_colour": "purple"}
+    assert response.json() == {"zone_colour": "purple", "theme": "auto"}
 
 
 def test_config_json_passes_arbitrary_string_safely(app_factory):
@@ -326,7 +326,23 @@ def test_config_json_passes_arbitrary_string_safely(app_factory):
     client = TestClient(app)
     response = client.get("/config.json")
     assert response.status_code == 200
-    assert response.json() == {"zone_colour": malicious}
+    assert response.json() == {"zone_colour": malicious, "theme": "auto"}
+
+
+@pytest.mark.parametrize("value", ["auto", "light", "dark"])
+def test_config_json_theme_passthrough(app_factory, value):
+    app = app_factory({"allow_all_ips": True, "theme": value})
+    client = TestClient(app)
+    assert client.get("/config.json").json()["theme"] == value
+
+
+def test_config_json_theme_invalid_falls_back_to_auto(app_factory):
+    # HA's schema enforces the enum at the supervisor, but defence in depth:
+    # an unexpected value (e.g. someone hand-edited options.json) must not
+    # propagate to the frontend as-is.
+    app = app_factory({"allow_all_ips": True, "theme": "neon"})
+    client = TestClient(app)
+    assert client.get("/config.json").json()["theme"] == "auto"
 
 
 def test_index_blocks_unauthorized_client(restricted_client):

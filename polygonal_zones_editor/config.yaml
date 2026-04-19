@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.2.13"
+version: "0.2.14"
 slug: "polygonal_zones"
 panel_icon: "mdi:map"
 # Pre-built images published by .github/workflows/release.yml on each
@@ -27,9 +27,11 @@ options:
   trusted_proxies: ""
   log_level: info
   save_token: ""
+  theme: auto
 schema:
   allow_all_ips: bool
   zone_colour: str
   trusted_proxies: str?
   log_level: list(debug|info|warning|error|critical)?
   save_token: password?
+  theme: list(auto|light|dark)?

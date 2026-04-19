@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.14 — 2026-04-19
+
+- New `theme` option: `auto` (default — follows OS `prefers-color-scheme`), `light`, or `dark`. Set this when HA's theme and your OS theme disagree (e.g. HA on dark, laptop on light) and you want the editor to pick one. The override controls both the CSS palette and the tile layer.
+- Internal: ZoneEntry no longer duplicates the dark-mode palette in its shadow DOM. CSS custom properties on `:root` cascade through shadow boundaries, so the document-scope theme defines the values once and the shadow root inherits them.
+- `Loaded options:` continues to redact `save_token` (no behaviour change here, just confirming).
+
 ## 0.2.13 — 2026-04-19
 
 - Dark mode. The editor now follows your OS / browser `prefers-color-scheme` setting: dark sidebar, dark CARTO tile layer, popup + draw-toolbar overrides so everything stays readable. Switching your OS theme at runtime swaps the tile layer live without a reload. Note: the `zone_colour` option is unchanged — pick a colour that's readable on both light and dark tiles (`purple` works fine on both).

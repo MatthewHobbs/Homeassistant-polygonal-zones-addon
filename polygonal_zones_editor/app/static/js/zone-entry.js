@@ -1,30 +1,11 @@
 // custom component that will renderder the above template
 class ZoneEntry extends HTMLElement {
-    // Shadow-DOM styles don't inherit from the document, so the dark-mode
-    // palette is duplicated here. Media queries inside a shadow root still
-    // evaluate against the document, so prefers-color-scheme works.
+    // Custom properties cascade through shadow DOM, so the theme palette
+    // defined on :root in style.css reaches us automatically. No need to
+    // duplicate dark-mode values here.
     styles = `
     <style>
-        :host {
-            --entry-text: #000000;
-            --entry-edit-bg: rgba(0, 0, 0, 0.05);
-            --entry-input-bg: #ffffff;
-            --entry-input-border: #cccccc;
-            --entry-btn-bg: #000000;
-            --entry-btn-text: #ffffff;
-        }
-        @media (prefers-color-scheme: dark) {
-            :host {
-                --entry-text: #e8e8e8;
-                --entry-edit-bg: rgba(255, 255, 255, 0.06);
-                --entry-input-bg: #2a2a2a;
-                --entry-input-border: #4a4a4a;
-                --entry-btn-bg: #3a86ff;
-                --entry-btn-text: #ffffff;
-            }
-        }
-
-        :host { color: var(--entry-text); }
+        :host { color: var(--text-color); }
 
         .hidden {
             display: none !important;
@@ -47,7 +28,7 @@ class ZoneEntry extends HTMLElement {
         .zone-entry.editing {
             margin: 5px -10px;
             padding: 5px 10px;
-            background-color: var(--entry-edit-bg);
+            background-color: var(--pz-edit-bg);
         }
 
         .zone-entry.editing .header {
@@ -68,15 +49,15 @@ class ZoneEntry extends HTMLElement {
         }
 
         input[type="text"] {
-            background: var(--entry-input-bg);
-            color: var(--entry-text);
-            border: 1px solid var(--entry-input-border);
+            background: var(--pz-input-bg);
+            color: var(--text-color);
+            border: 1px solid var(--pz-input-border);
             padding: 0.25ch 0.5ch;
         }
 
         .edit-btn {
-            background-color: var(--entry-btn-bg);
-            color: var(--entry-btn-text);
+            background-color: var(--save-button-color);
+            color: var(--save-button-text);
             padding: 0.5ch 2ch;
             border: none;
             border-radius: 2px;
