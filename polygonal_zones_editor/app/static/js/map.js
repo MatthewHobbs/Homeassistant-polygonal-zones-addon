@@ -27,14 +27,14 @@ fetch('./config.json')
     });
 
 function generate_map(zones_url) {
-    const osmAttrib = '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors';
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        {maxZoom: 18, attribution: osmAttrib});
-    // CARTO dark basemap for prefers-color-scheme: dark. Free, OSM-based.
-    const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-        {maxZoom: 19,
-         subdomains: 'abcd',
-         attribution: osmAttrib + ' &copy; <a href="https://carto.com/attributions">CARTO</a>'});
+    // Tile layers come from the PZBasemaps registry (basemaps.js) so #31
+    // can register additional providers without editing this file. The
+    // two seed entries (OSM, CARTO dark) are byte-identical to the
+    // literals this block previously inlined.
+    const osm = window.PZBasemaps.createLayer(
+        window.PZBasemaps.getDefaultBasemap('light').id);
+    const dark = window.PZBasemaps.createLayer(
+        window.PZBasemaps.getDefaultBasemap('dark').id);
 
     const dark_mq = window.matchMedia('(prefers-color-scheme: dark)');
     // Pick the initial tile layer to match the resolved theme.
@@ -48,9 +48,23 @@ function generate_map(zones_url) {
         zoom: 13,
     });
 
-    // Only follow OS changes when theme=auto. theme=light/dark stay pinned.
+    // Tracks whether the user has actively chosen a basemap (via the
+    // picker landing with #31). Once true, the theme-follow auto-swap
+    // below is suppressed so the user's explicit choice isn't overridden
+    // when the OS light/dark preference changes. baselayerchange fires
+    // for L.Control.Layers radio clicks; direct addLayer/removeLayer
+    // does not fire it, so the auto-swap itself won't flip this flag.
+    let userChoseTile = false;
+    map.on('baselayerchange', () => {
+        userChoseTile = true;
+        // #31 will persist the chosen layer id to pz:basemap here.
+    });
+
+    // Only follow OS changes when theme=auto AND the user hasn't
+    // manually picked a basemap yet.
     if (window.PZ_THEME !== 'light' && window.PZ_THEME !== 'dark') {
         dark_mq.addEventListener('change', e => {
+            if (userChoseTile) return;
             const next = e.matches ? dark : osm;
             const prev = e.matches ? osm : dark;
             if (map.hasLayer(prev)) map.removeLayer(prev);
