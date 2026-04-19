@@ -740,7 +740,19 @@ def test_security_headers_applied(allow_all_client):
     # Key invariants of the CSP. Full string is intentionally not pinned
     # so we don't have to update every test when a directive is tuned.
     assert "default-src 'self'" in csp
-    assert "frame-ancestors 'self' https://*.home-assistant.io" in csp
+    # frame-ancestors: only 'self' (for HA ingress same-origin) plus Nabu
+    # Casa remote access. *.home-assistant.io was removed in 0.2.32 (#128)
+    # — it was HA's marketing domain, not an iframe-embedding origin.
+    assert "frame-ancestors 'self' https://*.ui.nabu.casa" in csp
+    assert "https://*.home-assistant.io" not in csp
+    # 'unsafe-inline' removed from script-src in 0.2.32 (#128) after the
+    # Save button's inline onclick moved to addEventListener. style-src
+    # still needs it for Leaflet's injected tile transforms.
+    assert "script-src 'self';" in csp
+    assert "'unsafe-inline'" not in csp.split("style-src")[0]
+    # unpkg.com dropped once Leaflet + Leaflet-Draw went self-hosted in
+    # 0.2.32 (#122). Guard against anyone re-adding a CDN dep silently.
+    assert "unpkg.com" not in csp
     assert "object-src 'none'" in csp
     # OSM, CARTO, and Esri World Imagery tile hosts must remain in img-src
     # or the corresponding basemap options (#31) break. The Esri origin
