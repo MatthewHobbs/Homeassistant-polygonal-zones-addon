@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.21 — 2026-04-19
+
+### Fixed
+
+- **Hotfix: AppArmor profile was blocking s6 teardown.** The profile shipped in 0.2.16 granted `ix` (execute + inherit) on `/init`, `/bin/**`, `/usr/bin/**`, `/run/{s6,s6-rc*,service}/**`, `/package/**`, `/command/**`, and `/usr/lib/bashio/**` without the `r` (read) permission that `/bin/sh` needs to open a script for interpretation. Addon teardown would log `can't open '/init': Permission denied` and exit the container with status 256, visible on live HA installs as "Web service exited with status 256; stopping container". Every executable allow-rule now includes `mr` (memory-map + read) so shutdown/restart paths work. Behaviour-wise the sandbox is unchanged — writes outside `/data`/`/tmp` are still denied, as are `ptrace`/`mount`/`net_admin`.
+
+  Users who upgraded to 0.2.16–0.2.20 and saw the addon repeatedly restart should pick up this fix automatically once the 0.2.21 image appears on ghcr.io.
+
 ## 0.2.20 — 2026-04-19
 
 - MultiPolygon zones now round-trip through the Save button intact. Previously `save_zones()` hand-assembled a GeoJSON `Polygon` from every layer, silently dropping every ring beyond the first on any zone loaded from a `MultiPolygon` feature (via bulk-load or a hand-edited zones.json). Save now uses Leaflet's `toGeoJSON()` so the layer's actual geometry type — Polygon or MultiPolygon — is preserved.
