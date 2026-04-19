@@ -13,6 +13,7 @@ on:
 permissions:
   contents: write   # create the GitHub Release
   packages: write   # push images to ghcr.io
+  issues: write     # notify-failure job opens an issue on release failure
 
 concurrency:
   group: release-${{ github.ref }}
@@ -96,9 +97,19 @@ jobs:
     permissions:
       contents: read
 
+  lint:
+    name: Lint
+    # Re-run the addon linter for the tagged SHA. Same rationale as tests —
+    # push: tags doesn't trigger lint.yml, so without this gate a tag could
+    # be pushed on a SHA whose config.yaml is invalid against the HA addon
+    # linter.
+    uses: ./.github/workflows/lint.yml
+    permissions:
+      contents: read
+
   publish:
     name: Publish (${{ matrix.arch }})
-    needs: [matrix, tests]
+    needs: [matrix, tests, lint]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -170,3 +181,26 @@ jobs:
               --title "$TAG" \
               --notes-file /tmp/release-notes.md
           fi
+
+  notify-failure:
+    # Fires when any upstream release job fails. Opens a GitHub issue so a
+    # partial release (some arches pushed, others failed) doesn't go silent
+    # and drift into "users on different versions depending on arch".
+    name: Notify on failure
+    if: failure()
+    needs: [matrix, tests, lint, publish, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERSION: ${{ needs.matrix.outputs.version }}
+        run: |
+          # matrix may not have run (e.g. lint failed first) so fall back to
+          # the ref-derived tag name rather than failing the notify step too.
+          TAG="${VERSION:-${GITHUB_REF#refs/tags/v}}"
+          gh issue create \
+            --title "Release v${TAG} failed" \
+            --body "The release workflow failed for v${TAG}. See the run: ${RUN_URL}. Check which jobs failed; a partial publish may have pushed some arches but not others. Recover by re-running the failed jobs after fixing the cause." \
+            --label bug
