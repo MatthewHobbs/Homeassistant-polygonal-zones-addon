@@ -323,6 +323,26 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # Contract-marker regression guard (0.2.33). Assert the
+                  # server stamps schema_version: 1 and backfills a
+                  # properties.id for every feature that hit the save path
+                  # above — the HA integration binds automations to id
+                  # across renames, so a regression here silently breaks
+                  # downstream bindings.
+                  persisted = await page.evaluate(
+                      "async () => (await fetch('./zones.json').then(r => r.json()))"
+                  )
+                  if persisted.get("schema_version") != 1:
+                      print(f"FAIL schema_version missing or wrong on persisted file: {persisted.get('schema_version')!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+                  for idx, feat in enumerate(persisted.get("features") or []):
+                      fid = (feat.get("properties") or {}).get("id")
+                      if not isinstance(fid, str) or len(fid) != 32:
+                          print(f"FAIL features[{idx}].properties.id missing or wrong shape: {fid!r}")
+                          for e in errors: print(" -", e)
+                          sys.exit(1)
+
                   # #130 viewport-persistence regression guard (0.2.31).
                   # Programmatically pan to LA, wait past the 500ms debounce,
                   # reload, assert the persisted center/zoom is honoured.

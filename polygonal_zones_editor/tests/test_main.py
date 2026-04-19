@@ -215,7 +215,153 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     body = response.json()
     assert body["status"] == "ok"
     assert "etag" in body  # new in 0.2.11
-    assert json.loads(tmp_zones_file.read_text()) == payload
+    # As of 0.2.33 the server stamps schema_version and backfills
+    # properties.id on write, so the persisted file is a normalised
+    # superset of the incoming payload rather than byte-identical.
+    stored = json.loads(tmp_zones_file.read_text())
+    assert stored["type"] == payload["type"]
+    assert len(stored["features"]) == len(payload["features"])
+    for sent, got in zip(payload["features"], stored["features"]):
+        assert sent["type"] == got["type"]
+        assert sent["geometry"] == got["geometry"]
+        assert got["properties"]["name"] == sent["properties"]["name"]
+        # id was backfilled (uuid4.hex = 32 chars of hex)
+        assert isinstance(got["properties"]["id"], str)
+        assert len(got["properties"]["id"]) == 32
+    # schema_version stamped.
+    assert stored["schema_version"] == 1
+
+
+def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_file):
+    """When the client supplies a stable properties.id (Leaflet-draw path
+    where the editor generates a client-side UUID), the server must
+    round-trip it verbatim rather than overwriting with a fresh one —
+    otherwise automations bound to the id would break on every save."""
+    stable_id = "aaaa1111bbbb2222cccc3333dddd4444"
+    payload = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"name": "Home", "id": stable_id},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+            },
+        }],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+    stored = json.loads(tmp_zones_file.read_text())
+    assert stored["features"][0]["properties"]["id"] == stable_id
+
+
+def test_save_zones_backfills_missing_id_and_non_dict_properties(
+    allow_all_client, tmp_zones_file,
+):
+    """Feature with properties=null (allowed on input) gets a fresh
+    properties dict carrying a backfilled id. Feature with an empty id
+    (treated as falsy) gets re-filled. Both coexist in one payload."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": None,
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {"name": "Second"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 2.0]]],
+                },
+            },
+        ],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+    stored = json.loads(tmp_zones_file.read_text())
+    for feat in stored["features"]:
+        assert isinstance(feat["properties"], dict)
+        assert len(feat["properties"]["id"]) == 32
+
+
+def test_save_zones_rejects_non_int_schema_version(allow_all_client, tmp_zones_file):
+    payload = {**_valid_payload(), "schema_version": "oops"}
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "schema_version" in r.json()["detail"]
+
+
+def test_save_zones_rejects_bool_schema_version(allow_all_client, tmp_zones_file):
+    """bool subclasses int in Python; must be explicitly rejected so a
+    consumer doing `schema_version >= 1` doesn't silently pass on True."""
+    payload = {**_valid_payload(), "schema_version": True}
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "schema_version" in r.json()["detail"]
+
+
+def test_save_zones_accepts_valid_schema_version(allow_all_client, tmp_zones_file):
+    payload = {**_valid_payload(), "schema_version": 1}
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+
+
+def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
+    payload = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"name": "x", "id": 42},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+            },
+        }],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "properties.id" in r.json()["detail"]
+
+
+def test_save_zones_rejects_empty_id(allow_all_client, tmp_zones_file):
+    payload = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {"name": "x", "id": ""},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+            },
+        }],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "properties.id" in r.json()["detail"]
+
+
+def test_save_zones_rejects_duplicate_ids(allow_all_client, tmp_zones_file):
+    """id is the binding handle — duplicates would defeat the 'stable
+    reference' contract since an automation couldn't route an id match
+    to a specific zone unambiguously."""
+    geom = {"type": "Polygon", "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]]}
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"name": "a", "id": "dup"}, "geometry": geom},
+            {"type": "Feature", "properties": {"name": "b", "id": "dup"}, "geometry": geom},
+        ],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "duplicate" in r.json()["detail"]
+    assert "id" in r.json()["detail"]
 
 
 def test_save_zones_rejects_non_geojson(allow_all_client, tmp_zones_file):

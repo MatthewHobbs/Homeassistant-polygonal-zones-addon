@@ -6,6 +6,7 @@ import math
 import os
 import secrets
 import time
+import uuid
 from collections import defaultdict, deque
 from email.utils import formatdate
 
@@ -27,7 +28,7 @@ from helpers import (
     load_options,
     resolve_log_level,
 )
-from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES
+from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES, SCHEMA_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -293,11 +294,24 @@ def _validate_feature_collection(obj) -> None:
     """
     if not isinstance(obj, dict) or obj.get("type") != "FeatureCollection":
         raise ValueError("expected a GeoJSON FeatureCollection")
+
+    # schema_version is optional on input for backward compatibility with
+    # curl-restored pre-versioned files. When present it must be an int.
+    # isinstance(True, int) is True in Python because bool subclasses int,
+    # so reject bool explicitly — a consumer doing `schema_version >= 1`
+    # shouldn't silently pass on `True`.
+    schema_version = obj.get("schema_version")
+    if schema_version is not None and (
+        isinstance(schema_version, bool) or not isinstance(schema_version, int)
+    ):
+        raise ValueError("schema_version: must be an int if present")
+
     features = obj.get("features")
     if not isinstance(features, list):
         raise ValueError("features must be a list")
 
     seen_names: set[str] = set()
+    seen_ids: set[str] = set()
     for idx, f in enumerate(features):
         where = f"features[{idx}]"
         if not isinstance(f, dict) or f.get("type") != "Feature":
@@ -348,6 +362,47 @@ def _validate_feature_collection(obj) -> None:
                         f"{where}.properties.name: duplicate zone name (must be unique)"
                     )
                 seen_names.add(name)
+
+            # properties.id is the stable binding handle automations bind to
+            # across renames. Optional on input (older clients, curl restores
+            # of pre-versioned files); the server backfills one during
+            # _normalise_feature_collection if missing. When present it must
+            # be a non-empty string AND unique — duplicates would defeat the
+            # "stable handle" contract since a consumer couldn't route a
+            # matched id to a specific zone unambiguously.
+            feature_id = props.get("id")
+            if feature_id is not None:
+                if not isinstance(feature_id, str) or not feature_id:
+                    raise ValueError(
+                        f"{where}.properties.id: must be a non-empty string if present"
+                    )
+                if feature_id in seen_ids:
+                    raise ValueError(
+                        f"{where}.properties.id: duplicate zone id (must be unique)"
+                    )
+                seen_ids.add(feature_id)
+
+
+def _normalise_feature_collection(obj: dict) -> dict:
+    """Stamp `schema_version` and backfill missing `properties.id`.
+
+    Runs immediately before the on-disk write — so rejected payloads don't
+    get partially normalised. Guarantees that every persisted zones.json
+    carries a current `schema_version` and that every feature has a
+    stable `properties.id` the companion integration can bind automations
+    to across renames. Mutates and returns ``obj``.
+    """
+    obj["schema_version"] = SCHEMA_VERSION
+    for feature in obj.get("features", []):
+        props = feature.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            feature["properties"] = props
+        if not props.get("id"):
+            # uuid4 hex (no dashes) is compact and URL-safe for any future
+            # id-bearing endpoint.
+            props["id"] = uuid.uuid4().hex
+    return obj
 
 
 def save_zones_generator(options: dict):
@@ -428,6 +483,9 @@ def save_zones_generator(options: dict):
                     headers={"ETag": current} if current else {},
                 )
 
+        # Stamp schema_version + backfill ids AFTER the validator has
+        # accepted the payload. Rejected payloads aren't mutated.
+        _normalise_feature_collection(geo_json)
         try:
             atomic_write_json(ZONES_FILE, geo_json)
         except OSError:
