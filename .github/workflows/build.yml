@@ -218,6 +218,39 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # A11y regression guard (#116). The leaflet-draw toolbar
+                  # anchors are patched post-addControl to mirror their
+                  # title= into aria-label (WCAG 2.2 SC 4.1.2). The
+                  # zone-entry rename input lives inside shadow DOM where
+                  # <label for=…> never associates per spec, so it uses
+                  # aria-label directly.
+                  draw_aria = await page.evaluate(
+                      "() => document.querySelector('.leaflet-draw-draw-polygon')?.getAttribute('aria-label')"
+                  )
+                  if not draw_aria:
+                      print(f"FAIL leaflet-draw polygon control missing aria-label; got: {draw_aria!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  input_aria = await page.evaluate(
+                      "() => document.querySelector('zone-entry[editing=\"true\"], zone-entry')"
+                      "?.shadowRoot?.querySelector('input[type=text]')?.getAttribute('aria-label')"
+                  )
+                  # Zone-entry only renders the input when editing, so trigger
+                  # edit mode on the first entry before asserting.
+                  await page.evaluate(
+                      "() => document.querySelector('zone-entry')"
+                      "?.shadowRoot?.querySelector('.edit-btn')?.click()"
+                  )
+                  input_aria = await page.evaluate(
+                      "() => document.querySelector('zone-entry')"
+                      "?.shadowRoot?.querySelector('input[type=text]')?.getAttribute('aria-label')"
+                  )
+                  if not input_aria:
+                      print(f"FAIL zone-entry rename input missing aria-label; got: {input_aria!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
                   if errors:
                       print("FAIL JS errors during page load:")
                       for e in errors: print(" -", e)

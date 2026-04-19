@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.2.27 — 2026-04-19
+
+Installation and correctness — a batch of owned P0 fixes from this week's principal-engineer panel review. No new features; the next user-visible UX work is queued for 0.2.28.
+
+### Security
+
+- **Gated `GET /zones.json` behind `save_token`** when the option is configured (#113). Previously, setting `save_token` protected `POST /save_zones` but left `GET /zones.json` reachable by any LAN client once `allow_all_ips: true` was on — zone geometry (your home, workplace, school runs) was effectively less protected than the less-sensitive write action. Ingress-IP reads remain unauthenticated (the addon's own UI depends on this). LAN reads now require the same `X-Save-Token: <value>` header as saves, with identical strip-both-ends whitespace handling. Failed reads share the existing 10-failures-in-60s rate-limit bucket with `/save_zones` so an attacker can't brute-force the token by rotating between GET and POST.
+
+### Frontend
+
+- **`beforeunload` guard on unsaved edits** (#115). Drawing a polygon, deleting, renaming, finishing an edit, or bulk-loading now marks the editor as dirty. Navigating away (sidebar tap, back button, tab close) while dirty triggers the browser's standard "Leave site?" confirmation. The dirty flag clears on a successful save (200); a 412 conflict keeps the flag set because the edit still isn't flushed.
+- **Removed two `console.log(layer)` / `console.log(geojson)` calls** in `map.js`'s `draw:created` handler (#115). These were leaking the full GeoJSON — including real home/work coordinates — into browser devtools on every polygon draw, where any console-capturing RUM or mid-screen-share inadvertently exposed them.
+
+### Accessibility
+
+- **Zone-entry rename input** (#116). Replaced the broken `<label for="zone-name-input">` + `<input id="zone-name-input">` pattern with an `aria-label="Zone name"` on the input. Per spec, the `for`/`id` attribute does not cross the shadow-DOM boundary, so the previous implementation never programmatically associated the label — and every zone-entry shared the same id, compounding the bug. Screen readers now announce the field correctly. (WCAG 2.2 SC 1.3.1.)
+- **Leaflet-draw toolbar labels** (#116). After `map.addControl(drawControl)`, every `.leaflet-draw-toolbar a[title]` has its `title` mirrored into an `aria-label`. Leaflet-draw itself only emits `title=`, which NVDA and VoiceOver on iOS either ignore or inconsistently announce on interactive anchors. The Draw / Delete / Clear-all controls are now programmatically labelled. (WCAG 2.2 SC 4.1.2.)
+- **Build-time smoke extended** to regress-guard both a11y fixes: the Playwright block now asserts the leaflet-draw polygon control carries an `aria-label`, and the first zone-entry's input carries an `aria-label` when in edit mode.
+
+### Documentation
+
+- **`DOCS.md` privacy rewrite** (#112, already on `main` from PR #133 — landed ahead of the 0.2.27 cut so Supervisor's metadata refresh picks it up independently of the version bump). The "private-IP URLs" section now names a **private reverse proxy with TLS on a non-RFC-1918 hostname** (nginx, Caddy, Traefik, or HA's NGINX Proxy Manager addon) as the recommended workaround. The public-CDN mirror path is demoted to a "last resort" with explicit enumeration of the privacy cost: world-readable, CDN replication, CLOUD Act reach, search indexing, and archived copies that survive deletion.
+
+### Tracked upstream
+
+- Issue [#111](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/issues/111) — the integration-side RFC-1918 opt-in. Until it ships upstream, the reverse-proxy workaround is the official path. Not a code change in this release; mentioned so the full "v1 correctness" story has a tracked home.
+
 ## 0.2.26 — 2026-04-19
 
 ### Removed

@@ -109,6 +109,36 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     return False, "not_allowed"
 
 
+def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
+    """Decide whether a GET /zones.json request is allowed.
+
+    Mirrors ``authorise_save`` so the sensitive geometry is gated at least
+    as strongly as the less-sensitive write action. Previously, setting
+    ``save_token`` protected POST /save_zones but left GET /zones.json
+    reachable by any LAN client once ``allow_all_ips`` was on —
+    reads were *less* protected than writes.
+
+    IPAllowMiddleware still runs first, so when ``allow_all_ips`` is off
+    and the client isn't ingress, this handler never gets called; the
+    middleware blocks at 403. This helper exists to close the
+    ``allow_all_ips: true`` + ``save_token`` corner where the middleware
+    lets the request through.
+    """
+    if allowed_ip(request):
+        return True, None
+
+    save_token = (options.get("save_token") or "").strip()
+    if save_token:
+        provided = request.headers.get("x-save-token", "").strip()
+        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
+            return True, None
+        return False, "invalid_token"
+
+    # No token configured — IPAllowMiddleware already approved this request
+    # (allow_all_ips must have been true, or the client is ingress).
+    return True, None
+
+
 class IPAllowMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, options: dict):
         super().__init__(app)
@@ -300,32 +330,67 @@ def config_json_generator(options: dict):
     return config_json
 
 
-async def zones_json(_request: Request) -> Response:
-    # Pass the file bytes through verbatim — atomic_write_json guarantees the
-    # file is always valid JSON, so re-parsing and re-serialising via
-    # JSONResponse would be a pointless round-trip.
-    try:
-        with open(ZONES_FILE, "rb") as f:
-            body = f.read()
-    except OSError:
-        # File missing or unreadable (ownership drift after a Supervisor
-        # remount, disk error, etc.). Return 503 with a log line rather than
-        # letting Starlette emit a generic 500 traceback.
-        _LOGGER.exception("Failed to read %s", ZONES_FILE)
-        return JSONResponse(
-            {"error": "zones file unreadable"},
-            status_code=503,
+def zones_json_generator(options: dict):
+    async def zones_json(request: Request) -> Response:
+        # When save_token is set, non-ingress reads require the same
+        # X-Save-Token as writes. Shares the rate-limit bucket with
+        # /save_zones so an attacker can't rotate between GET and POST
+        # to double their guess budget.
+        client_host = request.client.host or "unknown"
+        if _rate_limit_exceeded(client_host):
+            _LOGGER.warning(
+                "Rate limit hit on /zones.json for %s (%d failures in %ds). "
+                "Further attempts refused for the remainder of the window.",
+                client_host, _SAVE_FAILURE_LIMIT, _SAVE_FAILURE_WINDOW_SECONDS,
+            )
+            return JSONResponse(
+                {"error": "too many failed attempts"},
+                status_code=429,
+            )
+        ok, _ = authorise_read(options, request)
+        if not ok:
+            # authorise_read only returns False with reason="invalid_token".
+            # The plain "not_allowed" path that authorise_save uses can't
+            # happen for reads because IPAllowMiddleware already gates
+            # non-ingress, non-allow_all_ips clients at 403 before this
+            # handler runs — /zones.json isn't in AUTHZ_EXEMPT_PATHS.
+            _record_save_failure(client_host)
+            _LOGGER.warning(
+                "Rejected /zones.json read from %s: missing or invalid X-Save-Token",
+                client_host,
+            )
+            return JSONResponse(
+                {"error": "missing or invalid X-Save-Token"},
+                status_code=401,
+            )
+
+        # Pass the file bytes through verbatim — atomic_write_json guarantees
+        # the file is always valid JSON, so re-parsing and re-serialising via
+        # JSONResponse would be a pointless round-trip.
+        try:
+            with open(ZONES_FILE, "rb") as f:
+                body = f.read()
+        except OSError:
+            # File missing or unreadable (ownership drift after a Supervisor
+            # remount, disk error, etc.). Return 503 with a log line rather
+            # than letting Starlette emit a generic 500 traceback.
+            _LOGGER.exception("Failed to read %s", ZONES_FILE)
+            return JSONResponse(
+                {"error": "zones file unreadable"},
+                status_code=503,
+            )
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "ETag": _etag_for_bytes(body),
+            },
         )
-    return Response(
-        content=body,
-        media_type="application/json",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-            "ETag": _etag_for_bytes(body),
-        },
-    )
+
+    return zones_json
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
@@ -344,7 +409,7 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     static_folder = "static"
     routes = [
         Route("/save_zones", save_zones_generator(options), methods=["POST"]),
-        Route("/zones.json", zones_json, methods=["GET"]),
+        Route("/zones.json", zones_json_generator(options), methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
         # html=True makes "/" return index.html. Explicit Routes above take

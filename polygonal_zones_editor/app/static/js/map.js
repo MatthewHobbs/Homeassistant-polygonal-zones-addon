@@ -8,6 +8,24 @@ let editableLayers;
 // on /save_zones so a concurrent edit by another tab can't silently overwrite
 // us — the server returns 412 and we surface a conflict notice.
 let zones_etag = null;
+// isDirty flips to true on any edit the user hasn't flushed to the server
+// (draw, delete, rename, bulk-load). Cleared on a successful save. Drives
+// the beforeunload prompt below so HA's ingress shell can't silently discard
+// unsaved polygons when the user taps another sidebar entry.
+let isDirty = false;
+function mark_dirty() { isDirty = true; }
+function mark_clean() { isDirty = false; }
+
+window.addEventListener('beforeunload', (e) => {
+    if (!isDirty) return;
+    // Modern Chrome/Firefox/Safari ignore the string; they show a generic
+    // "Leave site?" prompt when preventDefault is called. returnValue = ''
+    // is kept for older Safari compatibility. The prompt can't be
+    // customised, and triggers only on user-initiated navigations — the
+    // browser still suppresses it on programmatic location changes.
+    e.preventDefault();
+    e.returnValue = '';
+});
 
 fetch('./config.json')
     .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
@@ -146,12 +164,26 @@ function setup_editing(map, editableLayers) {
     map.addControl(drawControl);
     map.addLayer(drawnItems);
 
+    // Leaflet-draw toolbar anchors ship with a `title` attribute only; many
+    // screen readers (NVDA, VoiceOver on iOS) either ignore or inconsistently
+    // announce `title` for interactive anchors. Copy every title into an
+    // aria-label so the Draw / Delete / Clear-all controls are programmatically
+    // labelled (WCAG 2.2 SC 4.1.2). Deferred to the next microtask because
+    // addControl synchronously inserts the DOM but the exact anchor set depends
+    // on the drawing_options object (no marker, no circle, etc.).
+    Promise.resolve().then(() => {
+        document
+            .querySelectorAll('.leaflet-draw-toolbar a[title]:not([aria-label])')
+            .forEach(a => a.setAttribute('aria-label', a.getAttribute('title')));
+    });
+
     map.on('draw:deleted', function (e) {
         let layers = e.layers;
         layers.eachLayer(layer => {
             editableLayers.removeLayer(layer);
             render_zone_list();
         });
+        mark_dirty();
 
         if (editableLayers.getLayers().length === 0) {
             create_load_btn();
@@ -174,11 +206,9 @@ function setup_editing(map, editableLayers) {
             }
         };
 
-        console.log(layer)
         editableLayers.addLayer(layer);
-        // log the geojson
-        console.log(layer.toGeoJSON());
         render_zone_list();
+        mark_dirty();
 
         delete_load_btn();
     });
@@ -200,6 +230,7 @@ function edit_zone_event(e) {
         // once we stop we will disable editing and save the changes
         layer.feature.properties.name = e.detail.name;
         e.target.setAttribute('name', e.detail.name);
+        mark_dirty();
     }
 }
 
@@ -263,6 +294,7 @@ function save_zones() {
             elem.classList.remove('success')
             elem.classList.add('error')
             // Don't auto-clear — conflict needs explicit user attention.
+            // Stay dirty: the user still hasn't flushed their edits.
             if (status) status.textContent =
                 'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.';
             return;
@@ -271,6 +303,7 @@ function save_zones() {
             elem.classList.remove('error')
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
+            mark_clean();
         } else {
             elem.classList.remove('success')
             elem.classList.add('error')
@@ -321,6 +354,7 @@ function load_bulk_json() {
             })
             map.fitBounds(editableLayers.getBounds());
             render_zone_list();
+            mark_dirty();
             if (editableLayers.getLayers().length > 0) {
                 map.fitBounds(editableLayers.getBounds());
                 map.setView(editableLayers.getBounds().getCenter(), 13);

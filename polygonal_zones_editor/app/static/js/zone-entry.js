@@ -122,8 +122,18 @@ class ZoneEntry extends HTMLElement {
                 </div>
                 <div class="edit-zone ${!editing ? 'hidden' : ''}">
                     <div class="properties">
-                        <label for="zone-name-input">Name</label>
-                        <input id="zone-name-input" type="text">
+                        <!--
+                            aria-label rather than <label for="…"> because
+                            the shadow-DOM for/id association does not cross
+                            the shadow boundary per spec — a previous
+                            implementation used for="zone-name-input" and
+                            id="zone-name-input" which never associated, and
+                            every zone-entry shared the same id. The visible
+                            "Name" text survives as a styled label element;
+                            screen readers now announce the input correctly.
+                        -->
+                        <label aria-hidden="true">Name</label>
+                        <input type="text" aria-label="Zone name">
                     </div>
                 </div>
             </div>
