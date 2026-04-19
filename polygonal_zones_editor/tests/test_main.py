@@ -84,6 +84,60 @@ def test_zones_json_returns_etag(allow_all_client, tmp_zones_file):
     assert len(etag) == 64 + 2  # sha256 hex + quotes
 
 
+def test_zones_json_returns_last_modified(allow_all_client, tmp_zones_file):
+    response = allow_all_client.get("/zones.json")
+    assert response.status_code == 200
+    lm = response.headers.get("last-modified")
+    assert lm is not None
+    # RFC 7231 date: "Sun, 06 Nov 1994 08:49:37 GMT" — just sanity-check
+    # the shape, exact value depends on the tmp_zones_file fixture mtime.
+    assert lm.endswith("GMT")
+    assert "," in lm
+
+
+def test_zones_json_returns_304_on_matching_if_none_match(allow_all_client, tmp_zones_file):
+    """Integration polling idiom (#119): pass the previous ETag via
+    If-None-Match; the addon returns 304 with no body so the poll
+    doesn't re-parse a FeatureCollection that hasn't changed."""
+    etag = allow_all_client.get("/zones.json").headers["etag"]
+    r = allow_all_client.get("/zones.json", headers={"If-None-Match": etag})
+    assert r.status_code == 304
+    # 304 must not carry a body per RFC 7232.
+    assert r.content == b""
+    # The validator headers MUST be repeated on 304 so clients can refresh
+    # their cache state.
+    assert r.headers["etag"] == etag
+    assert r.headers.get("last-modified")
+    assert r.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+
+
+def test_zones_json_returns_304_on_wildcard_if_none_match(allow_all_client, tmp_zones_file):
+    """If-None-Match: * matches any existing resource per RFC 7232."""
+    r = allow_all_client.get("/zones.json", headers={"If-None-Match": "*"})
+    assert r.status_code == 304
+
+
+def test_zones_json_returns_200_on_stale_if_none_match(allow_all_client, tmp_zones_file):
+    """If the client's cached ETag doesn't match, serve the full body."""
+    r = allow_all_client.get(
+        "/zones.json", headers={"If-None-Match": '"notarealtag"'}
+    )
+    assert r.status_code == 200
+    assert r.headers.get("etag") != '"notarealtag"'
+    assert b"FeatureCollection" in r.content
+
+
+def test_zones_json_if_none_match_handles_comma_separated_list(allow_all_client, tmp_zones_file):
+    """RFC 7232 permits a comma-separated list of candidate validators.
+    Match on any one returns 304."""
+    etag = allow_all_client.get("/zones.json").headers["etag"]
+    r = allow_all_client.get(
+        "/zones.json",
+        headers={"If-None-Match": f'"stale", {etag}, "alsostale"'},
+    )
+    assert r.status_code == 304
+
+
 def test_save_response_includes_new_etag(allow_all_client, tmp_zones_file):
     # Initial GET ETag.
     initial = allow_all_client.get("/zones.json").headers["etag"]

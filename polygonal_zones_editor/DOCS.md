@@ -64,6 +64,17 @@ Recommended: leave `save_token` set, only enable `allow_all_ips` while you're ac
 
 `GET /zones.json` returns an `ETag` header. Pass it back as `If-Match` on `POST /save_zones` to refuse the write if anything changed in between (the addon's own UI does this by default). Plain `curl` posts without `If-Match` keep their last-write-wins behaviour, so existing scripts are unaffected.
 
+**Recommended polling idiom.** Since 0.2.29, `GET /zones.json` also honours `If-None-Match` and returns a `Last-Modified` header. Pollers should cache the last-seen `ETag` and resend it on every subsequent request — the addon returns `304 Not Modified` (no body) when the zones haven't changed, so the integration's poll loop doesn't re-parse a full `FeatureCollection` on every tick. Example:
+
+```sh
+# First poll
+curl -D headers1.txt http://<ha-host>:8000/zones.json > zones.json
+etag=$(awk -F': ' '/^ETag: /{print $2}' headers1.txt | tr -d '\r')
+
+# Subsequent polls — 304 means "no change, use the cached copy"
+curl -I -H "If-None-Match: $etag" http://<ha-host>:8000/zones.json
+```
+
 ## Integration with the Polygonal Zones HA integration
 
 The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this addon. If the integration runs anywhere other than the HA ingress sidecar (different container or external host), set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.

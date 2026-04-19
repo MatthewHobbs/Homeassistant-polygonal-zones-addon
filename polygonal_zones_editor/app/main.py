@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 from collections import defaultdict, deque
+from email.utils import formatdate
 
 import uvicorn
 from starlette.applications import Starlette
@@ -375,6 +376,7 @@ def zones_json_generator(options: dict):
         try:
             with open(ZONES_FILE, "rb") as f:
                 body = f.read()
+            mtime = os.stat(ZONES_FILE).st_mtime
         except OSError:
             # File missing or unreadable (ownership drift after a Supervisor
             # remount, disk error, etc.). Return 503 with a log line rather
@@ -384,14 +386,32 @@ def zones_json_generator(options: dict):
                 {"error": "zones file unreadable"},
                 status_code=503,
             )
+        etag = _etag_for_bytes(body)
+        last_modified = formatdate(mtime, usegmt=True)
+        base_headers = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "ETag": etag,
+            "Last-Modified": last_modified,
+        }
+
+        # RFC 7232 conditional GET. If the client presents an If-None-Match
+        # that matches our current ETag (or is the wildcard "*"), return 304
+        # with no body so the integration's polling loop doesn't re-parse
+        # the full FeatureCollection on every tick. Parse comma-separated
+        # lists too — the spec allows multiple candidate validators.
+        inm = request.headers.get("if-none-match", "").strip()
+        if inm:
+            candidates = {e.strip() for e in inm.split(",")}
+            if etag in candidates or "*" in candidates:
+                return Response(status_code=304, headers=base_headers)
+
         return Response(
             content=body,
             media_type="application/json",
             headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
+                **base_headers,
                 "Pragma": "no-cache",
                 "Expires": "0",
-                "ETag": _etag_for_bytes(body),
             },
         )
 
