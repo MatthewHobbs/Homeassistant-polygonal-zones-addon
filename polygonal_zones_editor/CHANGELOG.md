@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.29 — 2026-04-19
+
+Durability slice: conditional GET on `/zones.json` so the companion integration's polling loop stops re-parsing a full `FeatureCollection` on every tick when nothing has changed.
+
+### Added
+
+- **Conditional GET on `/zones.json` via `If-None-Match`** (#119). The response already carried an `ETag`; now it also carries `Last-Modified` (RFC 7231 GMT date, derived from file mtime), and the handler short-circuits to `304 Not Modified` (no body) when the client's `If-None-Match` header matches the current ETag. The wildcard `If-None-Match: *` is honoured per RFC 7232, and so is a comma-separated list of candidate validators. `ETag`, `Last-Modified`, and `Cache-Control` are repeated on 304 so clients can refresh their cache state from a single response. Pairs naturally with a future SSE / WebSocket push channel ([#127](https://github.com/MatthewHobbs/homeassistant-polygonal-zones-addon/issues/127)) — cheap polling now, push later.
+- **Polling-idiom example in `DOCS.md`** — a two-line `curl` snippet showing the recommended integration pattern (cache the ETag, resend as `If-None-Match` on subsequent polls, treat 304 as "no change").
+
+### Backwards compatibility
+
+Fully additive on the read path. Clients that don't send `If-None-Match` get the 200 response they always got (same body, same ETag, plus the new `Last-Modified` header). No breaking change for the integration, `curl` scripts, or the browser.
+
 ## 0.2.28 — 2026-04-19
 
 First user-visible UX slice after the 0.2.27 correctness batch — a tile-layer picker (#31). Scaffolding landed in 0.2.24; this release wires the actual control.
