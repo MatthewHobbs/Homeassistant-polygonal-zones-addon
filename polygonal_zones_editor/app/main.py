@@ -32,8 +32,11 @@ _LOGGER = logging.getLogger(__name__)
 # Paths that bypass the IP allowlist middleware. /healthz is exempt so the
 # Docker HEALTHCHECK works. /save_zones runs its own authorisation logic
 # (allowing token-bearing requests through even when allow_all_ips is off),
-# so it bypasses the coarse middleware too.
-AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones"})
+# so it bypasses the coarse middleware too. /zones.json mirrors /save_zones
+# now that reads are also token-gated — a user setting save_token without
+# allow_all_ips: true expects the token to unlock BOTH LAN reads and LAN
+# writes, same as on /save_zones.
+AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json"})
 
 # Rate limit on /save_zones authorisation failures. Protects against brute-
 # forcing save_token when the port is exposed on LAN. Only failures count;
@@ -98,6 +101,35 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     if save_token:
         # Strip both stored and provided — symmetric handling so a trailing
         # whitespace in either doesn't silently break a correct token match.
+        provided = request.headers.get("x-save-token", "").strip()
+        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
+            return True, None
+        return False, "invalid_token"
+
+    if allow_all_ips(options):
+        return True, None
+
+    return False, "not_allowed"
+
+
+def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
+    """Decide whether a GET /zones.json request is allowed.
+
+    Full mirror of ``authorise_save``: ingress → token → allow_all_ips →
+    deny. Previously reads were gated only by the IPAllowMiddleware, which
+    meant save_token didn't unlock LAN reads the way it unlocks LAN writes
+    — a user who set save_token and left allow_all_ips off couldn't read
+    zones.json on LAN even with the correct token. That asymmetry made
+    the reading path harder to reason about than the write path.
+
+    /zones.json is now in AUTHZ_EXEMPT_PATHS, so the middleware lets every
+    request through and this function is the sole read gate.
+    """
+    if allowed_ip(request):
+        return True, None
+
+    save_token = (options.get("save_token") or "").strip()
+    if save_token:
         provided = request.headers.get("x-save-token", "").strip()
         if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
             return True, None
@@ -300,32 +332,68 @@ def config_json_generator(options: dict):
     return config_json
 
 
-async def zones_json(_request: Request) -> Response:
-    # Pass the file bytes through verbatim — atomic_write_json guarantees the
-    # file is always valid JSON, so re-parsing and re-serialising via
-    # JSONResponse would be a pointless round-trip.
-    try:
-        with open(ZONES_FILE, "rb") as f:
-            body = f.read()
-    except OSError:
-        # File missing or unreadable (ownership drift after a Supervisor
-        # remount, disk error, etc.). Return 503 with a log line rather than
-        # letting Starlette emit a generic 500 traceback.
-        _LOGGER.exception("Failed to read %s", ZONES_FILE)
-        return JSONResponse(
-            {"error": "zones file unreadable"},
-            status_code=503,
+def zones_json_generator(options: dict):
+    async def zones_json(request: Request) -> Response:
+        # When save_token is set, non-ingress reads require the same
+        # X-Save-Token as writes. Shares the rate-limit bucket with
+        # /save_zones so an attacker can't rotate between GET and POST
+        # to double their guess budget.
+        client_host = request.client.host or "unknown"
+        if _rate_limit_exceeded(client_host):
+            _LOGGER.warning(
+                "Rate limit hit on /zones.json for %s (%d failures in %ds). "
+                "Further attempts refused for the remainder of the window.",
+                client_host, _SAVE_FAILURE_LIMIT, _SAVE_FAILURE_WINDOW_SECONDS,
+            )
+            return JSONResponse(
+                {"error": "too many failed attempts"},
+                status_code=429,
+            )
+        ok, reason = authorise_read(options, request)
+        if not ok:
+            _record_save_failure(client_host)
+            if reason == "invalid_token":
+                _LOGGER.warning(
+                    "Rejected /zones.json read from %s: missing or invalid X-Save-Token",
+                    client_host,
+                )
+                return JSONResponse(
+                    {"error": "missing or invalid X-Save-Token"},
+                    status_code=401,
+                )
+            _LOGGER.warning(
+                "Blocked /zones.json read from %s (not ingress, no token configured, allow_all_ips off)",
+                client_host,
+            )
+            return PlainTextResponse("not allowed", status_code=403)
+
+        # Pass the file bytes through verbatim — atomic_write_json guarantees
+        # the file is always valid JSON, so re-parsing and re-serialising via
+        # JSONResponse would be a pointless round-trip.
+        try:
+            with open(ZONES_FILE, "rb") as f:
+                body = f.read()
+        except OSError:
+            # File missing or unreadable (ownership drift after a Supervisor
+            # remount, disk error, etc.). Return 503 with a log line rather
+            # than letting Starlette emit a generic 500 traceback.
+            _LOGGER.exception("Failed to read %s", ZONES_FILE)
+            return JSONResponse(
+                {"error": "zones file unreadable"},
+                status_code=503,
+            )
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "ETag": _etag_for_bytes(body),
+            },
         )
-    return Response(
-        content=body,
-        media_type="application/json",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-            "ETag": _etag_for_bytes(body),
-        },
-    )
+
+    return zones_json
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
@@ -344,7 +412,7 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     static_folder = "static"
     routes = [
         Route("/save_zones", save_zones_generator(options), methods=["POST"]),
-        Route("/zones.json", zones_json, methods=["GET"]),
+        Route("/zones.json", zones_json_generator(options), methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
         # html=True makes "/" return index.html. Explicit Routes above take

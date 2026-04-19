@@ -375,13 +375,86 @@ def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
     assert r.status_code == 401
 
 
-def test_save_token_does_not_affect_zones_json(app_factory, tmp_zones_file):
-    """save_token only governs /save_zones; /zones.json still follows the
-    coarse IP allowlist + allow_all_ips."""
+def test_zones_json_requires_token_when_set_and_lan_request(app_factory, tmp_zones_file):
+    """When save_token is set, non-ingress GET /zones.json requests must
+    present the same X-Save-Token as /save_zones. Previously (before
+    #113) /zones.json was reachable on LAN without a token once
+    allow_all_ips was on — zone geometry was less protected than the
+    less-sensitive write action."""
     app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
+    client = TestClient(app)
+
+    # No header.
+    r = client.get("/zones.json")
+    assert r.status_code == 401
+    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+
+    # Wrong token.
+    r = client.get("/zones.json", headers={"X-Save-Token": "wrong"})
+    assert r.status_code == 401
+
+    # Correct token.
+    r = client.get("/zones.json", headers={"X-Save-Token": "s3cret"})
+    assert r.status_code == 200
+    assert r.headers.get("etag")
+
+
+def test_zones_json_unchanged_when_no_save_token(app_factory, tmp_zones_file):
+    """Without save_token, reads remain gated only by the IP allowlist /
+    allow_all_ips. No regression for the common LAN-backup workflow."""
+    app = app_factory({"allow_all_ips": True})
     client = TestClient(app)
     r = client.get("/zones.json")
     assert r.status_code == 200
+
+
+def test_zones_json_rate_limit_shared_with_save_failures(app_factory, tmp_zones_file):
+    """Failed /zones.json reads and failed /save_zones writes share one
+    rate-limit bucket per IP. Without this, an attacker could double
+    their per-window guess budget by rotating between GET and POST.
+
+    Uses allow_all_ips: true so both paths reach their token check
+    (otherwise IPAllowMiddleware blocks GETs at 403 before the handler
+    runs, and failures recorded only from /save_zones wouldn't prove
+    the shared-bucket property)."""
+    app = app_factory({"allow_all_ips": True, "save_token": "sekrit"})
+    client = TestClient(app)
+
+    # Five bad POSTs.
+    for _ in range(5):
+        r = client.post("/save_zones", json=_valid_payload())
+        assert r.status_code == 401
+    # Five bad GETs — total failures now at the limit.
+    for _ in range(5):
+        r = client.get("/zones.json")
+        assert r.status_code == 401
+
+    # Next GET is rate-limited — and so is the next POST, because the
+    # counter is shared.
+    r = client.get("/zones.json")
+    assert r.status_code == 429
+    r = client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 429
+
+
+def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
+    """Ingress (172.30.32.2) reads remain unauthenticated even when a
+    token is set — the HA UI's zones.json fetch must keep working."""
+    import main
+
+    app, _ = main.generate_app({"save_token": "sekrit"})
+    client = TestClient(app)
+    import helpers
+    original_allowed_ip_helpers = helpers.allowed_ip
+    original_allowed_ip_main = main.allowed_ip
+    try:
+        helpers.allowed_ip = lambda req: True
+        main.allowed_ip = lambda req: True
+        r = client.get("/zones.json")
+        assert r.status_code == 200
+    finally:
+        helpers.allowed_ip = original_allowed_ip_helpers
+        main.allowed_ip = original_allowed_ip_main
 
 
 def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
@@ -639,16 +712,33 @@ def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_facto
     assert r.status_code == 200
 
 
-def test_zones_json_requires_ingress_when_save_token_set_and_allow_all_ips_off(
+def test_zones_json_returns_401_when_save_token_set_and_no_header(
     app_factory, tmp_zones_file,
 ):
-    """Authz matrix gap: save_token governs /save_zones but must not
-    accidentally open /zones.json. With allow_all_ips: false and a token
-    set, non-ingress GETs should still be rejected."""
+    """With save_token set and allow_all_ips off, a non-ingress GET with
+    no X-Save-Token header returns 401 (token required) rather than 403
+    (coarse block). This mirrors the /save_zones behaviour so a user
+    who sets save_token without also flipping allow_all_ips gets a
+    useful "auth is available, provide it" signal rather than a
+    flat forbidden."""
     app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
     client = TestClient(app)
     r = client.get("/zones.json")
-    assert r.status_code == 403
+    assert r.status_code == 401
+    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+
+
+def test_zones_json_token_unlocks_lan_without_allow_all_ips(
+    app_factory, tmp_zones_file,
+):
+    """Mirror of test_save_token_works_without_allow_all_ips for reads.
+    save_token is the stronger signal; setting it should unlock LAN
+    access without requiring allow_all_ips to also be flipped."""
+    app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
+    client = TestClient(app)
+    r = client.get("/zones.json", headers={"X-Save-Token": "sekrit"})
+    assert r.status_code == 200
+    assert r.headers.get("etag")
 
 
 def test_parse_trusted_proxies_handles_empty_and_list(app_factory):

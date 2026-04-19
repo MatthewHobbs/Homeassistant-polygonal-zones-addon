@@ -218,6 +218,70 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # A11y regression guard (#116). The leaflet-draw toolbar
+                  # anchors are patched post-addControl to mirror their
+                  # title= into aria-label (WCAG 2.2 SC 4.1.2). The
+                  # zone-entry rename input lives inside shadow DOM where
+                  # <label for=…> never associates per spec, so it uses
+                  # aria-label directly.
+                  draw_aria = await page.evaluate(
+                      "() => document.querySelector('.leaflet-draw-draw-polygon')?.getAttribute('aria-label')"
+                  )
+                  if not draw_aria:
+                      print(f"FAIL leaflet-draw polygon control missing aria-label; got: {draw_aria!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  input_aria = await page.evaluate(
+                      "() => document.querySelector('zone-entry[editing=\"true\"], zone-entry')"
+                      "?.shadowRoot?.querySelector('input[type=text]')?.getAttribute('aria-label')"
+                  )
+                  # Zone-entry only renders the input when editing, so trigger
+                  # edit mode on the first entry before asserting.
+                  await page.evaluate(
+                      "() => document.querySelector('zone-entry')"
+                      "?.shadowRoot?.querySelector('.edit-btn')?.click()"
+                  )
+                  input_aria = await page.evaluate(
+                      "() => document.querySelector('zone-entry')"
+                      "?.shadowRoot?.querySelector('input[type=text]')?.getAttribute('aria-label')"
+                  )
+                  if not input_aria:
+                      print(f"FAIL zone-entry rename input missing aria-label; got: {input_aria!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # Draw→save round-trip regression guard. Earlier versions
+                  # of the draw:created handler set `layer.feature` without
+                  # `type: "Feature"`; Leaflet's toGeoJSON then emitted a
+                  # feature missing the type field, which the server-side
+                  # validator rejected with 422. No test covered the full
+                  # draw→save path (the smoke above POSTs a pre-made
+                  # payload). This assertion closes the gap.
+                  save_status = await page.evaluate(
+                      """async () => {
+                          const layer = L.polygon([[50, 10], [50, 11], [51, 10]]);
+                          map.fire('draw:created', {layerType: 'polygon', layer});
+                          const headers = {'Content-Type': 'application/json'};
+                          const features = [];
+                          editableLayers.eachLayer(l => {
+                              const f = l.toGeoJSON();
+                              f.properties = {name: l.feature.properties.name};
+                              features.push(f);
+                          });
+                          const r = await fetch('./save_zones', {
+                              method: 'POST',
+                              headers: headers,
+                              body: JSON.stringify({type: 'FeatureCollection', features}),
+                          });
+                          return r.status;
+                      }"""
+                  )
+                  if save_status != 200:
+                      print(f"FAIL draw→save round-trip returned {save_status} (expected 200)")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
                   if errors:
                       print("FAIL JS errors during page load:")
                       for e in errors: print(" -", e)
