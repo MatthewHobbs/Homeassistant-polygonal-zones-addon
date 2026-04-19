@@ -46,6 +46,23 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Verify CHANGELOG entry exists
+        # Run here, not in the downstream `release` job, so a missing entry
+        # blocks the build before any image is pushed to ghcr.io. The same
+        # awk extraction runs again in the `release` job to produce the
+        # notes file.
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          NOTES=$(awk -v v="## $VERSION" '
+            $0 ~ "^"v" " || $0 == v {found=1; next}
+            found && /^## / {exit}
+            found {print}
+          ' polygonal_zones_editor/CHANGELOG.md)
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            echo "::error::No CHANGELOG entry found for version $VERSION in polygonal_zones_editor/CHANGELOG.md"
+            exit 1
+          fi
+
       - name: Generate matrix
         id: gen
         run: |
@@ -70,9 +87,18 @@ jobs:
           print("include=" + json.dumps(includes))
           PY
 
+  tests:
+    name: Tests
+    # Re-run the unit tests for the tagged SHA. `push: tags` does not trigger
+    # test.yml (it only fires on branch pushes and PRs), so without this gate
+    # a tag could be pushed on a SHA that never had a green test run.
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
   publish:
     name: Publish (${{ matrix.arch }})
-    needs: matrix
+    needs: [matrix, tests]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -5,6 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Release workflow calls this as a prerequisite gate, so a tag push never
+  # publishes an image without the unit tests passing on the same SHA.
+  workflow_call:
 
 permissions:
   contents: read
