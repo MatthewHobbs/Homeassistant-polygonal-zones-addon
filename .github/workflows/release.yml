@@ -118,9 +118,20 @@ jobs:
     permissions:
       contents: read
 
+  build:
+    name: Build + smoke
+    # Re-run the multi-arch docker build and the amd64 boot-smoke + Playwright
+    # smoke for the tagged SHA. Without this gate, a release can publish an
+    # image that has never been booted — exactly the class of regression that
+    # bit 0.2.16–0.2.22 (AppArmor profile broke container boot; unit tests
+    # and the HA addon linter passed, so the release gate was green).
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+
   publish:
     name: Publish (${{ matrix.arch }})
-    needs: [matrix, tests, lint]
+    needs: [matrix, tests, lint, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -234,7 +245,7 @@ jobs:
     # and drift into "users on different versions depending on arch".
     name: Notify on failure
     if: failure()
-    needs: [matrix, tests, lint, publish, release]
+    needs: [matrix, tests, lint, build, publish, release]
     runs-on: ubuntu-latest
     steps:
       - name: Open an issue

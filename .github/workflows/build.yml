@@ -5,12 +5,22 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Release workflow calls this as a prerequisite gate, so a tag push never
+  # publishes an image that hasn't been boot-smoked. Closes the regression
+  # hole that bit 0.2.16–0.2.22 (AppArmor profile broke container boot; CI
+  # passed because test.yml + lint.yml don't exercise the image).
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Prefix with "build-" so this doesn't share a group with test.yml /
+  # lint.yml when all three are called from release.yml. Reusable workflows
+  # inherit the caller's `github.workflow` and `github.ref`, so a plain
+  # "${{ github.workflow }}-${{ github.ref }}" group collides with the
+  # others and cancels whichever runs second.
+  group: build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

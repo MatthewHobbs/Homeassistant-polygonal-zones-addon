@@ -6,9 +6,9 @@ This repo has three layers of automated testing, plus a manual live-HA-OS layer 
 
 | Layer | What it runs | Where |
 |---|---|---|
-| `Tests` | `pytest -v` (95+ tests, 100% line coverage with `--cov-fail-under=98`) | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
-| `Lint addon` | `frenck/action-addon-linter` against `polygonal_zones_editor/` | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
-| `Build addon` | 5-arch Dockerfile build + amd64 smoke boot + Playwright headless page load | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
+| `Tests` | `pytest -v` (100% line coverage gated by `--cov-fail-under=100`) | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
+| `Lint addon` | `frenck/action-addon-linter` + `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
+| `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`) + amd64 smoke boot + Playwright headless page load | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
 
 The amd64 smoke step in `build.yml` boots the container with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
@@ -17,7 +17,7 @@ The amd64 smoke step in `build.yml` boots the container with a stub `options.jso
 - the web service runs as uid 1001 (not root) — regression guard for the s6 privilege-drop fallback
 - the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`
 
-All three workflows gate the release pipeline. A tag push to `v*` can't publish images until `Tests` + `Lint` are green.
+All three workflows gate the release pipeline. A tag push to `v*` can't publish images until `Tests`, `Lint`, and `Build` (incl. amd64 smoke boot + Playwright) are all green.
 
 ## Manual — live HA OS
 

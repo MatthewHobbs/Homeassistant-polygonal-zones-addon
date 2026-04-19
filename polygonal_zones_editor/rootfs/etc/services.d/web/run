@@ -1,9 +1,17 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
 # Launch the addon web service. Prefer dropping to the unprivileged 'app'
 # user via s6-setuidgid; fall back to running as root with a loud warning
 # if the wiring isn't available, so the service never fails to start for
 # privilege-drop reasons alone.
 
+# shellcheck disable=SC2164
+# `cd /app` can technically fail, but `/app` is Dockerfile-installed and
+# always present in a shipped image. If cd were to fail, the subsequent
+# `python main.py` would also fail (main.py isn't at /), s6 would mark
+# the service down, finish runs, and Supervisor restarts the addon —
+# same end state as an explicit `|| exit`, with no live-Supervisor
+# behaviour change to verify in this PR.
 cd /app
 
 if ! command -v s6-setuidgid >/dev/null 2>&1; then

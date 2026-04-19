@@ -31,3 +31,26 @@ jobs:
         uses: frenck/action-addon-linter@f995494fd84fae6310d23617e66d0e37de4f14eb # v2.21.0
         with:
           path: "./polygonal_zones_editor"
+
+  shellcheck:
+    # Lint the release helper and the s6 init / service scripts with shellcheck.
+    # The release-merge.sh script gates every version bump, and the rootfs
+    # scripts drive container boot / teardown — a shell syntax regression in
+    # either is the class of bug that bit #101 (the `$VAR→` crash under
+    # set -u) and the AppArmor hotfix sequence (0.2.16–0.2.22). `bash -n`
+    # catches parse errors but not word-splitting / quoting mistakes;
+    # shellcheck does.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Run shellcheck
+        # shellcheck is preinstalled on ubuntu-latest. rootfs s6 scripts
+        # don't have a .sh extension but use bash syntax; check them
+        # explicitly by path. `-x` lets shellcheck follow sourced files.
+        run: |
+          set -euo pipefail
+          shellcheck -x scripts/release-merge.sh
+          shellcheck -x \
+            polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms \
+            polygonal_zones_editor/rootfs/etc/services.d/web/run \
+            polygonal_zones_editor/rootfs/etc/services.d/web/finish

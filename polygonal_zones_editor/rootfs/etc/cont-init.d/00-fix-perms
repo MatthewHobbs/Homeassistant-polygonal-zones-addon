@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
 # Fix up /data ownership so the unprivileged 'app' user can read the
 # Supervisor-mounted options.json and read/write the addon's own files.
 #
