@@ -8,8 +8,9 @@ Operational procedures for the release pipeline. For routine releases, use `scri
 2. Tag the merge commit: `git tag v0.2.19 && git push origin v0.2.19`.
 3. `.github/workflows/release.yml` runs:
    - **matrix** — resolves the version from the tag, verifies it matches `config.yaml`, verifies a `CHANGELOG.md` entry exists, generates the arch matrix.
-   - **tests** — reusable call to `test.yml` (pytest + 98% coverage gate).
-   - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter`).
+   - **tests** — reusable call to `test.yml` (pytest + 100% line coverage gate).
+   - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter` + shellcheck on `scripts/` and `rootfs/`).
+   - **build** — reusable call to `build.yml` — multi-arch docker build + amd64 boot-smoke + Playwright smoke (draw→save round-trip, a11y aria-labels, tile-picker assertions). Added in PR #108 so a tag can't publish an image that hasn't booted cleanly at least once.
    - **publish** — builds and pushes per-arch images to `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`. Optionally notarizes via codenotary if `CAS_API_KEY` is set.
    - **release** — extracts the CHANGELOG section for the version and creates/updates the GitHub Release.
    - **notify-failure** — opens a GitHub issue if any upstream job failed.
@@ -45,6 +46,17 @@ ha addons update polygonal_zones --version 0.2.18
 ```
 
 You can't delete a published ghcr.io image tag via automation; users on the broken version stay on it until they update. Cut a forward-fix version and announce it.
+
+### Users report "zones stopped working" / `/zones.json` returns 503
+
+Symptom: HA automations no longer fire on zone entry/exit, or a user hitting the addon's Web UI sees a `zones file unreadable` response.
+
+1. Ask for the addon log (**Settings → Add-ons → Polygonal Zones → Log**). Search for `Failed to read` or the `/zones.json` traceback; a JSON parse error on startup points at a corrupted file, an `OSError` points at permissions or disk.
+2. Common root causes:
+   - **Ownership drift on `/data`** — Supervisor occasionally re-mounts after a base-image update or host reboot and `/data/polygonal_zones/zones.json` ends up owned by `root` rather than `app` (uid 1001). `rootfs/etc/cont-init.d/00-fix-perms` re-chowns on container start, so an addon restart usually resolves it.
+   - **Disk full on `/data`** — `atomic_write_json` fails cleanly (no partial write; the old file is still in place), but if the disk filled mid-save the write is aborted. Check `df -h /data` via the Supervisor shell. Free space, then re-save from the editor or restore from snapshot.
+   - **File corruption** — rare outside ungraceful power loss. Usually diagnosable because the log shows a JSON parse error rather than a read error.
+3. **Fastest recovery**: restore `zones.json` from the latest HA snapshot that predates the failure (**Settings → System → Backups**). The companion integration retains its last-known-good state during the outage, so automations keep firing and no geofencing is lost during the recovery window.
 
 ### Release run cancelled by concurrency
 
