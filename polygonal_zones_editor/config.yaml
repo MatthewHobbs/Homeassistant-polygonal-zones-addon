@@ -3,6 +3,15 @@ description: "Helper Add-on for the polygonal zones integration."
 version: "0.2.18"
 slug: "polygonal_zones"
 url: "https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/tree/main/polygonal_zones_editor"
+# Uncomment when the codenotary/cas signing pipeline has been enabled
+# (see the `Notarize image with codenotary/cas` step in
+# .github/workflows/release.yml for the enablement procedure). Setting
+# this key tells the Supervisor to verify the image attestation at
+# install/update time; without a corresponding signature, installs
+# fail. Enable in lock-step with shipping the first signed release —
+# do NOT ship this uncommented until the CAS_API_KEY secret exists
+# and a tagged release has successfully notarized.
+# codenotary: matt@matthobbs.net
 panel_icon: "mdi:map"
 # Pre-built images published by .github/workflows/release.yml on each
 # v* tag. Supervisor pulls instead of building locally — much faster
