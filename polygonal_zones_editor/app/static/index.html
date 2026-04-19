@@ -27,7 +27,11 @@
 <body>
 <div class="body" data-sidebar="open">
     <div id="map"></div>
-    <div class="sidebar">
+    <button class="sidebar-toggle" type="button"
+            aria-label="Collapse sidebar"
+            aria-controls="zone-sidebar"
+            aria-expanded="true"></button>
+    <div class="sidebar" id="zone-sidebar">
         <h1 class="title"> Zone editor </h1>
         <div class="header">
             <p class="sub-title"> Draw zones on the map. </p>
@@ -57,6 +61,7 @@
 <script src="./js/storage.js"></script>
 <script src="./js/basemaps.js"></script>
 <script src="./js/ui-state.js"></script>
+<script src="./js/sidebar-toggle.js"></script>
 <script src="./js/map.js"></script>
 </body>
 </html>

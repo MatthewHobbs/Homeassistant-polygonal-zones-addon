@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.25 — 2026-04-18
+
+### Added
+
+- **Collapsible sidebar (#29).** A small chevron button on the inner edge of the sidebar now toggles the zone list in and out. In the open state the button sits at the sidebar's left edge pointing right (collapse); clicking it slides the sidebar off-screen and repositions the button to the map's right edge pointing left (expand). State persists to `localStorage` under `pz:sidebar` so the choice survives reloads. The map is told to `invalidateSize` after the CSS grid-column transition settles, so Leaflet recomputes tile bounds immediately — no stale gutter, no blank tiles. Respects `prefers-reduced-motion`: the transition is skipped and the map resize fires on the next tick instead of waiting for `transitionend`. ARIA attributes (`aria-expanded`, `aria-controls`, `aria-label`) update on every toggle for screen readers.
+
 ## 0.2.24 — 2026-04-19
 
 ### Security
