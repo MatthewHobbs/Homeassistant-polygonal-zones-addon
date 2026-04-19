@@ -23,15 +23,22 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Generate matrix
         id: gen
-        # build.yaml is the single source of truth for which architectures
-        # we support and which base image each one uses. The docker platform
-        # mapping is a GitHub Actions / QEMU concern and stays in the
-        # workflow.
+        # Arch list comes from polygonal_zones_editor/build.yaml (the
+        # HA-linter-approved file with plain tags). Digest-pinned base
+        # refs come from .github/base-images.yaml. The two files must
+        # agree on arch keys; we fail fast otherwise.
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, yaml
           with open("polygonal_zones_editor/build.yaml") as f:
-              data = yaml.safe_load(f)
+              tags = yaml.safe_load(f)["build_from"]
+          with open(".github/base-images.yaml") as f:
+              refs = yaml.safe_load(f)["build_from"]
+          if tags.keys() != refs.keys():
+              raise SystemExit(
+                  f"arch mismatch: build.yaml={sorted(tags)} "
+                  f"vs base-images.yaml={sorted(refs)}"
+              )
           arch_to_platform = {
               "aarch64": "linux/arm64",
               "amd64":   "linux/amd64",
@@ -39,13 +46,13 @@ jobs:
               "armv7":   "linux/arm/v7",
               "i386":    "linux/386",
           }
-          includes = [
-              {"arch": arch, "platform": arch_to_platform[arch], "base": base}
-              for arch, base in data["build_from"].items()
-          ]
-          missing = set(data["build_from"]) - set(arch_to_platform)
+          missing = set(tags) - set(arch_to_platform)
           if missing:
-              raise SystemExit(f"build.yaml declares unknown arches: {sorted(missing)}")
+              raise SystemExit(f"unknown arches: {sorted(missing)}")
+          includes = [
+              {"arch": arch, "platform": arch_to_platform[arch], "base": refs[arch]}
+              for arch in tags
+          ]
           print("include=" + json.dumps(includes))
           PY
 
