@@ -557,9 +557,16 @@ if __name__ == "__main__":  # pragma: no cover
 
     proxy_ip_allowlist = _parse_trusted_proxies(options)
     if proxy_ip_allowlist:
+        # Log the count only, not the list contents. `proxy_ip_allowlist` is
+        # derived from the `trusted_proxies` option, and CodeQL's
+        # py/clear-text-logging-sensitive-data rule flags any options-sourced
+        # value logged via %s — same reason _parse_trusted_proxies itself
+        # logs rejection reasons as constant strings. TESTING.md already
+        # documents the count-based format as the expected operator-visible
+        # output, so this aligns code with docs.
         _LOGGER.info(
-            "Honouring X-Forwarded-For from these proxies: %s",
-            proxy_ip_allowlist,
+            "Honouring X-Forwarded-For from %d configured proxy/proxies.",
+            len(proxy_ip_allowlist),
         )
 
     app, log_config = generate_app(options)
