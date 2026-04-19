@@ -68,10 +68,19 @@ The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Home
 
 > **Known limitation — private-IP URLs.** The integration hardens itself against SSRF by refusing to fetch URLs that resolve to a private (RFC-1918) address — that includes `192.168.x.x`, `10.x.x.x`, `172.16.0.0/12`, and local mDNS names that resolve to those. So a naive `zone_urls: http://<ha-host-lan-ip>:8000/zones.json` will be rejected by the integration **before** it ever reaches this addon, even when `allow_all_ips: true` is on.
 >
-> Workarounds:
-> - Serve the zones through an HTTPS reverse proxy on a public-resolving hostname.
-> - Host the zones file on a public-facing server (GitHub Pages, S3, etc.) and point the integration at that URL.
-> - Track / contribute to an opt-in relaxation in the integration — issue: https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/issues (open one if it doesn't exist yet).
+> **Recommended workaround — private reverse proxy with TLS on a non-RFC-1918 hostname.** Put the addon behind a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager addon) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Combine with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
+>
+> **Tracking upstream.** An opt-in relaxation on the integration side (e.g. `allow_private_urls: true`) would remove the need for any of this. Track progress in [issue #111](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/issues/111); once shipped, the plain `http://<ha-host-lan-ip>:8000/zones.json` path will work out of the box.
+>
+> **Last resort — public-CDN mirror (privacy warning).** Hosting `zones.json` on a public-facing server (GitHub Pages, S3, Cloudflare Pages, etc.) is occasionally suggested, but **do not do this without understanding the privacy cost**. Your polygon geometry encodes the precise shape and location of your home, workplace, school runs, and any other place you've drawn a zone. Publishing it to a public CDN means:
+>
+> - The data is **world-readable** — any visitor, crawler, scraper or search engine can fetch it.
+> - Public CDNs **cache and replicate** content across their global edge networks. Once it's been served even once, you cannot assume you can fully revoke it.
+> - Major providers (GitHub, AWS, Cloudflare) are subject to the US CLOUD Act, so the data can be disclosed to US authorities regardless of where you live.
+> - Search engines **index** content hosted on common providers. Your home coordinates become discoverable by name/URL.
+> - Deleting the file later does **not** remove archived copies (Wayback Machine, third-party scrapers).
+>
+> If you absolutely must go this route (e.g. you have no control over DNS and cannot stand up a reverse proxy), use a private / unlisted bucket with a strong pre-signed URL, rotate the URL regularly, and understand that any leak of the URL equates to a leak of the geometry.
 
 ## Usage
 
