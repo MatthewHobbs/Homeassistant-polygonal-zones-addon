@@ -1,0 +1,49 @@
+#include <tunables/global>
+
+# AppArmor profile for the Polygonal Zones addon.
+#
+# Deny-list design: the profile grants the same general access that
+# docker-default grants (file, signal, network, capability) and then
+# explicitly denies the specific paths and operations a map-drawing
+# addon has no legitimate need for. This is strictly better than
+# running with no custom profile — the addon gets docker-default plus
+# targeted hardening — while avoiding the allow-list pitfall that
+# took the addon offline in 0.2.16–0.2.21 (a path the Python runtime
+# or s6-overlay needed wasn't in the allow-list, silently failed).
+#
+# Permissive baseline rules:
+#   file,        allow any file read/write/exec not explicitly denied
+#   signal,      allow signal send/receive (needed for s6 + uvicorn)
+#   network,     allow TCP/UDP/unix sockets
+#   capability,  allow all Linux capabilities the container already has
+#                (docker-default already drops dangerous ones like
+#                CAP_SYS_ADMIN at the container level)
+#
+# Deny rules block:
+#   - reads of /etc/shadow and /etc/gshadow (hashed passwords)
+#   - writes to /root, /home, /boot (host-filesystem escape vectors)
+#   - writes to /sys/kernel and /proc/sys/kernel (kernel parameter
+#     tampering)
+#   - mount / umount syscalls (container escape)
+#   - ptrace (process injection)
+
+profile addon_polygonal_zones flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  file,
+  signal,
+  network,
+  capability,
+
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+  deny /root/** rw,
+  deny /home/** rw,
+  deny /boot/** rw,
+  deny /sys/kernel/** w,
+  deny /proc/sys/kernel/** w,
+
+  deny mount,
+  deny umount,
+  deny ptrace,
+}

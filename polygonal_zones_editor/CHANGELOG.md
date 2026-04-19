@@ -1,13 +1,17 @@
 # Changelog
 
-## 0.2.23 — 2026-04-19
+## 0.2.24 — 2026-04-19
+
+### Security
+
+- Reintroduced a custom AppArmor profile, this time built as a **deny-list rather than an allow-list**. The profile grants the same general access that `docker-default` grants (`file, signal, network, capability`) and then explicitly denies the specific paths and operations a map-drawing addon has no legitimate need for: reads of `/etc/shadow`/`/etc/gshadow`, writes to `/root`/`/home`/`/boot`/`/sys/kernel`/`/proc/sys/kernel`, and the `mount`/`umount`/`ptrace` syscalls. This is strictly better than `docker-default` alone — an exploit inside the addon sandbox can't read hashed passwords, escape to the host filesystem, tamper with kernel parameters, mount filesystems, or inject into other processes — while avoiding the allow-list pitfall that took the addon offline in 0.2.16–0.2.21 (where any path the Python runtime or s6-overlay needed that wasn't in the allow-list silently failed).
 
 ### Refactor
 
 - Frontend prep work for the collapsible sidebar (#29), responsive drawer (#30), and tile-layer picker (#31). Two new modules added: `app/static/js/basemaps.js` (registry of Leaflet tile-layer definitions, seeded with the existing OSM and CARTO Dark entries — `map.js` now resolves its initial layer through the registry) and `app/static/js/ui-state.js` (single write-point for a new `data-sidebar="open|collapsed|drawer"` attribute on `.body`, with the matching `pz:map-resized` custom event fired after Leaflet's container is invalidated). Complements `app/static/js/storage.js` (thin localStorage wrapper with a silent in-memory fallback) which landed alongside the 0.2.22 release-merge.sh fix.
 - `map.js` carries a new `userChoseTile` flag set from Leaflet's `baselayerchange` event. Once #31 ships a picker, the existing OS-theme-follow auto-swap will no longer override an explicit choice.
 - `style.css` moves the existing `1fr / 300px` grid definition under `.body[data-sidebar="open"]` and scaffolds empty rules for the two future states. `index.html` swaps the dead `sidebar-open` class (no selector matched it anywhere) for `data-sidebar="open"`.
-- No user-visible change: nothing in this release sets the `data-sidebar` attribute to anything other than its `open` default, so the rendered page is byte-identical to 0.2.22.
+- No user-visible change from the refactor: nothing in this release sets the `data-sidebar` attribute to anything other than its `open` default, so the rendered page is byte-identical to 0.2.22 apart from the restored AppArmor profile.
 
 ## 0.2.22 — 2026-04-19
 
