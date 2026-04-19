@@ -7,19 +7,19 @@
 cd /app
 
 if ! command -v s6-setuidgid >/dev/null 2>&1; then
-    bashio::log.warning "s6-setuidgid not found; running as root"
+    bashio::log.error "s6-setuidgid not found; running as root"
     exec python main.py
 fi
 
 if ! id app >/dev/null 2>&1; then
-    bashio::log.warning "'app' user not found; running as root"
+    bashio::log.error "'app' user not found; running as root"
     exec python main.py
 fi
 
 # Verify the app user can actually read options.json; if not, running as
 # root is preferable to a startup crash.
 if [ -f /data/options.json ] && ! s6-setuidgid app sh -c 'test -r /data/options.json'; then
-    bashio::log.warning "options.json not readable by 'app'; running as root"
+    bashio::log.error "options.json not readable by 'app'; running as root"
     exec python main.py
 fi
 

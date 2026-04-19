@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.17 — 2026-04-19
+
+### Reliability
+
+- `/zones.json` no longer 500s with a bare traceback when the zones file is missing or unreadable. The handler returns a proper `503 Service Unavailable` with a JSON error body (`{"error": "zones file unreadable"}`) and a `_LOGGER.exception` line so operators can see the file path and errno.
+- `/healthz` now verifies that the zones file is accessible instead of just reporting process liveness. The Docker HEALTHCHECK fails (and Supervisor restarts the container) when the zones file becomes unreadable, giving users a self-healing addon instead of a "running but broken" state.
+- `atomic_write_json` now fsyncs the parent directory after the rename, so the new directory entry is durable on hard power-off. Without this, on some filesystems (overlayfs as used by HA OS, vfat, tmpfs) the rename could be lost to a power failure and users would reboot to an empty `zones.json`.
+- `POST /save_zones` is now rate-limited: 10 authorisation failures from a given IP in a 60-second window cause subsequent requests from that IP to return `429 Too Many Requests` for the remainder of the window. Defends against LAN brute-force of `save_token`. Valid token requests and ingress requests never increment the counter.
+- If the s6 init falls back to running the web service as root (missing `s6-setuidgid`, missing `app` user, or unreadable `options.json`), the addon now logs a prominent warning on every boot in both the service log (`bashio::log.error`) and the addon log (`Running as uid 0 (root)...`). Previously only a single warning line appeared in a log users rarely read.
+
+### Tests
+
+- New coverage: `/zones.json` returns parseable GeoJSON for a populated file (the actual integration contract); `/zones.json` returns 503 when the file is unreadable; `/healthz` returns 503 when the file is missing; `/save_zones` rate-limit kicks in after 10 failures and valid tokens still succeed before the budget is exhausted; `/zones.json` is still ingress-locked when `save_token` is set without `allow_all_ips`; `atomic_write_json` fsyncs the parent directory.
+
 ## 0.2.16 — 2026-04-19
 
 ### Security
