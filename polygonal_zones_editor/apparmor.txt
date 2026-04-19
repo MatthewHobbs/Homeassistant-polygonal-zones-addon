@@ -22,16 +22,22 @@ profile addon_polygonal_zones flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
   #include <abstractions/python>
 
-  # s6-overlay entrypoint and service machinery.
-  /init                        ix,
-  /bin/**                      ix,
-  /usr/bin/**                  ix,
-  /usr/lib/**                  r,
-  /lib/**                      r,
-  /lib64/**                    r,
-  /run/{s6,s6-rc*,service}/**  ix,
-  /package/**                  ix,
-  /command/**                  ix,
+  # s6-overlay entrypoint and service machinery. Executables need `r`
+  # as well as `x` so `/bin/sh` can open and read scripts like `/init`
+  # during shutdown and service-restart paths; `m` permits mmap for
+  # dynamically-linked binaries. The `ix`-only rules that shipped in
+  # 0.2.16 caused crashes with "can't open '/init': Permission denied"
+  # during addon teardown because s6's finish scripts need to read
+  # these files, not just execute them.
+  /init                        mrix,
+  /bin/**                      mrix,
+  /usr/bin/**                  mrix,
+  /usr/lib/**                  mr,
+  /lib/**                      mr,
+  /lib64/**                    mr,
+  /run/{s6,s6-rc*,service}/**  mrix,
+  /package/**                  mrix,
+  /command/**                  mrix,
   /etc/services.d/**           rwix,
   /etc/cont-init.d/**          rwix,
   /etc/cont-finish.d/**        rwix,
@@ -43,7 +49,7 @@ profile addon_polygonal_zones flags=(attach_disconnected,mediate_deleted) {
   /dev/random                  r,
 
   # bashio helpers used by cont-init.d + services.d scripts.
-  /usr/lib/bashio/**           ix,
+  /usr/lib/bashio/**           mrix,
 
   # Python virtual environment (code + dependencies, read-only + execute).
   /opt/venv/**                 rix,
