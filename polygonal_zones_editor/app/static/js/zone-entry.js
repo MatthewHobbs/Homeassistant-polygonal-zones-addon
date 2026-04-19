@@ -16,6 +16,13 @@ class ZoneEntry extends HTMLElement {
             justify-content: space-between;
         }
 
+        .shape-count {
+            opacity: 0.6;
+            font-size: 0.85em;
+            font-weight: normal;
+            margin-left: 0.5ch;
+        }
+
         .zone-entry {
             width: 100%;
             margin-top: 2px;
@@ -76,10 +83,12 @@ class ZoneEntry extends HTMLElement {
     connectedCallback() {
         this.attachShadow({mode: 'open'});
 
-        // listen to changes of the editing attribute
+        // listen to changes of attributes that affect render: editing state
+        // and the shape-count indicator.
         this._observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
-                if (mutation.attributeName === 'editing') {
+                if (mutation.attributeName === 'editing'
+                    || mutation.attributeName === 'shape-count') {
                     this.render(this.getAttribute('editing') === 'true');
                 }
             });
@@ -96,6 +105,7 @@ class ZoneEntry extends HTMLElement {
 
     render(editing) {
         let name = this.getAttribute('name') ?? '';
+        let shape_count = parseInt(this.getAttribute('shape-count') ?? '1', 10);
 
         // Zone names come from user input in zones.json; insert via DOM APIs
         // rather than innerHTML interpolation so names containing HTML do not
@@ -105,7 +115,9 @@ class ZoneEntry extends HTMLElement {
 
             <div class="zone-entry ${editing ? 'editing' : ''}">
                 <div class="header">
-                    <span class="zone-name"></span>
+                    <span>
+                        <span class="zone-name"></span><span class="shape-count"></span>
+                    </span>
                     <span class="edit-btn-container"></span>
                 </div>
                 <div class="edit-zone ${!editing ? 'hidden' : ''}">
@@ -118,6 +130,12 @@ class ZoneEntry extends HTMLElement {
             `;
 
         this.shadowRoot.querySelector('.zone-name').textContent = name;
+        // Display shape count when > 1 — signals the zone is a GeoJSON
+        // MultiPolygon rather than a single Polygon.
+        if (Number.isFinite(shape_count) && shape_count > 1) {
+            this.shadowRoot.querySelector('.shape-count').textContent =
+                ` (${shape_count} shapes)`;
+        }
         let input = this.shadowRoot.querySelector('input');
         if (input) input.value = name;
 

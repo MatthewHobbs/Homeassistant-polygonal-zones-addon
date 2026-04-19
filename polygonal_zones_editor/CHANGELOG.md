@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.20 — 2026-04-19
+
+- MultiPolygon zones now round-trip through the Save button intact. Previously `save_zones()` hand-assembled a GeoJSON `Polygon` from every layer, silently dropping every ring beyond the first on any zone loaded from a `MultiPolygon` feature (via bulk-load or a hand-edited zones.json). Save now uses Leaflet's `toGeoJSON()` so the layer's actual geometry type — Polygon or MultiPolygon — is preserved.
+- The sidebar zone list now shows a small `(N shapes)` indicator when a zone is a MultiPolygon. Helps distinguish merged zones from single-shape zones at a glance.
+- Playwright smoke test extended: the build-time round-trip now POSTs both a Polygon and a MultiPolygon, reloads the page, and asserts both render with the right shape-count indicator.
+
 ## 0.2.19 — 2026-04-19
 
 ### Security
