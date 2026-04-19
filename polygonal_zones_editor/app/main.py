@@ -2,6 +2,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import secrets
 import time
@@ -203,30 +204,142 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-def _is_valid_feature_collection(obj) -> bool:
+# Per-feature vertex cap (mild algorithmic-DoS defense). Any legitimate
+# home / work / school zone fits comfortably inside 1000 vertices; a
+# malicious payload with e.g. 10 rings of 100 points inside a single
+# MultiPolygon is rejected well before the 512KB body cap that the
+# Supervisor has to load into memory.
+_MAX_VERTICES_PER_FEATURE = 1000
+
+# RFC 7946 §3.1.6: a linear ring must have ≥4 positions AND the first and
+# last positions must be identical (i.e. the ring is closed).
+_MIN_RING_POSITIONS = 4
+
+# WGS84 bounds. GeoJSON stores [lon, lat].
+_LON_MIN, _LON_MAX = -180.0, 180.0
+_LAT_MIN, _LAT_MAX = -90.0, 90.0
+
+
+def _validate_position(pos, where: str) -> None:
+    """Validate a single GeoJSON position `[lon, lat]` (altitude ignored).
+
+    Raises ValueError with a descriptive, index-bearing message on failure.
+    Rejects bool values (which would otherwise pass `isinstance(..., int)`
+    because bool subclasses int in Python), NaN / inf, non-numeric types,
+    and out-of-range WGS84 coordinates.
+    """
+    if not isinstance(pos, list) or len(pos) < 2:
+        raise ValueError(f"{where}: position must be a list of at least 2 numbers")
+    lon, lat = pos[0], pos[1]
+    for name, value in (("longitude", lon), ("latitude", lat)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{where}: {name} must be a number")
+        if not math.isfinite(value):
+            raise ValueError(f"{where}: {name} must be finite")
+    if not (_LON_MIN <= lon <= _LON_MAX):
+        raise ValueError(f"{where}: longitude out of range [-180, 180]")
+    if not (_LAT_MIN <= lat <= _LAT_MAX):
+        raise ValueError(f"{where}: latitude out of range [-90, 90]")
+
+
+def _validate_linear_ring(ring, where: str) -> int:
+    """Validate a GeoJSON linear ring. Returns the vertex count on success."""
+    if not isinstance(ring, list):
+        raise ValueError(f"{where}: ring must be a list of positions")
+    if len(ring) < _MIN_RING_POSITIONS:
+        raise ValueError(
+            f"{where}: ring must have at least {_MIN_RING_POSITIONS} positions"
+        )
+    for i, pos in enumerate(ring):
+        _validate_position(pos, f"{where}[{i}]")
+    if ring[0] != ring[-1]:
+        raise ValueError(f"{where}: ring is not closed (first position must equal last)")
+    return len(ring)
+
+
+def _validate_polygon_coordinates(coords, where: str) -> int:
+    """Validate a Polygon's `coordinates` (list of rings). Returns vertex total."""
+    if not isinstance(coords, list):
+        raise ValueError(f"{where}: Polygon coordinates must be a list of rings")
+    if not coords:
+        raise ValueError(f"{where}: Polygon must have at least one ring")
+    total = 0
+    for i, ring in enumerate(coords):
+        total += _validate_linear_ring(ring, f"{where}[{i}]")
+    return total
+
+
+def _validate_feature_collection(obj) -> None:
+    """Validate an incoming /save_zones payload. Raises ValueError on any
+    structural, numeric, or uniqueness violation. Returns None on success.
+
+    The error messages are index-bearing (``features[3].geometry.coordinates[0][2]``
+    style) so a client that logs the response can pinpoint which zone is at
+    fault without needing the server to echo coordinate values back
+    (avoiding any PII bounce).
+
+    Self-intersection and winding-order are not enforced — RFC 7946 mandates
+    CCW exteriors but most consumers (shapely, Turf, HA's own zone engine)
+    are tolerant. Adding those checks would require a geometry dependency
+    (shapely) for marginal benefit at this scale.
+    """
     if not isinstance(obj, dict) or obj.get("type") != "FeatureCollection":
-        return False
+        raise ValueError("expected a GeoJSON FeatureCollection")
     features = obj.get("features")
     if not isinstance(features, list):
-        return False
-    for f in features:
+        raise ValueError("features must be a list")
+
+    seen_names: set[str] = set()
+    for idx, f in enumerate(features):
+        where = f"features[{idx}]"
         if not isinstance(f, dict) or f.get("type") != "Feature":
-            return False
+            raise ValueError(f"{where}: not a GeoJSON Feature")
+
         geom = f.get("geometry")
         if not isinstance(geom, dict):
-            return False
-        if geom.get("type") not in ("Polygon", "MultiPolygon"):
-            return False
-        if not isinstance(geom.get("coordinates"), list):
-            return False
+            raise ValueError(f"{where}.geometry: missing or not a dict")
+        gtype = geom.get("type")
+        coords = geom.get("coordinates")
+        if gtype == "Polygon":
+            total_vertices = _validate_polygon_coordinates(
+                coords, f"{where}.geometry.coordinates"
+            )
+        elif gtype == "MultiPolygon":
+            if not isinstance(coords, list):
+                raise ValueError(
+                    f"{where}.geometry.coordinates: MultiPolygon coordinates must be a list"
+                )
+            if not coords:
+                raise ValueError(
+                    f"{where}.geometry.coordinates: MultiPolygon must have at least one polygon"
+                )
+            total_vertices = 0
+            for p_idx, polygon in enumerate(coords):
+                total_vertices += _validate_polygon_coordinates(
+                    polygon, f"{where}.geometry.coordinates[{p_idx}]"
+                )
+        else:
+            raise ValueError(
+                f"{where}.geometry.type: must be Polygon or MultiPolygon"
+            )
+        if total_vertices > _MAX_VERTICES_PER_FEATURE:
+            raise ValueError(
+                f"{where}: vertex count {total_vertices} exceeds cap of {_MAX_VERTICES_PER_FEATURE}"
+            )
+
         props = f.get("properties")
         if props is not None and not isinstance(props, dict):
-            return False
+            raise ValueError(f"{where}.properties: must be a dict or null")
         if isinstance(props, dict):
             name = props.get("name")
             if name is not None and not isinstance(name, str):
-                return False
-    return True
+                raise ValueError(f"{where}.properties.name: must be a string if present")
+            if isinstance(name, str):
+                if name in seen_names:
+                    raise ValueError(
+                        f"{where}.properties.name: duplicate zone name (must be unique)"
+                    )
+                seen_names.add(name)
 
 
 def save_zones_generator(options: dict):
@@ -273,8 +386,13 @@ def save_zones_generator(options: dict):
         except json.JSONDecodeError:
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
-        if not _is_valid_feature_collection(geo_json):
-            return JSONResponse({"error": "not a GeoJSON FeatureCollection"}, status_code=422)
+        try:
+            _validate_feature_collection(geo_json)
+        except ValueError as e:
+            return JSONResponse(
+                {"error": "invalid GeoJSON", "detail": str(e)},
+                status_code=422,
+            )
 
         # Optimistic concurrency: when the client provides If-Match, refuse to
         # overwrite if the on-disk file has changed since they read it. There

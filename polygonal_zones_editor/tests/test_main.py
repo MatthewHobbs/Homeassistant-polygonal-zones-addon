@@ -252,6 +252,131 @@ def test_save_zones_rejects_malformed_shapes(allow_all_client, tmp_zones_file, p
     assert tmp_zones_file.read_text() == original
 
 
+def _feature(geom):
+    """Wrap a geometry in a valid Feature shell for parametrized reject tests."""
+    return {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "properties": {}, "geometry": geom}],
+    }
+
+
+def _polygon(coords):
+    return {"type": "Polygon", "coordinates": coords}
+
+
+@pytest.mark.parametrize("payload,expect_detail_contains", [
+    # Ring integrity
+    (_feature(_polygon([[[0, 0], [1, 0], [1, 1]]])),
+        "at least 4 positions"),
+    (_feature(_polygon([[[0, 0], [1, 0], [1, 1], [2, 2]]])),
+        "not closed"),
+    (_feature(_polygon("oops")),
+        "Polygon coordinates must be a list"),
+    (_feature(_polygon([])),
+        "Polygon must have at least one ring"),
+    (_feature(_polygon([[[0, 0], [1, 0], [1, 1], "oops"]])),
+        "position must be a list"),
+    # Ring itself isn't a list (Polygon.coordinates contains a non-list).
+    (_feature(_polygon(["oops"])),
+        "ring must be a list"),
+    # Coordinate ranges
+    (_feature(_polygon([[[181, 0], [1, 0], [1, 1], [181, 0]]])),
+        "longitude out of range"),
+    (_feature(_polygon([[[0, 91], [1, 0], [1, 1], [0, 91]]])),
+        "latitude out of range"),
+    # Non-numeric coordinates — bool is explicitly rejected even though it
+    # subclasses int in Python (True == 1, False == 0 would otherwise pass).
+    (_feature(_polygon([[[True, 0], [1, 0], [1, 1], [True, 0]]])),
+        "longitude must be a number"),
+    (_feature(_polygon([[["oops", 0], [1, 0], [1, 1], ["oops", 0]]])),
+        "longitude must be a number"),
+    # MultiPolygon shape
+    ({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}, "geometry": {"type": "MultiPolygon", "coordinates": "oops"}}]},
+        "MultiPolygon coordinates must be a list"),
+    ({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}, "geometry": {"type": "MultiPolygon", "coordinates": []}}]},
+        "MultiPolygon must have at least one polygon"),
+    # Geometry type
+    (_feature({"type": "LineString", "coordinates": [[0, 0], [1, 1]]}),
+        "Polygon or MultiPolygon"),
+    # Properties shape
+    ({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": "oops", "geometry": _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]])}]},
+        "properties: must be a dict"),
+])
+def test_save_zones_rejects_invalid_geometry_with_detail(
+    allow_all_client, tmp_zones_file, payload, expect_detail_contains,
+):
+    original = tmp_zones_file.read_text()
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    body = r.json()
+    assert body["error"] == "invalid GeoJSON"
+    # Detail is index-bearing so a client can point at the offending feature
+    # / ring / position without the server echoing any coordinate values.
+    assert expect_detail_contains in body["detail"]
+    # File must not have been written.
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_rejects_non_finite_coordinate(allow_all_client, tmp_zones_file):
+    """Infinity / NaN are semi-legal in Python's json (allow_nan=True) but
+    meaningless for geodetic coordinates. Send as raw bytes — httpx on
+    Python 3.14 refuses to serialize float('inf') via json=payload."""
+    raw = (
+        b'{"type":"FeatureCollection","features":[{"type":"Feature",'
+        b'"properties":{},"geometry":{"type":"Polygon",'
+        b'"coordinates":[[[Infinity,0],[1,0],[1,1],[Infinity,0]]]}}]}'
+    )
+    r = allow_all_client.post(
+        "/save_zones", content=raw, headers={"content-type": "application/json"}
+    )
+    assert r.status_code == 422
+    assert "must be finite" in r.json()["detail"]
+
+
+def test_save_zones_rejects_vertex_cap_breach(allow_all_client, tmp_zones_file):
+    """Per-feature vertex cap. Build a single Polygon with 1001 vertices —
+    the first-last-equal close duplicates one position, so generate 1000
+    distinct points and close with the first. Cap is 1000 so this should
+    trip at the 1001st total."""
+    ring = [[i / 1000.0, 0.0] for i in range(1001)] + [[0.0, 0.0]]
+    payload = _feature(_polygon([ring]))
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "vertex count" in r.json()["detail"]
+
+
+def test_save_zones_rejects_duplicate_zone_names(allow_all_client, tmp_zones_file):
+    """Two features with the same name would make HA automations ambiguous
+    (`state_attr('zone.home', ...)` — which 'home'?). Reject at save time."""
+    geom = _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]])
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"name": "Home"}, "geometry": geom},
+            {"type": "Feature", "properties": {"name": "Home"}, "geometry": geom},
+        ],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "duplicate" in r.json()["detail"]
+
+
+def test_save_zones_accepts_unnamed_duplicates(allow_all_client, tmp_zones_file):
+    """Uniqueness only applies to features that carry a string name.
+    Two unnamed features (or features with name=None) are fine — HA won't
+    surface them as zone.* entities anyway until a name is set."""
+    geom = _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]])
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {}, "geometry": geom},
+            {"type": "Feature", "properties": {"name": None}, "geometry": geom},
+        ],
+    }
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+
+
 def test_save_zones_accepts_multipolygon(allow_all_client, tmp_zones_file):
     """MultiPolygon is an accepted geometry type alongside Polygon. Exercises
     the branch in _is_valid_feature_collection that allows MultiPolygon."""

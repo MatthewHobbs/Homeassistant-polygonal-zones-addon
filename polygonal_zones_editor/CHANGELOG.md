@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.2.30 — 2026-04-19
+
+Durability slice (part 2): tighten save-time GeoJSON validation so geometrically invalid zones are rejected at the boundary rather than silently persisted where they produce undefined point-in-polygon behaviour downstream. Partner to 0.2.29's conditional-GET hardening.
+
+### Changed — stricter `POST /save_zones` validation (#118)
+
+`_is_valid_feature_collection` previously only checked the JSON shape (Feature, geometry type, coordinates is a list). It now also enforces:
+
+- **Closed linear rings** per RFC 7946 §3.1.6 — each ring must have at least 4 positions and the first and last must be identical. Polygons drawn in the editor and MultiPolygon features emitted by Leaflet's `toGeoJSON()` are already closed; this catches hand-written `zones.json` files and bulk-imports that forgot to repeat the first vertex.
+- **WGS84 coordinate ranges** — longitude must be in `[-180, 180]`, latitude in `[-90, 90]`, both finite (rejects `Infinity`, `NaN`) and numeric (rejects strings and booleans — `True` subclasses `int` in Python but would round to `(1, 0)`, nonsense for a zone).
+- **Per-feature vertex cap** of 1000 positions aggregate across all rings in a Polygon / MultiPolygon. Mild algorithmic-DoS defence: a malicious payload could fit ~10k vertices in the 512KB body cap which Supervisor has to load into memory; 1000 is the upper bound for any legitimate home / workplace / school zone (typical zones are 4–30 vertices).
+- **Unique zone names** — two features with the same `properties.name` would make HA automations ambiguous (`state_attr('zone.home', ...)` — which 'home'?). Names that are missing or `null` are still allowed (HA won't surface a nameless feature as a `zone.*` entity anyway).
+
+Structural / type rejections now return a descriptive error body with an index-bearing detail pointer so a client that logs the response can pinpoint the offending feature or ring without the server echoing coordinate values back (avoiding any PII bounce):
+
+```json
+{"error": "invalid GeoJSON", "detail": "features[3].geometry.coordinates[0]: ring is not closed (first position must equal last)"}
+```
+
+Self-intersection and winding-order are **not** enforced — RFC 7946 mandates CCW exteriors but most downstream consumers (Shapely, Turf.js, HA's own zone engine) are tolerant. Adding those checks would require a geometry dependency for marginal benefit at this scale.
+
+### Backwards compatibility
+
+Anyone with a zones file drawn via the editor or emitted by Leaflet's `toGeoJSON()` is unaffected — those paths already produce closed, in-range, valid GeoJSON.
+
+**Potentially affected:** users who previously bulk-loaded a hand-written or externally-generated `zones.json` with (a) non-closed rings, (b) rings with fewer than 4 positions, (c) coordinates outside WGS84 ranges, or (d) duplicate zone names. Their existing file still serves from `GET /zones.json` — the validator only runs on write — but the next `POST /save_zones` from the editor or via `curl` will 422 until the invalid zone is fixed. The error body identifies which feature and which specific violation.
+
 ## 0.2.29 — 2026-04-19
 
 Durability slice: conditional GET on `/zones.json` so the companion integration's polling loop stops re-parsing a full `FeatureCollection` on every tick when nothing has changed.
