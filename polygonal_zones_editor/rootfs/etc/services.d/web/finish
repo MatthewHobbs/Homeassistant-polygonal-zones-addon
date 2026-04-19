@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
 # If the web service exits, surface it and tell s6-overlay to bring the
 # whole supervision tree down so the Supervisor notices and restarts the
 # addon. Exit code 125 is s6-overlay's "stop everything" signal on both
