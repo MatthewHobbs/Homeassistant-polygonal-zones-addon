@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.19 — 2026-04-19
+
+### Security
+
+- Added `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, and a tailored `Content-Security-Policy` on every response. The CSP keeps OSM + CARTO tile hosts in `img-src`, allows the SRI-pinned Leaflet + Leaflet-Draw bundles via `unpkg.com` in `script-src`/`style-src`, restricts `connect-src` to same-origin, and permits ingress (`*.home-assistant.io`, `*.ui.nabu.casa`) to iframe the UI via `frame-ancestors` while blocking everything else — clickjacking + XSS defence-in-depth on the one exposed web surface.
+- `trusted_proxies` now rejects CIDR supernets that contain the HA ingress IP (e.g. `172.30.0.0/16`, `172.0.0.0/8`, `128.0.0.0/1`) in addition to the previously-blocked wildcard and exact-ingress-IP entries. Unparseable entries (hostnames, garbage) are now refused with a typed error instead of being silently forwarded to uvicorn. Parsing uses Python's `ipaddress` module.
+- `X-Save-Token` is now `.strip()`ed symmetrically with the stored token. Previously only the stored value was stripped; a trailing whitespace in the header silently failed an otherwise-correct token.
+
+### API
+
+- `POST /save_zones` 412 response no longer includes `current_etag: null` when the zones file is unreadable at conflict-check time. The field is omitted entirely in that case — clients can fall back to `GET /zones.json` to refetch. Backwards compatible for existing clients (the key was `null` before; now it's absent).
+
 ## 0.2.18 — 2026-04-19
 
 - Option labels in the Supervisor UI are now human-readable. Shipped `translations/en.yaml` so `zone_colour`, `theme`, `allow_all_ips`, `save_token`, `trusted_proxies`, and `log_level` get proper names + descriptions instead of raw YAML keys. The security-relevant options (`allow_all_ips`, `save_token`, `trusted_proxies`) each get a one-paragraph description so the Configuration page explains the trade-off inline. Other locales can be added by dropping in e.g. `translations/de.yaml`; the HA addon linter picks them up automatically.

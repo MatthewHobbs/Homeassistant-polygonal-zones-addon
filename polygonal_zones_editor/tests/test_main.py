@@ -345,6 +345,21 @@ def test_save_token_required_when_set_and_lan_request(app_factory, tmp_zones_fil
     assert tmp_zones_file.read_text() != original
 
 
+def test_save_token_strips_whitespace_symmetrically(app_factory, tmp_zones_file):
+    """Both stored and provided tokens are stripped before compare.
+    Previously only the stored token was stripped, so a trailing space
+    in the X-Save-Token header would fail an otherwise-correct token."""
+    app = app_factory({"save_token": "sekrit"})
+    client = TestClient(app)
+    # Trailing whitespace on the provided token should be tolerated.
+    r = client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"X-Save-Token": "sekrit "},
+    )
+    assert r.status_code == 200
+
+
 def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
     """save_token should also unlock LAN access when allow_all_ips is off."""
     app = app_factory({"allow_all_ips": False, "save_token": "s3cret"})
@@ -462,9 +477,31 @@ def test_healthz_returns_ok_without_authz(restricted_client):
     assert response.text == "ok"
 
 
-def test_referrer_policy_header_is_applied(allow_all_client):
+def test_security_headers_applied(allow_all_client):
+    """SecurityHeadersMiddleware sets Referrer-Policy, nosniff,
+    X-Frame-Options, and a CSP on every response."""
     response = allow_all_client.get("/zones.json")
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
+    csp = response.headers["content-security-policy"]
+    # Key invariants of the CSP. Full string is intentionally not pinned
+    # so we don't have to update every test when a directive is tuned.
+    assert "default-src 'self'" in csp
+    assert "frame-ancestors 'self' https://*.home-assistant.io" in csp
+    assert "object-src 'none'" in csp
+    # OSM + CARTO tile hosts must remain in img-src or the map breaks.
+    assert "https://*.tile.openstreetmap.org" in csp
+    assert "https://*.basemaps.cartocdn.com" in csp
+
+
+def test_security_headers_applied_to_static_files(allow_all_client):
+    """Middleware runs on static assets too — clickjacking / CSP apply
+    to index.html and the JS bundles."""
+    response = allow_all_client.get("/")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
+    assert "frame-ancestors" in response.headers["content-security-policy"]
 
 
 def test_static_file_served_to_authorized_client(allow_all_client):
@@ -661,3 +698,81 @@ def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplo
     messages = " ".join(rec.message for rec in caplog.records)
     assert "172.30.32.2" in messages
     assert "*" in messages
+
+
+@pytest.mark.parametrize("supernet", [
+    "172.30.32.0/24",   # direct containing /24
+    "172.30.0.0/16",    # broader
+    "172.0.0.0/8",      # even broader
+    "128.0.0.0/1",      # upper half of IPv4 (172.30.32.2 lives here)
+])
+def test_parse_trusted_proxies_drops_ingress_supernets(app_factory, caplog, supernet):
+    """A CIDR that contains the ingress IP (172.30.32.2) is the same
+    mistake as listing the ingress IP directly — the attacker forges
+    XFF from any IP inside the range. Previously only exact-string
+    matches were blocked; ipaddress-based containment check catches
+    the supernet bypass."""
+    import logging
+    import main
+
+    with caplog.at_level(logging.ERROR):
+        result = main._parse_trusted_proxies({"trusted_proxies": supernet})
+
+    assert result == []
+    assert any("CIDR covers" in rec.message for rec in caplog.records)
+
+
+def test_parse_trusted_proxies_accepts_non_ingress_cidrs(app_factory, caplog):
+    """A CIDR that does NOT contain the ingress IP is kept. Common case:
+    a real reverse proxy on the LAN."""
+    import logging
+    import main
+
+    with caplog.at_level(logging.ERROR):
+        result = main._parse_trusted_proxies(
+            {"trusted_proxies": "10.0.0.0/24, 192.168.1.1, 172.31.0.0/16"}
+        )
+
+    assert result == ["10.0.0.0/24", "192.168.1.1", "172.31.0.0/16"]
+    # No error logs for these.
+    assert not any(rec.levelname == "ERROR" for rec in caplog.records)
+
+
+def test_parse_trusted_proxies_rejects_unparseable_entries(app_factory, caplog):
+    """Hostnames and garbage strings are rejected with a typed error —
+    previously they'd silently slip through to uvicorn's
+    forwarded_allow_ips, where behaviour is undefined."""
+    import logging
+    import main
+
+    with caplog.at_level(logging.ERROR):
+        result = main._parse_trusted_proxies(
+            {"trusted_proxies": "proxy.local, not an ip, 300.0.0.1"}
+        )
+
+    assert result == []
+    assert any("unparseable" in rec.message for rec in caplog.records)
+
+
+def test_save_with_if_match_on_missing_file_omits_current_etag(
+    app_factory, tmp_zones_file,
+):
+    """When the zones file is unreadable at etag-check time, the 412
+    body omits `current_etag` entirely (rather than returning
+    `"current_etag": null` which forces clients into defensive
+    null-handling for a field that semantically means "resource
+    missing"). The ETag response header is also absent."""
+    app = app_factory({"allow_all_ips": True})
+    client = TestClient(app)
+    tmp_zones_file.unlink()
+
+    r = client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"If-Match": '"stale-etag"'},
+    )
+    assert r.status_code == 412
+    body = r.json()
+    assert body == {"error": "precondition failed"}
+    assert "current_etag" not in body
+    assert "etag" not in r.headers
