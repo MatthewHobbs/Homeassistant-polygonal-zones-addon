@@ -351,6 +351,11 @@ jobs:
                   # still visible. Kept at the very end of the smoke
                   # because page.route applies to subsequent requests only
                   # and doesn't need to be unrouted before browser.close.
+                  # The expected 500 fires a console.error "Failed to load
+                  # resource" which would otherwise trip the final errors
+                  # aggregator — clear the list first so only post-#123
+                  # unexpected errors would fail the check.
+                  errors.clear()
                   async def fail_save(route, request):
                       if request.url.endswith("/save_zones") and request.method == "POST":
                           await route.fulfill(status=500, body="boom")
