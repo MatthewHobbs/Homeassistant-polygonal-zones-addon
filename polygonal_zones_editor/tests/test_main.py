@@ -388,7 +388,46 @@ def test_parse_trusted_proxies_handles_empty_and_list(app_factory):
     import main
     assert main._parse_trusted_proxies({}) == []
     assert main._parse_trusted_proxies({"trusted_proxies": ""}) == []
-    assert main._parse_trusted_proxies({"trusted_proxies": "172.30.32.2"}) == ["172.30.32.2"]
+    assert main._parse_trusted_proxies({"trusted_proxies": "10.0.0.5"}) == ["10.0.0.5"]
     assert main._parse_trusted_proxies(
-        {"trusted_proxies": " 172.30.32.2 ,10.0.0.5 "}
-    ) == ["172.30.32.2", "10.0.0.5"]
+        {"trusted_proxies": " 192.168.1.1 ,10.0.0.5 "}
+    ) == ["192.168.1.1", "10.0.0.5"]
+
+
+@pytest.mark.parametrize("dangerous", [
+    "*",
+    "0.0.0.0",
+    "0.0.0.0/0",
+    "::",
+    "::/0",
+    "172.30.32.2",
+])
+def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dangerous):
+    """Wildcards and the ingress IP must never be handed to uvicorn's
+    forwarded_allow_ips — doing so lets any on-path attacker forge
+    X-Forwarded-For: 172.30.32.2 and bypass the ingress-IP check on
+    /save_zones. The parser drops them and logs an error."""
+    import logging
+    import main
+
+    with caplog.at_level(logging.ERROR):
+        result = main._parse_trusted_proxies({"trusted_proxies": dangerous})
+
+    assert result == []
+    assert any(dangerous in rec.message for rec in caplog.records)
+
+
+def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplog):
+    """Mixed input: dangerous entries are dropped, safe ones preserved."""
+    import logging
+    import main
+
+    with caplog.at_level(logging.ERROR):
+        result = main._parse_trusted_proxies(
+            {"trusted_proxies": "172.30.32.2, 10.0.0.5, *, 192.168.1.1"}
+        )
+
+    assert result == ["10.0.0.5", "192.168.1.1"]
+    messages = " ".join(rec.message for rec in caplog.records)
+    assert "172.30.32.2" in messages
+    assert "*" in messages

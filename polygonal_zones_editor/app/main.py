@@ -268,9 +268,43 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     return app, log_config
 
 
+# Values that, when handed to uvicorn's forwarded_allow_ips, would let any
+# on-path attacker forge X-Forwarded-For: 172.30.32.2 and be treated as the
+# HA ingress sidecar by allowed_ip(). We drop these with a logged error
+# rather than failing startup so a typo can't lock a user out.
+#
+# Split into two categories so each branch can log a constant string with
+# no interpolation — CodeQL's taint analysis otherwise flags %s-logging of
+# any value derived from the options dict (which also carries save_token).
+_TRUSTED_PROXIES_WILDCARDS = frozenset({"*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"})
+_INGRESS_IP_STR = "172.30.32.2"
+
+
 def _parse_trusted_proxies(options: dict) -> list[str]:
     raw = options.get("trusted_proxies", "") or ""
-    return [p.strip() for p in raw.split(",") if p.strip()]
+    entries = [p.strip() for p in raw.split(",") if p.strip()]
+    safe = []
+    for entry in entries:
+        if entry in _TRUSTED_PROXIES_WILDCARDS:
+            _LOGGER.error(
+                "Refusing a wildcard trusted_proxies entry (one of "
+                "*, 0.0.0.0, 0.0.0.0/0, ::, ::/0). It would let any "
+                "client forge X-Forwarded-For and bypass the ingress-IP "
+                "check on /save_zones. Dropping this entry; fix the "
+                "option in the addon configuration."
+            )
+            continue
+        if entry == _INGRESS_IP_STR:
+            _LOGGER.error(
+                "Refusing the HA ingress IP (172.30.32.2) as a "
+                "trusted_proxies entry. It would let any client forge "
+                "X-Forwarded-For and bypass the ingress-IP check on "
+                "/save_zones. Dropping this entry; fix the option in "
+                "the addon configuration."
+            )
+            continue
+        safe.append(entry)
+    return safe
 
 
 if __name__ == "__main__":
