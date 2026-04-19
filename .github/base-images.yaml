@@ -1,0 +1,28 @@
+# Digest-pinned HA base images per architecture. Used by the matrix
+# generators in build.yml and release.yml to produce a BUILD_FROM
+# reference that docker pins by sha256. Keeps rebuilds of the same git
+# SHA bit-identical regardless of GHA cache warm-up or a mutable-tag
+# repush upstream.
+#
+# This is NOT a Home Assistant convention file — HA's addon linter and
+# Supervisor read polygonal_zones_editor/build.yaml, which keeps plain
+# tags for schema compliance. The digests live here in .github/ so the
+# linter leaves them alone.
+#
+# Renovate's customManager in .github/renovate.json5 keeps the digests
+# fresh; if Renovate isn't installed, refresh manually with:
+#
+#   for arch in aarch64 amd64 armhf armv7 i386; do
+#     TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:home-assistant/${arch}-base:pull" | jq -r .token)
+#     curl -sI \
+#       -H "Authorization: Bearer $TOKEN" \
+#       -H "Accept: application/vnd.oci.image.index.v1+json" \
+#       "https://ghcr.io/v2/home-assistant/${arch}-base/manifests/3.19" \
+#       | awk '/docker-content-digest/{print $2}'
+#   done
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.19@sha256:21337bf37e6bc1bbc608bd2c86ca2c901fe200393d7ba629e0de4dce7a31241d
+  amd64:   ghcr.io/home-assistant/amd64-base:3.19@sha256:064e13687f5d2b839c2f7304ae57c71fed4d60f5311e8c8b11ae75fa32c11c6f
+  armhf:   ghcr.io/home-assistant/armhf-base:3.19@sha256:d60d0d82e6163048e7e3b621143f68d4313315c86e595c249ffe6f60e58f9b45
+  armv7:   ghcr.io/home-assistant/armv7-base:3.19@sha256:6814057a42695dbc54737373de7c17bf0a0cd78afe4ce47e59c50de67a5e2e94
+  i386:    ghcr.io/home-assistant/i386-base:3.19@sha256:241da0fcce51fddf1afbff964f329c24da99d0d654c06bc3dd2908bd3036d861

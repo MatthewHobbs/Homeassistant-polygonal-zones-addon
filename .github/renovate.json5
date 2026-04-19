@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  // Renovate config for this repo. If Renovate is enabled, it keeps the
+  // digest-pinned base images in polygonal_zones_editor/build.yaml fresh —
+  // Dependabot's built-in docker manager doesn't handle custom YAML fields
+  // like `build_from:` that drive `ARG BUILD_FROM` in the Dockerfile.
+  //
+  // Dependabot (configured in .github/dependabot.yml) continues to handle
+  // pip, GitHub Actions, and `FROM` lines in Dockerfiles.
+  "extends": ["config:recommended"],
+  "timezone": "Europe/London",
+  "schedule": ["before 9am on monday"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Keep HA addon base-image digests in build.yaml fresh",
+      "fileMatch": ["^\\.github/base-images\\.yaml$"],
+      "matchStrings": [
+        "(?<depName>ghcr\\.io/home-assistant/[a-z0-9]+-base):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group all HA base-image digest bumps into one PR per week",
+      "matchDatasources": ["docker"],
+      "matchPackagePrefixes": ["ghcr.io/home-assistant/"],
+      "groupName": "home-assistant-base-images"
+    }
+  ]
+}
