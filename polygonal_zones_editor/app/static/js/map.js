@@ -22,10 +22,26 @@ fetch('./config.json')
     });
 
 function generate_map(zones_url) {
-    const osm_url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
     const osmAttrib = '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors';
-    const osm = L.tileLayer(osm_url, {maxZoom: 18, attribution: osmAttrib});
-    const map = L.map('map', {layers: [osm], center: [52.96523540264812, 6.52002831753822], zoom: 13});
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        {maxZoom: 18, attribution: osmAttrib});
+    // CARTO dark basemap for prefers-color-scheme: dark. Free, OSM-based.
+    const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        {maxZoom: 19,
+         subdomains: 'abcd',
+         attribution: osmAttrib + ' &copy; <a href="https://carto.com/attributions">CARTO</a>'});
+
+    const dark_mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const initial_layer = dark_mq.matches ? dark : osm;
+    const map = L.map('map', {layers: [initial_layer], center: [52.96523540264812, 6.52002831753822], zoom: 13});
+
+    // Swap tile layer at runtime when the OS preference changes.
+    dark_mq.addEventListener('change', e => {
+        const next = e.matches ? dark : osm;
+        const prev = e.matches ? osm : dark;
+        if (map.hasLayer(prev)) map.removeLayer(prev);
+        if (!map.hasLayer(next)) next.addTo(map);
+    });
 
     let editableLayers = new L.FeatureGroup();
     map.addLayer(editableLayers);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.13 — 2026-04-19
+
+- Dark mode. The editor now follows your OS / browser `prefers-color-scheme` setting: dark sidebar, dark CARTO tile layer, popup + draw-toolbar overrides so everything stays readable. Switching your OS theme at runtime swaps the tile layer live without a reload. Note: the `zone_colour` option is unchanged — pick a colour that's readable on both light and dark tiles (`purple` works fine on both).
+
 ## 0.2.12 — 2026-04-18
 
 - Switched to pre-built images. `config.yaml` now declares `image: ghcr.io/matthewhobbs/{arch}-addon-polygonal_zones`, so the Home Assistant Supervisor pulls the published image instead of running a Docker build on your hardware. Updates are now fast on every architecture, especially ARM SBCs where local builds previously took several minutes. The Dockerfile and `build.yaml` still exist; they're used by CI and the release workflow to produce those images.
