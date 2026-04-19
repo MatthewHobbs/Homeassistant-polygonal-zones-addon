@@ -160,29 +160,37 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
 
 # Content-Security-Policy tailored to the addon's frontend.
 #
-# script-src/style-src allow unpkg for Leaflet + Leaflet-Draw (SRI-pinned
-# in index.html) and 'unsafe-inline' for the one onclick handler on the
-# Save button + Leaflet's injected inline styles.
+# Leaflet and Leaflet-Draw are vendored under app/static/vendor/ (0.2.32,
+# #122) so script-src / style-src / img-src no longer need unpkg.com.
+# script-src dropped 'unsafe-inline' along with the Save button's inline
+# onclick (#128) — the only inline script-src user that remained.
 #
-# img-src covers OSM (default), CARTO (dark theme), and Esri World Imagery
-# (satellite, #31) tile servers, unpkg for Leaflet-Draw's spritesheet SVG
-# (dist/images/spritesheet.svg), and data:/blob: for Leaflet's inline-
-# rendered tile markers.
+# style-src KEEPS 'unsafe-inline': Leaflet injects runtime inline styles
+# for tile positioning (transform translate3d on every tile); without
+# 'unsafe-inline' the map renders blank. The upstream issue for this is
+# leaflet/Leaflet#4430; removing it requires a nonce per request which
+# isn't feasible on static-served assets.
 #
-# frame-ancestors permits HA's ingress origin and Nabu Casa remote access
-# to iframe the addon UI; everything else is blocked (clickjacking defense).
+# img-src covers the three tile providers (OSM, CARTO dark, Esri World
+# Imagery) plus data:/blob: for Leaflet's inline-rendered markers.
+#
+# frame-ancestors permits HA ingress (same-origin under HA's web frontend,
+# covered by 'self') and Nabu Casa remote. The prior *.home-assistant.io
+# entry was a typo — that's HA's marketing / docs domain, not any
+# iframe-embedding origin, and allowing it widened the clickjacking
+# surface to anyone hosting on a home-assistant.io subdomain.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' https://unpkg.com 'unsafe-inline'; "
-    "style-src 'self' https://unpkg.com 'unsafe-inline'; "
-    "img-src 'self' https://unpkg.com https://*.tile.openstreetmap.org "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' https://*.tile.openstreetmap.org "
     "https://*.basemaps.cartocdn.com https://server.arcgisonline.com "
     "data: blob:; "
     "connect-src 'self'; "
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self'; "
-    "frame-ancestors 'self' https://*.home-assistant.io https://*.ui.nabu.casa"
+    "frame-ancestors 'self' https://*.ui.nabu.casa"
 )
 
 

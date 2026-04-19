@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.32 — 2026-04-19
+
+Web-surface hardening: self-host Leaflet + Leaflet-Draw, tighten CSP.
+
+### Changed
+
+- **Self-hosted Leaflet 1.9.4 + Leaflet-Draw 1.0.4** (#122). Previously `index.html` loaded both libraries from `unpkg.com` with SRI pins. The CDN worked but was a single-point-of-failure — if unpkg.com was down, slow, or blocked by a user's network, the editor rendered a blank page. Both libraries plus their marker / spritesheet images now live under `polygonal_zones_editor/app/static/vendor/`, served same-origin from the addon's own FastAPI static mount. Version bumps are now manual file swaps but the `vendor/<lib>/` layout preserves upstream file structure so a Renovate custom manager can drive them from one place later.
+- **CSP tightened** (#128, #122).
+  - `script-src` drops `https://unpkg.com` (self-hosted) and `'unsafe-inline'` (Save button's inline `onclick` moved to `addEventListener`). The only inline script that remained was the Save button handler, so script-src is now `'self'` only — narrowest possible setting for a same-origin page.
+  - `style-src` drops `https://unpkg.com`. Keeps `'unsafe-inline'` because Leaflet injects runtime inline styles for tile positioning (every tile gets a `transform: translate3d(...)`); removing that would require per-request nonces on static-served assets, which isn't feasible. Upstream issue: leaflet/Leaflet#4430.
+  - `img-src` drops `https://unpkg.com` (no more Leaflet-Draw spritesheet fetches from the CDN). Tile hosts (OSM, CARTO, Esri) stay.
+  - `frame-ancestors` drops `https://*.home-assistant.io` — that's HA's marketing / docs domain, not any iframe-embedding origin. Allowing it widened the clickjacking surface to anyone hosting on a `home-assistant.io` subdomain. Ingress is covered by `'self'` (served same-origin under HA's frontend); Nabu Casa remote is covered by `https://*.ui.nabu.casa`.
+
+Net result: the CSP now reads
+
+```
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com
+  https://server.arcgisonline.com data: blob:;
+connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';
+frame-ancestors 'self' https://*.ui.nabu.casa
+```
+
+XSS containment is materially improved — any script injection now must come from a `vendor/` asset we ship, not an arbitrary CDN origin. The `'unsafe-inline'` in style-src is the only remaining escape hatch and is documented inline.
+
+### Added
+
+- Test assertions on the CSP invariants: `script-src` has no `'unsafe-inline'`, `unpkg.com` is not in the CSP at all, `*.home-assistant.io` is not in `frame-ancestors`. Guards against anyone silently re-adding a CDN dep or widening the frame-ancestors list.
+
 ## 0.2.31 — 2026-04-19
 
 UX polish slice: two small editor fixes that addressed friction points flagged in the principal-engineer panel review.

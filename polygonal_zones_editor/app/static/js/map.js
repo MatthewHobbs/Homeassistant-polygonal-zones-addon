@@ -27,6 +27,13 @@ window.addEventListener('beforeunload', (e) => {
     e.returnValue = '';
 });
 
+// Wire the Save button via addEventListener rather than an inline onclick
+// attribute so the CSP's script-src can drop 'unsafe-inline' (#128). The
+// button lives in index.html; this file is loaded at the end of <body>
+// so the DOM is ready at parse time.
+const saveButton = document.querySelector('.save-btn');
+if (saveButton) saveButton.addEventListener('click', save_zones);
+
 fetch('./config.json')
     .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
     .catch(err => {

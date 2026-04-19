@@ -5,20 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <meta name="referrer" content="strict-origin-when-cross-origin">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossorigin=""/>
+    <!-- Leaflet 1.9.4 and Leaflet.draw 1.0.4 are vendored under
+         app/static/vendor/ so the editor has no runtime CDN dependency.
+         unpkg.com used to be pinned via SRI here; both libs are now
+         served same-origin, so SRI is unnecessary (and would lie — we
+         re-publish the bytes). Version bumps are manual file swaps; the
+         `vendor/<lib>/` path keeps upstream source layout so a future
+         Renovate custom-manager can drive them from one place. -->
+    <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
+    <script src="./vendor/leaflet/leaflet.js"></script>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin=""></script>
-
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
-          integrity="sha384-NZLkVuBRMEeB4VeZz27WwTRvlhec30biQ8Xx7zG7JJnkvEKRg5qi6BNbEXo9ydwv"
-          crossorigin="anonymous"/>
-    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"
-            integrity="sha384-JP5UPxIO2Tm2o79Fb0tGYMa44jkWar53aBoCbd8ah0+LcCDoohTIYr+zIXyfGIJN"
-            crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="./vendor/leaflet-draw/leaflet.draw.css">
+    <script src="./vendor/leaflet-draw/leaflet.draw.js"></script>
 
     <link rel="stylesheet" href="./css/style.css">
     <title>Polygonal zones: Edit zones</title>
@@ -58,7 +56,7 @@
             <h2> Zones </h2>
             <div class="zone-list"></div>
         </div>
-        <button class="save-btn btn" onclick="save_zones()"> Save </button>
+        <button class="save-btn btn" type="button"> Save </button>
         <p id="save-status" class="sr-only" aria-live="polite" role="status"></p>
 
     </div>
