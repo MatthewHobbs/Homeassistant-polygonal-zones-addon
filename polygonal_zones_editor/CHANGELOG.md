@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.15 — 2026-04-19
+
+- Home Assistant addon metadata brought into line with current conventions. `config.yaml` now declares `url` (link back to the addon folder) and the startup tier is `services` instead of `system` since the addon only serves data Core polls rather than being a core-boot dependency. The root `repository.yaml` is updated to point at this fork's URL and maintainer instead of the deprecated upstream. No behaviour change for users already running 0.2.14.
+
 ## 0.2.14 — 2026-04-19
 
 - New `theme` option: `auto` (default — follows OS `prefers-color-scheme`), `light`, or `dark`. Set this when HA's theme and your OS theme disagree (e.g. HA on dark, laptop on light) and you want the editor to pick one. The override controls both the CSS palette and the tile layer.
