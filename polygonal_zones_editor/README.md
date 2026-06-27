@@ -8,6 +8,16 @@
 
 Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, name them, and have the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) consume them for location-based automations.
 
+> **Fork Notice**
+>
+> This add-on is a community-maintained continuation of the original [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon), which was deprecated by its original author. This fork is being maintained to address current issues — including the OpenStreetMap tile referrer policy change that broke map rendering in the upstream project.
+>
+> Maintained fork: [MatthewHobbs/Homeassistant-polygonal-zones-addon](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon)
+>
+> Companion integration (tracks devices against your zones): [MatthewHobbs/Homeassistant-polygonal-zones](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones)
+>
+> Documentation and install guide: [matthewhobbs.github.io/Homeassistant-polygonal-zones](https://matthewhobbs.github.io/Homeassistant-polygonal-zones)
+
 [![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMatthewHobbs%2FHomeassistant-polygonal-zones-addon.git)
 
 ## Installation

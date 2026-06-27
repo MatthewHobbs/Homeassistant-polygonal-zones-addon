@@ -11,7 +11,7 @@ Operational procedures for the release pipeline. For routine releases, use `scri
    - **tests** — reusable call to `test.yml` (pytest + 100% line coverage gate).
    - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter` + shellcheck on `scripts/` and `rootfs/`).
    - **build** — reusable call to `build.yml` — multi-arch docker build + amd64 boot-smoke + Playwright smoke (draw→save round-trip, a11y aria-labels, tile-picker assertions). Added in PR #108 so a tag can't publish an image that hasn't booted cleanly at least once.
-   - **publish** — builds and pushes per-arch images to `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`. Optionally notarizes via codenotary if `CAS_API_KEY` is set.
+   - **publish** — builds and pushes per-arch images to `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`, then attaches a Sigstore build-provenance attestation to each image (keyless, via GitHub OIDC — no secret required).
    - **release** — extracts the CHANGELOG section for the version and creates/updates the GitHub Release.
    - **notify-failure** — opens a GitHub issue if any upstream job failed.
 
@@ -62,11 +62,12 @@ Symptom: HA automations no longer fire on zone entry/exit, or a user hitting the
 
 See the session history: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-` and `lint-`). If you see `Canceling since a higher priority waiting request for <group> exists`, it's almost certainly because a reusable workflow lost its prefix or another workflow is claiming the same group. Fix by giving each reusable workflow a unique concurrency-group prefix.
 
-### CAS_API_KEY is set but signing fails
+### Build-provenance attestation step fails
 
-1. Check the addon log's `Notarize image with codenotary/cas` step output.
-2. Most common: the CAS identity has expired or the API key has been revoked. Generate a fresh key at <https://cas.codenotary.com>, update the repo secret.
-3. **Safe regression** if you need to ship while signing is broken: comment the `codenotary:` line in `config.yaml` so Supervisor doesn't require verification. Unset the secret. Release. Re-enable later.
+1. Check the `Attest build provenance` step output in the `publish` job.
+2. Most common cause: the workflow is missing `id-token: write` / `attestations: write` permissions, or `steps.build.outputs.digest` is empty (the `docker/build-push-action` step must have `id: build` and `push: true`). The image push itself has already succeeded by this point, so the image is published but unattested.
+3. **Safe regression** if you need to ship while attestation is broken: the image is usable without the attestation (the Supervisor does not gate installs on it). Re-run the failed `publish` job after fixing permissions, or attach the attestation out-of-band with `gh attestation` against the pushed digest.
+4. Verify a published image: `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs`.
 
 ### Tag pushed before version was bumped in config.yaml
 
@@ -90,4 +91,4 @@ Same recovery as above — `matrix` job catches it and fails before `publish`. A
 
 - **Addon pipeline:** @MatthewHobbs (repo maintainer).
 - **HA base images:** [home-assistant/docker-base](https://github.com/home-assistant/docker-base).
-- **CAS / codenotary:** <https://support.codenotary.com>.
+- **Image attestations:** [actions/attest-build-provenance](https://github.com/actions/attest-build-provenance) · verify with `gh attestation verify`.
