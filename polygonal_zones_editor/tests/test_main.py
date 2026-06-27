@@ -228,8 +228,10 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
         # id was backfilled (uuid4.hex = 32 chars of hex)
         assert isinstance(got["properties"]["id"], str)
         assert len(got["properties"]["id"]) == 32
-    # schema_version stamped.
-    assert stored["schema_version"] == 1
+    # schema_version stamped in the canonical foreign-member location the
+    # companion integration reads (docs/ZONES_FORMAT.md), NOT bare top-level.
+    assert stored["polygonal_zones"]["schema_version"] == 1
+    assert "schema_version" not in stored
 
 
 def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_file):
@@ -310,6 +312,25 @@ def test_save_zones_accepts_valid_schema_version(allow_all_client, tmp_zones_fil
     payload = {**_valid_payload(), "schema_version": 1}
     r = allow_all_client.post("/save_zones", json=payload)
     assert r.status_code == 200
+
+
+def test_save_zones_accepts_nested_schema_version(allow_all_client, tmp_zones_file):
+    """The canonical input location is the foreign member; a nested value is
+    validated and re-stamped nested (never duplicated top-level)."""
+    payload = {**_valid_payload(), "polygonal_zones": {"schema_version": 1}}
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+    stored = json.loads(tmp_zones_file.read_text())
+    assert stored["polygonal_zones"]["schema_version"] == 1
+    assert "schema_version" not in stored
+
+
+def test_save_zones_rejects_non_int_nested_schema_version(allow_all_client, tmp_zones_file):
+    """A bad value in the canonical nested location is rejected, not ignored."""
+    payload = {**_valid_payload(), "polygonal_zones": {"schema_version": "oops"}}
+    r = allow_all_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "schema_version" in r.json()["detail"]
 
 
 def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
