@@ -1,10 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-06-28
+
+Editor UX overhaul, a base-image platform bump (Python 3.11 → 3.12), and the nested-`schema_version` correction. No new `zones.json` contract beyond the fix below.
+
+### Added
+
+- **Empty and loading states for the zone list (#10).** A first-run install now shows "No zones yet — draw one on the map to get started." instead of a blank panel, and the list shows an `aria-busy` "Loading zones…" state while `zones.json` is fetched. Load failures show clearer copy pointing at the add-on log.
+- **Unsaved-changes indicator (#10).** An amber dot appears on the Save button whenever there are edits not yet written to disk.
 
 ### Changed
 
 - **Base image bumped from Alpine 3.19 (Python 3.11) to Alpine 3.21 (Python 3.12)** in `build.yaml` and the digest-pinned `.github/base-images.yaml`, picking up current OS + Python security patches. `requirements-lock.txt` regenerated for Python 3.12 (pinned deps unchanged). Verified with a local container build + boot on the 3.21 base.
+- **Per-row commit button relabelled "Done", not "Save" (#8).** Sharing the "Save" label made users think the per-zone button persisted to disk; the sidebar "Save" remains the only control that writes `zones.json`.
+- **Vendored Leaflet is now served gzip-compressed (#10)** via Starlette's `GZipMiddleware` (responses ≥ 1 KiB), cutting the editor's largest first-load transfer. Zone-entry styles also move to a single shared constructable stylesheet, feature-detected with an inline `<style>` fallback for browsers without that API (Safari/iOS < 16.4, older HA Companion webviews).
 
 ### Fixed
 
@@ -23,6 +32,13 @@
     ]
   }
   ```
+
+- **Renaming a zone no longer targets the wrong layer when two zones share a display name (#10).** Each `zone-entry` now carries a stable `zone-id`; the map matches the layer by id first and only falls back to name matching.
+- **Mobile and accessibility fixes for the editor (#17):** higher-contrast Save/error colours, a 44 px sidebar toggle, a bottom-sheet sidebar layout under 600 px, and a dedicated transient-error banner that is no longer hidden behind the mobile sheet. Per-row rename inputs now associate with their label for screen readers, and zone names render via DOM APIs (not `innerHTML`) so a name containing markup cannot inject nodes.
+
+### Security
+
+- **uvicorn access logging quieted (#13)** so client IP addresses are no longer written to the add-on log at info level, and the legacy `--allow-all-ips` process-argument auth-bypass branch was removed (configure via the `allow_all_ips` add-on option instead).
 
 ## 0.2.33 — 2026-04-19
 
