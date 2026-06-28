@@ -644,6 +644,11 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     log_config = uvicorn.config.LOGGING_CONFIG
     log_config["version"] = 1
     log_config["disable_existing_loggers"] = False
+    # Quiet the access log: uvicorn's default access logger records the client
+    # IP + request line for every request at INFO, which the Supervisor add-on
+    # log surfaces to any HA user. Client IP is personal data (GDPR Recital 30)
+    # and the add-on log has no retention control, so raise it to WARNING.
+    log_config.setdefault("loggers", {}).setdefault("uvicorn.access", {})["level"] = "WARNING"
 
     middleware = [
         Middleware(IPAllowMiddleware, options=options),

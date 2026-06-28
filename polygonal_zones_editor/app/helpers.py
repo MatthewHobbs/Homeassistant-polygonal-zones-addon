@@ -44,8 +44,14 @@ def configure_logging(level: int = logging.INFO) -> None:
 
 
 def allow_all_ips(options: dict) -> bool:
-    """Check if the --allow-all-ips flag is passed or enabled in the options."""
-    return '--allow-all-ips' in sys.argv or '-a' in sys.argv or options.get('allow_all_ips', False)
+    """Whether unauthenticated access from any client IP is enabled.
+
+    Options-only. The previous ``sys.argv`` (``--allow-all-ips`` / ``-a``)
+    branch was removed: an auth-bypass switch keyed on process arguments is
+    fragile and surprising, and the shipped s6 service invokes the app with no
+    such flags. Configure via the add-on's ``allow_all_ips`` option instead.
+    """
+    return bool(options.get('allow_all_ips', False))
 
 
 def allowed_ip(request: Request) -> bool:

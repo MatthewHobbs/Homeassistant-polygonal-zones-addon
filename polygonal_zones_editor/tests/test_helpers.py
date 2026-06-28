@@ -4,18 +4,13 @@ import sys
 import pytest
 
 
-def test_allow_all_ips_long_flag(monkeypatch):
+def test_allow_all_ips_ignores_argv_flags(monkeypatch):
+    """The legacy --allow-all-ips / -a argv flags no longer grant access;
+    allow_all_ips is options-only now."""
     import helpers
 
-    monkeypatch.setattr(sys, "argv", ["main.py", "--allow-all-ips"])
-    assert helpers.allow_all_ips({}) is True
-
-
-def test_allow_all_ips_short_flag(monkeypatch):
-    import helpers
-
-    monkeypatch.setattr(sys, "argv", ["main.py", "-a"])
-    assert helpers.allow_all_ips({}) is True
+    monkeypatch.setattr(sys, "argv", ["main.py", "--allow-all-ips", "-a"])
+    assert helpers.allow_all_ips({}) is False
 
 
 def test_allow_all_ips_from_options(monkeypatch):
