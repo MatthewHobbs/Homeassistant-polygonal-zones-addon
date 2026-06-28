@@ -340,8 +340,10 @@ function setup_editing(map, editableLayers) {
         let layers = e.layers;
         layers.eachLayer(layer => {
             editableLayers.removeLayer(layer);
-            render_zone_list();
         });
+        // Rebuild the list once, after all removals — deleting N zones used to
+        // trigger N full DOM rebuilds of the entire zone list.
+        render_zone_list();
         mark_dirty();
 
         if (editableLayers.getLayers().length === 0) {
@@ -357,8 +359,15 @@ function setup_editing(map, editableLayers) {
             layer.bindPopup('A popup!');
         }
 
-        // generate a name according to `zone {n}`
-        let name = `Zone ${editableLayers.getLayers().length + 1}`;
+        // Generate a unique "Zone N" name. Layer-count + 1 collided after
+        // deletions (delete zone 2 of 3, draw a new one → "Zone 3" duplicated
+        // the renamed one). Use one past the highest existing "Zone N" instead.
+        let maxN = 0;
+        editableLayers.eachLayer(l => {
+            let m = /^Zone (\d+)$/.exec(l.feature?.properties?.name ?? '');
+            if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+        });
+        let name = `Zone ${maxN + 1}`;
         // `type: 'Feature'` is required. Leaflet's toGeoJSON() uses this
         // object as a template — when `layer.feature` is already set it
         // extends it with a `geometry` field but does NOT auto-add the
@@ -522,6 +531,17 @@ function save_zones() {
 }
 
 
+function show_transient_error(message) {
+    // alert() is unreliable inside Home Assistant's ingress iframe (sandboxed
+    // dialogs may be suppressed), so surface errors as an in-page banner.
+    let el = document.createElement('div');
+    el.setAttribute('role', 'alert');
+    el.className = 'transient-error';
+    el.textContent = message;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+}
+
 function load_bulk_json() {
     // open a file dialog
     let input = document.createElement('input');
@@ -534,7 +554,7 @@ function load_bulk_json() {
             let data;
             try { data = JSON.parse(e.target.result); }
             catch (err) {
-                alert('The selected file is not valid JSON.');
+                show_transient_error('The selected file is not valid JSON.');
                 return;
             }
             editableLayers.clearLayers();

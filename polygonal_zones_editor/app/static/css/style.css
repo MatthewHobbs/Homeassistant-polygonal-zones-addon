@@ -27,7 +27,7 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
         --sidebar-color: #1f1f1f;
-        --save-button-color: #3a86ff;
+        --save-button-color: #1a5fb4;
         --save-button-text: #ffffff;
         --text-color: #e8e8e8;
         --muted-text: #aaaaaa;
@@ -44,7 +44,7 @@
 /* Forced dark (theme=dark option) overrides regardless of OS preference. */
 :root[data-theme="dark"] {
     --sidebar-color: #1f1f1f;
-    --save-button-color: #3a86ff;
+    --save-button-color: #1a5fb4;
     --save-button-text: #ffffff;
     --text-color: #e8e8e8;
     --muted-text: #aaaaaa;
@@ -165,8 +165,8 @@ body {
     position: fixed;
     top: 10px;
     z-index: 1000;          /* above Leaflet's controls (z-index ≤ 800) */
-    width: 32px;
-    height: 32px;
+    width: 44px;            /* WCAG 2.5.5 / iOS HIG minimum touch target */
+    height: 44px;
     border: 1px solid var(--border-color);
     border-radius: 4px;
     background: var(--sidebar-color);
@@ -258,12 +258,15 @@ body {
     transition: 0.3s;
 }
 
+/* WCAG AA contrast with white button text: plain `green`/`red` were ~3.4–4.0:1
+   (below 4.5:1). These darker shades clear AA on the button's light + dark
+   backgrounds. */
 .save-btn.success {
-    background-color: green !important;
+    background-color: #1a7f37 !important;
 }
 
 .save-btn.error {
-    background-color: red !important;
+    background-color: #c0392b !important;
 }
 
 
@@ -343,5 +346,54 @@ body {
 
 .tile-error-banner[hidden] {
     display: none;
+}
+
+/* Transient error toast (e.g. invalid bulk JSON). Top-anchored with a z-index
+   above the mobile bottom-sheet sidebar (1100) so the message is never hidden
+   behind the drawer on narrow viewports. */
+.transient-error {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1200;
+    max-width: 90vw;
+    background: var(--popup-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 8px 16px;
+    border-radius: 2px;
+    font-size: 0.9em;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Mobile / narrow viewport. A fixed 300px sidebar leaves the map unusable on a
+   phone, so below 600px the sidebar becomes a bottom sheet over a full-width
+   map. Overrides the desktop grid regardless of the data-sidebar state (except
+   "collapsed", which still hides it). */
+@media (max-width: 600px) {
+    .body[data-sidebar="open"],
+    .body[data-sidebar="drawer"] {
+        grid-template-columns: 1fr;
+    }
+
+    .body[data-sidebar="open"] .sidebar,
+    .body[data-sidebar="drawer"] .sidebar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-height: 45vh;
+        overflow-y: auto;
+        z-index: 1100;          /* above the map + sidebar toggle */
+        border-top: 1px solid var(--border-color);
+        box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Keep the toggle reachable above the bottom sheet. */
+    .body[data-sidebar="open"] .sidebar-toggle {
+        right: 10px;
+    }
 }
 
