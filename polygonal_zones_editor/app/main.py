@@ -296,11 +296,16 @@ def _validate_feature_collection(obj) -> None:
         raise ValueError("expected a GeoJSON FeatureCollection")
 
     # schema_version is optional on input for backward compatibility with
-    # curl-restored pre-versioned files. When present it must be an int.
-    # isinstance(True, int) is True in Python because bool subclasses int,
-    # so reject bool explicitly — a consumer doing `schema_version >= 1`
-    # shouldn't silently pass on `True`.
-    schema_version = obj.get("schema_version")
+    # curl-restored pre-versioned files. The canonical location is the foreign
+    # member ``polygonal_zones.schema_version`` (matching the spec and the
+    # companion integration's reader); a bare top-level ``schema_version`` is
+    # accepted only as a legacy fallback for files written before this fix.
+    # When present it must be an int. isinstance(True, int) is True in Python
+    # because bool subclasses int, so reject bool explicitly — a consumer
+    # doing `schema_version >= 1` shouldn't silently pass on `True`.
+    pz_in = obj.get("polygonal_zones")
+    nested_version = pz_in.get("schema_version") if isinstance(pz_in, dict) else None
+    schema_version = nested_version if nested_version is not None else obj.get("schema_version")
     if schema_version is not None and (
         isinstance(schema_version, bool) or not isinstance(schema_version, int)
     ):
@@ -392,7 +397,17 @@ def _normalise_feature_collection(obj: dict) -> dict:
     stable `properties.id` the companion integration can bind automations
     to across renames. Mutates and returns ``obj``.
     """
-    obj["schema_version"] = SCHEMA_VERSION
+    # Stamp the canonical foreign-member location the integration reads
+    # (polygonal_zones.schema_version per docs/ZONES_FORMAT.md). Earlier
+    # builds wrote a bare top-level key the integration never read, so a
+    # future schema bump would have silently bypassed its version guard.
+    pz = obj.get("polygonal_zones")
+    if not isinstance(pz, dict):
+        pz = {}
+        obj["polygonal_zones"] = pz
+    pz["schema_version"] = SCHEMA_VERSION
+    # Drop any legacy top-level key so there is a single source of truth.
+    obj.pop("schema_version", None)
     for feature in obj.get("features", []):
         props = feature.get("properties")
         if not isinstance(props, dict):

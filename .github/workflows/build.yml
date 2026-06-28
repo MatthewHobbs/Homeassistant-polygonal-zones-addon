@@ -323,17 +323,20 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
-                  # Contract-marker regression guard (0.2.33). Assert the
-                  # server stamps schema_version: 1 and backfills a
-                  # properties.id for every feature that hit the save path
-                  # above — the HA integration binds automations to id
-                  # across renames, so a regression here silently breaks
-                  # downstream bindings.
+                  # Contract-marker regression guard. Assert the server stamps
+                  # schema_version: 1 in the canonical foreign-member location
+                  # (polygonal_zones.schema_version, per docs/ZONES_FORMAT.md —
+                  # this is what the HA integration reads) and NOT bare
+                  # top-level, plus backfills a properties.id for every feature
+                  # that hit the save path above — the integration binds
+                  # automations to id across renames, so a regression here
+                  # silently breaks downstream bindings.
                   persisted = await page.evaluate(
                       "async () => (await fetch('./zones.json').then(r => r.json()))"
                   )
-                  if persisted.get("schema_version") != 1:
-                      print(f"FAIL schema_version missing or wrong on persisted file: {persisted.get('schema_version')!r}")
+                  persisted_version = (persisted.get("polygonal_zones") or {}).get("schema_version")
+                  if persisted_version != 1 or "schema_version" in persisted:
+                      print(f"FAIL schema_version must be at polygonal_zones.schema_version==1 and not top-level; got nested={persisted_version!r}, top_level_present={'schema_version' in persisted}")
                       for e in errors: print(" -", e)
                       sys.exit(1)
                   for idx, feat in enumerate(persisted.get("features") or []):
