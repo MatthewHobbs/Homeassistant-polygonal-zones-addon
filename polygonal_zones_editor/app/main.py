@@ -14,6 +14,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
@@ -653,6 +654,10 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     middleware = [
         Middleware(IPAllowMiddleware, options=options),
         Middleware(SecurityHeadersMiddleware),
+        # Innermost: compress text responses (the unminified vendored Leaflet
+        # JS/CSS are the bulk of page weight). Auth/security middleware stay
+        # outermost so they still gate before any work.
+        Middleware(GZipMiddleware, minimum_size=1024),
     ]
 
     app = Starlette(debug=False, routes=routes, middleware=middleware)

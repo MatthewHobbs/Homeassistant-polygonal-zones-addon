@@ -1,87 +1,100 @@
+// The component CSS. Custom properties cascade through the shadow boundary, so
+// the :root theme palette in style.css reaches us automatically.
+const ZONE_ENTRY_CSS = `
+    :host { color: var(--text-color); }
+
+    .hidden {
+        display: none !important;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .shape-count {
+        opacity: 0.6;
+        font-size: 0.85em;
+        font-weight: normal;
+        margin-left: 0.5ch;
+    }
+
+    .zone-entry {
+        width: 100%;
+        margin-top: 2px;
+        margin-bottom: 2px;
+
+        padding-top: 5px;
+        padding-bottom: 5px;
+    }
+
+    .zone-entry.editing {
+        margin: 5px -10px;
+        padding: 5px 10px;
+        background-color: var(--pz-edit-bg);
+    }
+
+    .zone-entry.editing .header {
+        font-weight: bold;
+    }
+
+    .edit-zone {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .edit-zone .properties {
+        display: flex;
+        justify-content: space-between;
+
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+
+    input[type="text"] {
+        background: var(--pz-input-bg);
+        color: var(--text-color);
+        border: 1px solid var(--pz-input-border);
+        padding: 0.25ch 0.5ch;
+    }
+
+    .edit-btn {
+        background-color: var(--save-button-color);
+        color: var(--save-button-text);
+        padding: 0.5ch 2ch;
+        border: none;
+        border-radius: 2px;
+        cursor: pointer;
+        width: 100%;
+
+        box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
+    }
+`;
+
+// Prefer a single constructable stylesheet shared by every shadow root (parsed
+// once, not re-injected on every render). But that API is not universal —
+// Safari/iOS < 16.4 and some older HA Companion webviews lack it, and
+// `new CSSStyleSheet()` throws there. Building it at module scope would abort
+// the whole script before customElements.define() runs, leaving every
+// zone-entry inert. So detect support; render() falls back to an inline <style>
+// when the sheet is null.
+let ZONE_ENTRY_SHEET = null;
+try {
+    ZONE_ENTRY_SHEET = new CSSStyleSheet();
+    ZONE_ENTRY_SHEET.replaceSync(ZONE_ENTRY_CSS);
+} catch (_e) {
+    ZONE_ENTRY_SHEET = null;
+}
+
 // custom component that will renderder the above template
 class ZoneEntry extends HTMLElement {
-    // Custom properties cascade through shadow DOM, so the theme palette
-    // defined on :root in style.css reaches us automatically. No need to
-    // duplicate dark-mode values here.
-    styles = `
-    <style>
-        :host { color: var(--text-color); }
-
-        .hidden {
-            display: none !important;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .shape-count {
-            opacity: 0.6;
-            font-size: 0.85em;
-            font-weight: normal;
-            margin-left: 0.5ch;
-        }
-
-        .zone-entry {
-            width: 100%;
-            margin-top: 2px;
-            margin-bottom: 2px;
-
-            padding-top: 5px;
-            padding-bottom: 5px;
-        }
-
-        .zone-entry.editing {
-            margin: 5px -10px;
-            padding: 5px 10px;
-            background-color: var(--pz-edit-bg);
-        }
-
-        .zone-entry.editing .header {
-            font-weight: bold;
-        }
-
-        .edit-zone {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .edit-zone .properties {
-            display: flex;
-            justify-content: space-between;
-
-            margin-top: 10px;
-            margin-bottom: 10px;
-        }
-
-        input[type="text"] {
-            background: var(--pz-input-bg);
-            color: var(--text-color);
-            border: 1px solid var(--pz-input-border);
-            padding: 0.25ch 0.5ch;
-        }
-
-        .edit-btn {
-            background-color: var(--save-button-color);
-            color: var(--save-button-text);
-            padding: 0.5ch 2ch;
-            border: none;
-            border-radius: 2px;
-            cursor: pointer;
-            width: 100%;
-
-            box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
-        }
-    </style>
-    `;
-
     constructor() {
         super();
     }
 
     connectedCallback() {
         this.attachShadow({mode: 'open'});
+        if (ZONE_ENTRY_SHEET) this.shadowRoot.adoptedStyleSheets = [ZONE_ENTRY_SHEET];
 
         // listen to changes of attributes that affect render: editing state
         // and the shape-count indicator.
@@ -111,8 +124,7 @@ class ZoneEntry extends HTMLElement {
         // rather than innerHTML interpolation so names containing HTML do not
         // execute script. The surrounding markup is static.
         this.shadowRoot.innerHTML = `
-            ${this.styles}
-
+            ${ZONE_ENTRY_SHEET ? '' : `<style>${ZONE_ENTRY_CSS}</style>`}
             <div class="zone-entry ${editing ? 'editing' : ''}">
                 <div class="header">
                     <span>
@@ -174,7 +186,14 @@ class ZoneEntry extends HTMLElement {
         this.dispatchEvent(new CustomEvent('edit', {
             bubbles: true,
             composed: true,
-            detail: {editing: !editing, name: name, oldName: this.getAttribute('name')}
+            detail: {
+                editing: !editing,
+                name: name,
+                oldName: this.getAttribute('name'),
+                // Stable per-zone id so the map can match the right layer even
+                // when two zones share a display name (rename targeting bug).
+                id: this.getAttribute('zone-id') || null,
+            }
         }));
         this.setAttribute('editing', (!editing).toString());
     }
