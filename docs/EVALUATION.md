@@ -1,3 +1,5 @@
+> **Historical record — 2026-04-19.** This document is the original 7-specialist panel review that seeded issues #111–#131. It is preserved unchanged as a provenance record. Many of the P0 and P1 items it raised were resolved in subsequent releases: the integration gained `allow_private_urls` (unblocking the default LAN install path); the public-CDN mirror path was demoted to a "last resort" with explicit privacy warnings; `schema_version` and `properties.id` were added to the zones format; `GET /zones.json` was gated behind `save_token`; accessibility fixes landed in 0.2.27; the self-hosted Leaflet / Leaflet-Draw path was completed in 0.2.32. See the CHANGELOG for what shipped in each release.
+
 # Evaluation — polygonal zones for granular HA location
 
 _Principal-panel review, 2026-04-19._
