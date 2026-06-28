@@ -151,7 +151,12 @@ class ZoneEntry extends HTMLElement {
 
         let edit_button = document.createElement('button');
         edit_button.classList.add('edit-btn');
-        edit_button.innerText = !editing ? 'Edit' : 'Save';
+        // "Done" (not "Save") for the per-row commit: it only confirms this
+        // zone's name into the in-memory layer. The sidebar "Save" is the file
+        // write. Sharing the "Save" label made users think the row button
+        // persisted to disk, then leave without the sidebar Save and lose the
+        // rename.
+        edit_button.innerText = !editing ? 'Edit' : 'Done';
         edit_button.onclick = this.edit_event_handler.bind(this);
 
         if (!editing) {
