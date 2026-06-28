@@ -1,8 +1,8 @@
-# Polygonal Zones
+# Polygonal Zones Editor
 
 Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, name them, and have the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) consume them for location-based automations.
 
-> **Note — 32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for addons. The last release of this addon for those arches is **0.2.25** — from 0.2.26 onward, only `aarch64` and `amd64` images are published. If you're running on a 32-bit host (Raspberry Pi 0/1, 32-bit OS on a Pi 2/3, 32-bit Intel Atom, etc.) either pin to 0.2.25 via the Supervisor version picker or upgrade your host to a 64-bit HA OS installation. Supervisor stops offering updates automatically once the architecture mismatch is detected, so there's no risk of accidentally pulling an incompatible image.
+> **Note — 32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for add-ons. The last release of this add-on for those arches is **0.2.25** — from 0.2.26 onward, only `aarch64` and `amd64` images are published. If you're running on a 32-bit host (Raspberry Pi 0/1, 32-bit OS on a Pi 2/3, 32-bit Intel Atom, etc.) either pin to 0.2.25 via the Supervisor version picker or upgrade your host to a 64-bit HA OS installation. Supervisor stops offering updates automatically once the architecture mismatch is detected, so there's no risk of accidentally pulling an incompatible image.
 
 ## Configuration
 
@@ -14,29 +14,31 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `theme`           | list     | `auto`    | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override.                                          |
 | `allow_all_ips`   | bool     | `false`   | When `true`, accept HTTP requests from any IP, not just the Home Assistant ingress sidecar. See **LAN access** below.     |
 | `save_token`      | password | *(empty)* | When set, `POST /save_zones` requires `X-Save-Token: <value>` for any non-ingress request. See **Securing /save_zones**.  |
-| `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the addon with your own reverse proxy. |
+| `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the add-on with your own reverse proxy. |
 | `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
 
 ### Network ports
 
-The addon exposes its web interface on **TCP 8000** by default. Inside Home Assistant you reach it via the ingress UI (`Open Web UI` button) — that's the recommended path.
+The add-on's web interface runs on port 8000 inside the container. The **recommended** way to reach it is ingress (the "Open Web UI" button — routed through Home Assistant), which always works with no extra configuration.
 
-Direct LAN access on `http://<your-ha-host>:8000/` is also enabled by default for backups and the integration. If you don't need it, change the host port in **Configuration → Network** to `disabled` (sets it to null).
+Direct LAN access on `http://<your-ha-host>:8000/` is **disabled by default** (`8000/tcp: null` in the add-on manifest). To enable it, go to **Settings → Add-ons → Polygonal Zones → Network**, assign a host port, and restart the add-on. You only need this for `curl`-based backups or when the companion integration runs in a separate container. See **LAN access (`allow_all_ips`)** below.
 
 ### LAN access (`allow_all_ips`)
 
-By default, only the HA ingress IP (`172.30.32.2`) can talk to the addon. With `allow_all_ips: true`, any client on your network can:
+By default, only the HA ingress IP (`172.30.32.2`) can talk to the add-on. With `allow_all_ips: true`, any client on your network can:
 
-- `GET /zones.json` — read the zone geometry (the integration uses this).
+- `GET /zones.json` — read the zone geometry.
 - `POST /save_zones` — overwrite the zones.
 
-Enable it if your Home Assistant integration runs in a different container, or if you want to back up / restore zones via `curl`. Pair with `save_token` (below) to keep `POST /save_zones` protected.
+**On a standard single-host Home Assistant install** (add-on and integration both running on the same Supervisor host), the integration reaches the add-on through ingress and you do **not** need `allow_all_ips`. Leave it at the default `false`.
+
+Set `allow_all_ips: true` only when the companion integration runs on a **different host or container**, or when you want to back up / restore zones via `curl` on your LAN. Pair it with `save_token` (below) to protect `POST /save_zones`.
 
 ### Securing `/save_zones` (`save_token`)
 
-When `save_token` is set, the addon requires the header `X-Save-Token: <value>` on any `POST /save_zones` request that doesn't come from HA ingress. The Save button in the addon's UI keeps working unauthenticated because it goes through ingress.
+When `save_token` is set, the add-on requires the header `X-Save-Token: <value>` on any `POST /save_zones` request that doesn't come from HA ingress. The Save button in the add-on's UI keeps working unauthenticated because it goes through ingress.
 
-Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the addon — there is no migration needed.
+Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the add-on — there is no migration needed.
 
 The token is **never** logged. The `Loaded options:` line at startup prints it as `***`.
 
@@ -62,51 +64,51 @@ curl -X POST -H 'Content-Type: application/json' \
 
 Recommended: leave `save_token` set, only enable `allow_all_ips` while you're actively backing up, then disable it again.
 
-`GET /zones.json` returns an `ETag` header. Pass it back as `If-Match` on `POST /save_zones` to refuse the write if anything changed in between (the addon's own UI does this by default). Plain `curl` posts without `If-Match` keep their last-write-wins behaviour, so existing scripts are unaffected.
+`GET /zones.json` returns an `ETag` header (a fingerprint of the file's current contents). Pass it back as `If-Match` on `POST /save_zones` to refuse the write if anything changed in between (the add-on's own UI does this by default). Plain `curl` posts without `If-Match` keep their last-write-wins behaviour, so existing scripts are unaffected.
 
-**Recommended polling idiom.** Since 0.2.29, `GET /zones.json` also honours `If-None-Match` and returns a `Last-Modified` header. Pollers should cache the last-seen `ETag` and resend it on every subsequent request — the addon returns `304 Not Modified` (no body) when the zones haven't changed, so the integration's poll loop doesn't re-parse a full `FeatureCollection` on every tick. Example:
+**Conditional-GET cache check.** Since 0.2.29, `GET /zones.json` also honours `If-None-Match` and returns a `Last-Modified` header. The companion integration is **not** a polling loop — it reads the zones file at startup and again whenever you trigger a `reload_zones` action. So the ETag / 304 benefit applies to those on-demand fetches (a `304 Not Modified` response — meaning "file unchanged, use your cached copy, no body to re-download" — avoids re-parsing the full GeoJSON on every `reload_zones` call) and to any external script that requests the file repeatedly. Example:
 
 ```sh
-# First poll
+# First request
 curl -D headers1.txt http://<ha-host>:8000/zones.json > zones.json
 etag=$(awk -F': ' '/^ETag: /{print $2}' headers1.txt | tr -d '\r')
 
-# Subsequent polls — 304 means "no change, use the cached copy"
+# Subsequent requests — 304 means "no change, use the cached copy"
 curl -I -H "If-None-Match: $etag" http://<ha-host>:8000/zones.json
 ```
 
 ## Integration with the Polygonal Zones HA integration
 
-The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this addon. If the integration runs anywhere other than the HA ingress sidecar (different container or external host), set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.
+The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this add-on. It fetches the zones file at **startup** and again whenever you call the `reload_zones` action — it does not poll on a schedule. On a standard single-host install the integration reaches the add-on through ingress and no extra network configuration is needed. If the integration runs on a **different host or container**, set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.
 
 ### Availability and failure modes
 
-The addon serves `/zones.json` from local disk; the companion integration polls it. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
+The add-on serves `/zones.json` from local disk; the companion integration reads it on demand. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
 
-- **The addon** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails (since 0.2.17 `/healthz` reads the zones file rather than just checking that the process is alive), so Supervisor marks the container unhealthy and restarts it. If the underlying issue is transient (race with a snapshot, filesystem remount), the restart usually resolves it.
-- **The integration** sees the 503 on its next poll. Its default behaviour is to retain its last-known-good state — zone-based automations continue to fire based on the zone definitions it last successfully fetched, rather than silently losing geofencing coverage. If the addon is down entirely (process gone, port unreachable), the integration surfaces an unavailable state; automations that guard on `zone.* != 'unavailable'` will stop firing until the addon is back.
+- **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails (since 0.2.17 `/healthz` reads the zones file rather than just checking that the process is alive), so Supervisor marks the container unhealthy and restarts it. If the underlying issue is transient (race with a snapshot, filesystem remount), the restart usually resolves it.
+- **The integration** sees the 503 the next time it tries to read zones (on startup or on a `reload_zones` call). Its default behaviour is to retain its last-known-good state — zone-based automations continue to fire based on the zone definitions it last successfully fetched, rather than silently losing geofencing coverage. If the add-on is down entirely (process gone, port unreachable), the integration surfaces an unavailable state; automations that guard on `zone.* != 'unavailable'` will stop firing until the add-on is back.
 
 **Recovery:**
-1. Pull the addon log from **Settings → Add-ons → Polygonal Zones → Log**. Look for `Failed to read /data/polygonal_zones/zones.json` or a JSON parse error during startup.
+1. Pull the add-on log from **Settings → Add-ons → Polygonal Zones → Log**. Look for `Failed to read /data/polygonal_zones/zones.json` or a JSON parse error during startup.
 2. Common root causes: ownership drift on `/data` (rare, usually resolved by a container restart — `cont-init.d/00-fix-perms` re-chowns on boot), disk full, or file corruption after an ungraceful host shutdown.
 3. If the file is present but corrupted, the fastest path is to restore `/data/polygonal_zones/zones.json` from the latest HA snapshot that predates the failure (**Settings → System → Backups**). The integration's retained state means automations that were working before the outage keep working through the restore.
 
-### Pointing the integration at the addon
+### Pointing the integration at the add-on
 
-**Recommended (happy path) — LAN URL with `allow_private_urls: true`.** As of companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0), the integration has an opt-in boolean option `allow_private_urls` under its advanced-settings section. Turn it on, point `zone_urls` at the addon's LAN URL, and you're done:
+**Recommended (happy path) — LAN URL with `allow_private_urls: true`.** As of companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0), the integration has an opt-in boolean option `allow_private_urls` under its advanced-settings section. Turn it on, point `zone_urls` at the add-on's LAN URL, and you're done:
 
-- In this addon: set `allow_all_ips: true` (and ideally `save_token: <value>` so `POST /save_zones` from LAN requires the header).
+- In this add-on: set `allow_all_ips: true` (and ideally `save_token: <value>` so `POST /save_zones` from LAN requires the header).
 - In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`.
 
-The integration keeps its SSRF defence in depth — loopback, link-local (cloud-metadata), multicast, and reserved ranges are still blocked; only RFC-1918 space unlocks. On a typical HA OS install where integration + addon share the same host, that's the only space you need.
+The integration includes an SSRF (Server-Side Request Forgery) defence that prevents it from fetching URLs pointing at private network addresses — loopback, link-local (cloud-metadata), multicast, and reserved ranges are still blocked. `allow_private_urls` unlocks only RFC-1918 space (private home-network addresses such as `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`), which is the only space you need for a typical home-network install.
 
 #### Alternative — private reverse proxy with TLS on a non-RFC-1918 hostname
 
-If you'd rather not enable `allow_private_urls`, or you're running integration v1.11.x or earlier, you can still front the addon with a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager addon) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Pair with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
+If you'd rather not enable `allow_private_urls`, or you're running integration v1.11.x or earlier, you can still front the add-on with a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager add-on) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Pair with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
 
 #### Last resort — public-CDN mirror (privacy warning)
 
-Hosting `zones.json` on a public-facing server (GitHub Pages, S3, Cloudflare Pages, etc.) is occasionally suggested, but **do not do this without understanding the privacy cost**. Your polygon geometry encodes the precise shape and location of your home, workplace, school runs, and any other place you've drawn a zone. Publishing it to a public CDN means:
+Hosting `zones.json` on a public-facing server (GitHub Pages, S3, Cloudflare Pages, etc.) is occasionally suggested, but **do not do this without understanding the privacy cost**. Your polygon geometry encodes the precise shape and location of your home, workplace, school runs, and any other place you have drawn a zone. Publishing it to a public CDN means:
 
 - The data is **world-readable** — any visitor, crawler, scraper or search engine can fetch it.
 - Public CDNs **cache and replicate** content across their global edge networks. Once it's been served even once, you cannot assume you can fully revoke it.
@@ -122,8 +124,8 @@ If you absolutely must go this route (e.g. you have no control over DNS, cannot 
 
 After installing and starting the add-on, you can access the web interface in two ways:
 
-- **Info page**: press the **Open Web UI** button on the addon's info page.
-- **Sidebar**: enable **Show in sidebar** in the addon configuration to add a permanent shortcut to the HA sidebar.
+- **Info page**: press the **Open Web UI** button on the add-on's info page.
+- **Sidebar**: enable **Show in sidebar** in the add-on configuration to add a permanent shortcut to the HA sidebar.
 
 ### Saving changes
 
@@ -131,7 +133,7 @@ After installing and starting the add-on, you can access the web interface in tw
 
 ### Zones File
 
-The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (default port 8000), and on disk at `/data/polygonal_zones/zones.json` inside the container. The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads this file. See the **Backing up / restoring zones with curl** section for the recommended backup workflow.
+The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads this file. See the **Backing up / restoring zones with curl** section for the recommended backup workflow.
 
 **Backup visibility — important for privacy.** Because the zones file lives inside `/data`, it is included in every Home Assistant snapshot / backup that Supervisor takes. That means **deleting a zone from the editor does not remove it from snapshots that were taken before the deletion** — the old geometry is still present in those backup files until you delete the snapshots themselves. Your polygon geometry encodes precise home / workplace / school locations, so if you're removing zones for privacy reasons (after a move, after accidentally drawing over a sensitive area, or in response to a subject-access / deletion request) also purge old snapshots via **Settings → System → Backups → ⋮ → Remove**, and any off-HA backup copies you maintain.
 
