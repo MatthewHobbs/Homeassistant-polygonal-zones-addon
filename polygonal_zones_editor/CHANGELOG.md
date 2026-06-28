@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Base image bumped from Alpine 3.19 (Python 3.11) to Alpine 3.21 (Python 3.12)** in `build.yaml` and the digest-pinned `.github/base-images.yaml`, picking up current OS + Python security patches. `requirements-lock.txt` regenerated for Python 3.12 (pinned deps unchanged). Verified with a local container build + boot on the 3.21 base.
+
 ### Fixed
 
 - **`schema_version` is now written under `polygonal_zones.schema_version`** (nested foreign member), not as a top-level key. The 0.2.33 entry described the intent as a top-level `schema_version`; the code was subsequently corrected so the location matches the companion integration's reader and `docs/ZONES_FORMAT.md`. Any file written by 0.2.33 with a top-level key is accepted on the next save (`_validate_feature_collection` treats the top-level location as a legacy fallback) and re-written with the correct nested location. The serialised format is:
