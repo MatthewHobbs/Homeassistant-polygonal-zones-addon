@@ -13,8 +13,15 @@ let zones_etag = null;
 // the beforeunload prompt below so HA's ingress shell can't silently discard
 // unsaved polygons when the user taps another sidebar entry.
 let isDirty = false;
-function mark_dirty() { isDirty = true; }
-function mark_clean() { isDirty = false; }
+function mark_dirty() { isDirty = true; update_dirty_indicator(); }
+function mark_clean() { isDirty = false; update_dirty_indicator(); }
+function update_dirty_indicator() {
+    // Visible (non-screen-reader) cue that there are unsaved changes — the
+    // beforeunload prompt only fires on navigation, which the ingress tab-switch
+    // doesn't trigger, so users had no in-page signal.
+    let dot = document.querySelector('.dirty-dot');
+    if (dot) dot.hidden = !isDirty;
+}
 
 window.addEventListener('beforeunload', (e) => {
     if (!isDirty) return;
@@ -246,6 +253,15 @@ function generate_map(zones_url) {
     let editableLayers = new L.FeatureGroup();
     map.addLayer(editableLayers);
 
+    // Loading affordance so an in-flight fetch is distinguishable from a
+    // genuinely empty zone list. Cleared by render_zone_list() on success or
+    // the error handler below.
+    let _loading_list = document.querySelector('.zone-list');
+    if (_loading_list) {
+        _loading_list.setAttribute('aria-busy', 'true');
+        _loading_list.textContent = 'Loading zones…';
+    }
+
     fetch(zones_url)
         .then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -283,7 +299,11 @@ function generate_map(zones_url) {
         .catch(err => {
             console.error('Failed to load zones:', err);
             let list = document.querySelector('.zone-list');
-            if (list) list.textContent = 'Failed to load zones — check the log.';
+            if (list) {
+                list.removeAttribute('aria-busy');
+                list.textContent =
+                    "Couldn't load zones. Check the add-on log (Settings → Add-ons → Polygonal Zones → Log).";
+            }
             create_load_btn();
         });
 
@@ -404,7 +424,12 @@ function edit_zone_event(e) {
     document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
 
     let oldName = e.detail.oldName || e.detail.name
-    let layer = editableLayers.getLayers().find(layer => layer.feature.properties.name === oldName);
+    // Match on the stable id when we have one (two zones can share a display
+    // name); fall back to name for zones from a pre-versioned file with no id.
+    let layer =
+        (e.detail.id &&
+            editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id)) ||
+        editableLayers.getLayers().find(l => l.feature.properties.name === oldName);
 
     // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
@@ -432,16 +457,33 @@ function shape_count(layer) {
 function render_zone_list() {
     let zone_list = document.querySelector('.zone-list');
     zone_list.innerHTML = '';
+    // Whatever called us has finished loading (this is also the success path of
+    // the initial fetch), so clear the loading affordance.
+    zone_list.removeAttribute('aria-busy');
     editableLayers.eachLayer(layer => {
         // render a zone-entry element and set attribute name
         let zone_entry = document.createElement('zone-entry');
         zone_entry.setAttribute('name', layer.feature.properties.name);
+        // Stable id (if present) so edit events can target the exact layer even
+        // when display names collide.
+        if (layer.feature.properties.id) {
+            zone_entry.setAttribute('zone-id', layer.feature.properties.id);
+        }
         const count = shape_count(layer);
         if (count > 1) zone_entry.setAttribute('shape-count', String(count));
         zone_entry.addEventListener('edit', edit_zone_event);
 
         zone_list.appendChild(zone_entry);
     });
+
+    // Distinct empty state — a blank list otherwise reads identically to a
+    // still-loading one.
+    if (!zone_list.children.length) {
+        let empty = document.createElement('p');
+        empty.className = 'zone-list-empty';
+        empty.textContent = 'No zones yet — draw one on the map to get started.';
+        zone_list.appendChild(empty);
+    }
 }
 
 function save_zones() {

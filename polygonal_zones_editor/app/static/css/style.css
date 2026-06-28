@@ -269,6 +269,28 @@ body {
     background-color: #c0392b !important;
 }
 
+/* Unsaved-changes cue inside the Save button. Amber dot shown while isDirty. */
+.dirty-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: #f59e0b;
+    vertical-align: middle;
+}
+
+.dirty-dot[hidden] {
+    display: none;
+}
+
+/* Empty zone-list placeholder — distinguishes "no zones" from "still loading". */
+.zone-list-empty {
+    color: var(--muted-text);
+    font-size: 0.9em;
+    margin: 8px 0;
+}
+
 
 .sub-title {
     font-size: 1.2em;
