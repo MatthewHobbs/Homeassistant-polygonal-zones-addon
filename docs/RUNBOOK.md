@@ -2,10 +2,12 @@
 
 Operational procedures for the release pipeline. For routine releases, use `scripts/release-merge.sh` or the `/release-merge` skill — this doc covers the failure modes.
 
+> Throughout this doc `vX.Y.Z` is a placeholder — substitute the version in `polygonal_zones_editor/config.yaml`. Don't copy the literal example versions during an incident.
+
 ## Normal release
 
 1. Merge the version-bump PR.
-2. Tag the merge commit: `git tag v0.2.19 && git push origin v0.2.19`.
+2. Tag the merge commit: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. `.github/workflows/release.yml` runs:
    - **matrix** — resolves the version from the tag, verifies it matches `config.yaml`, verifies a `CHANGELOG.md` entry exists, generates the arch matrix.
    - **tests** — reusable call to `test.yml` (pytest + 100% line coverage gate).
@@ -22,7 +24,7 @@ Supervisor picks up the new version within minutes via its addon-update check.
 ### Tests or lint fail after tag push
 
 - Fix the bug on `main`.
-- Bump the version (`v0.2.19` → `v0.2.20`) and re-release. Do **not** move the existing tag.
+- Bump the version (a new patch, e.g. `vX.Y.Z` → `vX.Y.(Z+1)`) and re-release. Do **not** move the existing tag.
 - Leave the original tag pointing at the broken commit — its failed release run is the historical record.
 
 ### Partial-matrix publish failure
@@ -42,7 +44,8 @@ One or more arch `Publish (<arch>)` jobs fail mid-matrix (GHCR auth timeout, rat
 **Option B — immediate rollback.** Users can pin via **Supervisor → Add-ons → Polygonal Zones → ⋮ → Rebuild** after installing a previous version from the store. From a Supervisor shell:
 
 ```sh
-ha addons update polygonal_zones --version 0.2.18
+# X.Y.Z = the last known-good version (the one before the bad release)
+ha addons update polygonal_zones --version X.Y.Z
 ```
 
 You can't delete a published ghcr.io image tag via automation; users on the broken version stay on it until they update. Cut a forward-fix version and announce it.
@@ -73,9 +76,9 @@ See the session history: `test.yml` and `lint.yml` use distinct concurrency-grou
 
 The `matrix` job fails at the version-match check. The release run dies before any image is pushed.
 
-1. Delete the bad tag: `git push --delete origin v0.2.19 && git tag -d v0.2.19`.
+1. Delete the bad tag: `git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`.
 2. Bump `config.yaml` on `main` (or in a PR), merge.
-3. Re-tag: `git tag v0.2.19 <merge-commit> && git push origin v0.2.19`.
+3. Re-tag: `git tag vX.Y.Z <merge-commit> && git push origin vX.Y.Z`.
 
 ### CHANGELOG entry missing for the tag
 
@@ -83,7 +86,7 @@ Same recovery as above — `matrix` job catches it and fails before `publish`. A
 
 ## Never do this
 
-- **Don't force-push a tag** to a different commit after any image has been pushed under it. `:latest` has been removed so there's no floating-tag drift risk, but re-publishing a different image under an existing `v0.2.19` tag breaks the reproducibility promise.
+- **Don't force-push a tag** to a different commit after any image has been pushed under it. `:latest` has been removed so there's no floating-tag drift risk, but re-publishing a different image under an existing `vX.Y.Z` tag breaks the reproducibility promise.
 - **Don't amend the version-bump commit** after tagging. Create a new commit + new tag.
 - **Don't merge non-version-bump PRs on top of an in-flight release.** They don't affect the release directly but they muddy the CHANGELOG if you need to cut a hotfix.
 
