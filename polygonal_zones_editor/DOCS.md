@@ -13,7 +13,7 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `zone_colour`     | string   | `purple`  | Colour used to render zones on the map (any CSS colour name or `#rrggbb`).                                                |
 | `theme`           | list     | `auto`    | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override.                                          |
 | `allow_all_ips`   | bool     | `false`   | When `true`, accept HTTP requests from any IP, not just the Home Assistant ingress sidecar. See **LAN access** below.     |
-| `save_token`      | password | *(empty)* | When set, `POST /save_zones` requires `X-Save-Token: <value>` for any non-ingress request. See **Securing /save_zones**.  |
+| `save_token`      | password | *(empty)* | When set, both `GET /zones.json` (reads) and `POST /save_zones` (writes) require `X-Save-Token: <value>` for any non-ingress request. See **Securing /save_zones**. |
 | `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the add-on with your own reverse proxy. |
 | `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
 
@@ -36,7 +36,9 @@ Set `allow_all_ips: true` only when the companion integration runs on a **differ
 
 ### Securing `/save_zones` (`save_token`)
 
-When `save_token` is set, the add-on requires the header `X-Save-Token: <value>` on any `POST /save_zones` request that doesn't come from HA ingress. The Save button in the add-on's UI keeps working unauthenticated because it goes through ingress.
+When `save_token` is set, the add-on requires the header `X-Save-Token: <value>` on any non-ingress request — this covers **both** `GET /zones.json` (reads) **and** `POST /save_zones` (writes), not just writes. The Save button in the add-on's UI keeps working unauthenticated because it goes through ingress.
+
+The token takes precedence over `allow_all_ips`: once it's set, LAN reads and writes need the header even with `allow_all_ips: true`. So if you set a token and then a LAN `curl` of `/zones.json` returns `401`, that's expected — add the header (see below).
 
 Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the add-on — there is no migration needed.
 
@@ -47,8 +49,12 @@ The token is **never** logged. The `Loaded options:` line at startup prints it a
 The zones are kept in `/data/polygonal_zones/zones.json` inside the container, but you don't need a shell to read them. If you have `allow_all_ips: true`:
 
 ```sh
-# Backup
+# Backup (no save_token set)
 curl http://<ha-host>:8000/zones.json > zones-backup.json
+
+# Backup (with save_token set — reads need the header too)
+curl -H 'X-Save-Token: <yourtoken>' \
+  http://<ha-host>:8000/zones.json > zones-backup.json
 
 # Restore (without save_token)
 curl -X POST -H 'Content-Type: application/json' \
@@ -129,7 +135,9 @@ After installing and starting the add-on, you can access the web interface in tw
 
 ### Saving changes
 
-**Important:** Any changes made to the zones need to be saved by pressing the **Save Button** located at the bottom of the sidebar. Unsaved changes will not be persisted between restarts.
+**Important:** Any changes made to the zones need to be saved by pressing the **Save** button located at the bottom of the sidebar. Unsaved changes will not be persisted between restarts.
+
+Whenever you have changes that haven't been written to disk yet, a small amber dot appears on the **Save** button. It clears once the save succeeds — so if you can see the dot, you still have unsaved work.
 
 ### Zones file
 
@@ -143,6 +151,12 @@ The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT
 
 - A list of all the zones is displayed in the sidebar.
 - The zones are also visualized on the map.
+- While the list is loading it shows **"Loading zones…"**. On a brand-new install with no zones yet, it shows **"No zones yet — draw one on the map to get started."** If it stays stuck on "Loading zones…", check the add-on log.
+
+#### Map style
+
+- Use the **Map style** dropdown at the top of the sidebar to change the background map: **OpenStreetMap**, **CARTO Dark**, or **Esri World Imagery** (satellite).
+- **Auto** follows your Home Assistant light/dark theme.
 
 #### Adding zones
 
@@ -155,11 +169,11 @@ The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT
 - Click the Edit Button next to a zone's name in the sidebar.
 - This will make the polygon editable on the map. Drag the points to modify the zone's shape.
 - You can also rename the zone directly in the sidebar.
-- After editing, press the Save Button next to the zone's name to save the changes.
+- When you're finished, press the **Done** button next to the zone's name. This only confirms the change in the editor — you still need to press the sidebar **Save** to write it to disk.
 
 #### Deleting zones
 
-- Click the Delete Button in the toolbar.
-- Select the zones you want to delete by clicking on them.
-- Click the Clear All Button to delete all zones at once.
-- Once you're satisfied with your selection, press the Save Button next to the delete button to confirm the deletion. Remember to also press the Save Button in the sidebar to permanently save these changes.
+- Click the Delete (trash) button in the map toolbar.
+- Select the zones you want to delete by clicking on them. (Use **Clear All** in the delete toolbar to mark every zone at once.)
+- Press **Save** in the delete toolbar to confirm the removal, or **Cancel** to back out. Note this is the map toolbar's own Save — it only updates the editor.
+- Then press the sidebar **Save** to write the change to disk.

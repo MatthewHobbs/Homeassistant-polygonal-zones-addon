@@ -50,8 +50,9 @@ The script auto-resumes if the PR is already merged (e.g. after a transient fail
 If you'd rather drive it by hand, push a `vX.Y.Z` git tag whose version matches the current `polygonal_zones_editor/config.yaml`:
 
 ```sh
-git tag v0.2.12
-git push origin v0.2.12
+# Replace X.Y.Z with the version in polygonal_zones_editor/config.yaml
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 [`.github/workflows/release.yml`](./.github/workflows/release.yml) takes over from there:
