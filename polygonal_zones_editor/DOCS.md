@@ -120,7 +120,7 @@ If you absolutely must go this route (e.g. you have no control over DNS, cannot 
 
 ## Usage
 
-### Accessing the Web Interface
+### Accessing the web interface
 
 After installing and starting the add-on, you can access the web interface in two ways:
 
@@ -131,7 +131,7 @@ After installing and starting the add-on, you can access the web interface in tw
 
 **Important:** Any changes made to the zones need to be saved by pressing the **Save Button** located at the bottom of the sidebar. Unsaved changes will not be persisted between restarts.
 
-### Zones File
+### Zones file
 
 The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads this file. See the **Backing up / restoring zones with curl** section for the recommended backup workflow.
 
