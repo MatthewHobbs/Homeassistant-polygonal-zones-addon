@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 — 2026-07-04
+
+Security-only release. No functional or contract changes.
+
+### Security
+
+- **Bundled `tempio` rebuilt to clear inherited CVEs (#21).** The stock `/usr/bin/tempio` in the HA base image (including the Alpine 3.21 base) is built against `golang.org/x/crypto` 0.26.0 on Go 1.23.3, which scanners flag for 64 CVEs (1 critical, 26 high — all in the unused `crypto/ssh` path plus Go stdlib). The Dockerfile now rebuilds tempio from a pinned upstream commit on Go 1.26 with `x/crypto` ≥ 0.52.0 and overwrites the base image's copy. Trivy reports **0 vulnerabilities** on the resulting image across OS packages, Python packages, and the tempio binary. The stage self-removes once a patched tempio ships in the base image (tracking [home-assistant/tempio#132](https://github.com/home-assistant/tempio/issues/132)).
+
 ## 0.3.0 — 2026-06-28
 
 Editor UX overhaul, a base-image platform bump (Python 3.11 → 3.12), and the nested-`schema_version` correction. No new `zones.json` contract beyond the fix below.
