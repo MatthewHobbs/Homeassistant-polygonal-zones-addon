@@ -218,6 +218,43 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
+                  # Every zone shows its measured area. Cheap sanity check on a
+                  # hand-drawn shape — a room-sized figure on something meant
+                  # to be a property boundary is obvious in the list and
+                  # invisible on the map.
+                  area_text = await page.evaluate(
+                      "() => Array.from(document.querySelectorAll('zone-entry'))"
+                      ".map(z => z.shadowRoot.querySelector('.zone-area')?.textContent || '')"
+                      ".filter(t => t.trim()).join('|')"
+                  )
+                  if not any(u in area_text for u in ("m\u00b2", "ha")):
+                      print(f"FAIL expected an area figure on each zone; got: {area_text!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # The tracker overlay must stay completely silent when
+                  # overlay_entities is unset, which is the default and what
+                  # this smoke runs with. A visible panel here would mean the
+                  # opt-out had regressed.
+                  overlay_hidden = await page.evaluate(
+                      "() => document.querySelector('.tracker-readout')?.hidden !== false"
+                  )
+                  if not overlay_hidden:
+                      print("FAIL tracker readout is visible with overlay_entities unset")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
+                  # ...and the endpoint that feeds it says so explicitly, rather
+                  # than 404ing or returning an empty list that the client
+                  # cannot distinguish from "configured but nothing to show".
+                  overlay_body = await page.evaluate(
+                      "async () => (await (await fetch('./trackers.json')).json())"
+                  )
+                  if overlay_body != {"configured": False, "trackers": []}:
+                      print(f"FAIL unexpected /trackers.json body: {overlay_body!r}")
+                      for e in errors: print(" -", e)
+                      sys.exit(1)
+
                   # A11y regression guard (#116). The leaflet-draw toolbar
                   # anchors are patched post-addControl to mirror their
                   # title= into aria-label (WCAG 2.2 SC 4.1.2). The

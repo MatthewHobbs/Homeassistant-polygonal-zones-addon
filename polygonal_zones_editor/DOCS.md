@@ -83,6 +83,60 @@ etag=$(awk -F': ' '/^ETag: /{print $2}' headers1.txt | tr -d '\r')
 curl -I -H "If-None-Match: $etag" http://<ha-host>:8000/zones.json
 ```
 
+## Plotting live positions on the map (`overlay_entities`)
+
+Drawing a zone accurately is guesswork if you cannot see what it is supposed to
+classify. `overlay_entities` lets the editor plot live tracker positions over
+the map, so you can see whether a device actually falls inside a boundary — and
+by how much.
+
+It is **empty by default**, and while it is empty this add-on asks Home
+Assistant for nothing at all.
+
+```yaml
+overlay_entities:
+  - device_tracker.my_car
+  - device_tracker.the_van
+```
+
+When configured, each device appears on the map as a marker with a dashed ring
+showing its reported GPS accuracy, and the sidebar lists which zones it is
+inside and how far it sits from their edges.
+
+That readout **measures; it does not predict**. It will tell you a device is
+"3.8 m outside Annex (within its accuracy)" — it will not tell you which zone
+the integration is going to report, because that decision is made by the
+integration using rules that are deliberately not duplicated here. Two
+implementations of the same rule drift, and an editor that is confidently wrong
+about a verdict is worse than one that offers none.
+
+Each entity is fetched from Home Assistant and reduced to five fields —
+entity id, friendly name, state, coordinates and GPS accuracy. Every other
+attribute is discarded here, so it never reaches the browser. Coordinates are
+rounded to four decimal places (about 11 m), which is finer than any boundary
+you can place by hand and avoids putting sub-millimetre positions into a
+response.
+
+### Before you add people
+
+The positions are served from `GET /trackers.json`, which is reachable from
+your LAN whenever `allow_all_ips` is on, protected by the same rules as
+`/zones.json` (ingress, or `save_token`, or the IP allowlist). List only what
+you are content to expose on those terms. Vehicles are the intended case; a
+household member's phone is a decision to make deliberately, and ideally with
+them.
+
+At most 25 entities are fetched, and anything that is not a valid entity id is
+ignored with a warning in the log rather than silently rewritten.
+
+### Why the add-on now requests `homeassistant_api`
+
+Reading those states needs Home Assistant's state API, so `config.yaml` sets
+`homeassistant_api: true`. That grants the add-on API access in general — this
+add-on uses it *only* to read the entities you list above, and requests nothing
+when the list is empty. If you would rather not grant it, leave
+`overlay_entities` empty; nothing else in the add-on depends on it.
+
 ## Integration with the Polygonal Zones HA integration
 
 The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this add-on. It fetches the zones file at **startup** and again whenever you call the `reload_zones` action — it does not poll on a schedule. On a standard single-host install the integration reaches the add-on through ingress and no extra network configuration is needed. If the integration runs on a **different host or container**, set `allow_all_ips: true` so its `GET /zones.json` requests are accepted.

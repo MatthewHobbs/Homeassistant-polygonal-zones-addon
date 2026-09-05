@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0 — 2026-09-05
+
+- **New: the zone list shows each zone's area.** A room-sized figure on
+  something meant to be a property boundary is obvious in the list and
+  invisible on the map. Shown in m² up to a hectare, then in hectares.
+- **New: live tracker overlay.** With `overlay_entities` set, the editor plots
+  those devices on the map with their GPS accuracy rings, and lists for each
+  one which zones it is inside and how far it is from their edges — so a
+  boundary that misclassifies a device is visible while you draw rather than
+  inferred afterwards from a log.
+  - The readout **measures, it does not predict.** It reports distances; it
+    never claims which zone the integration will report. Those rules live in
+    the integration, and a second implementation here would drift from them.
+
+- **New: plot live tracker positions on the map.** Set `overlay_entities` to a
+  list of entity ids and the editor can show where those devices actually are
+  while you draw, so a boundary that misclassifies something is visible rather
+  than inferred. Empty by default — with it empty the add-on asks Home
+  Assistant for nothing.
+- **New option `overlay_entities`** and a matching `GET /trackers.json`
+  endpoint, gated by the same rules as `/zones.json`. Only the listed entities
+  are ever requested; each is reduced to five fields and its coordinates
+  rounded to ~11 m before leaving the add-on.
+- **The add-on now requests `homeassistant_api`.** Required to read those
+  states. Used only for the entities you list; leave the list empty and nothing
+  is requested.
+- **Internal:** `GET /zones.json` no longer reads the zones file on the event
+  loop — a slow or contended disk previously stalled every concurrent request.
+- **Internal:** ruff now runs in CI, matching the companion integration's rule
+  set, and the findings it surfaced are fixed.
+
+
 ## 0.3.1 — 2026-07-04
 
 Security-only release. No functional or contract changes.

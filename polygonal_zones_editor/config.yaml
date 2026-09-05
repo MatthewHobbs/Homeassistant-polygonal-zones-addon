@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.3.1"
+version: "0.4.0"
 slug: "polygonal_zones"
 url: "https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/tree/main/polygonal_zones_editor"
 # Image integrity: published images carry a Sigstore build-provenance
@@ -35,8 +35,15 @@ ingress_port: 8000
 ports:
   8000/tcp: null
 
+# Read-only access to Home Assistant's state API, used by /trackers.json to
+# plot live tracker positions over the map. Only entities named in
+# `overlay_entities` are ever requested, and that list is empty by default —
+# with it empty the add-on asks Home Assistant for nothing at all.
+homeassistant_api: true
+
 options:
   allow_all_ips: false
+  overlay_entities: []
   zone_colour: purple
   trusted_proxies: ""
   log_level: info
@@ -44,6 +51,13 @@ options:
   theme: auto
 schema:
   allow_all_ips: bool
+  # Entity ids to plot on the map (e.g. device_tracker.my_car). Empty by
+  # default: nothing is fetched or displayed until you name something here.
+  # These positions are returned by /trackers.json, which is reachable on your
+  # LAN whenever allow_all_ips is on — so list only what you are content to
+  # expose there, and prefer vehicles over people.
+  overlay_entities:
+    - str?
   # Accept CSS colour names (letters only) or hex values of 3/4/6/8 hex
   # digits. Tightening this prevents Supervisor from accepting empty
   # strings or rgb()/hsl() function notation that neither the backend nor
