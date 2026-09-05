@@ -203,7 +203,7 @@ function setup_tracker_overlay(mapInstance) {
             pz_render_markers();
             pz_render_readout();
 
-            ['pz:zoneschanged', 'draw:edited', 'draw:created', 'draw:deleted']
+            ['pz:zoneschanged', 'pm:create', 'pm:remove', 'pm:edit', 'pm:update']
                 .forEach((evt) => mapInstance.on(evt, pz_schedule_measure));
         })
         .catch((err) => {
