@@ -19,6 +19,13 @@ const ZONE_ENTRY_CSS = `
         margin-left: 0.5ch;
     }
 
+    .zone-area {
+        opacity: 0.6;
+        font-size: 0.85em;
+        font-weight: normal;
+        font-variant-numeric: tabular-nums;
+    }
+
     .zone-entry {
         width: 100%;
         margin-top: 2px;
@@ -96,12 +103,13 @@ class ZoneEntry extends HTMLElement {
         this.attachShadow({mode: 'open'});
         if (ZONE_ENTRY_SHEET) this.shadowRoot.adoptedStyleSheets = [ZONE_ENTRY_SHEET];
 
-        // listen to changes of attributes that affect render: editing state
-        // and the shape-count indicator.
+        // listen to changes of attributes that affect render: editing state,
+        // the shape-count indicator, and the measured area.
         this._observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 if (mutation.attributeName === 'editing'
-                    || mutation.attributeName === 'shape-count') {
+                    || mutation.attributeName === 'shape-count'
+                    || mutation.attributeName === 'area-m2') {
                     this.render(this.getAttribute('editing') === 'true');
                 }
             });
@@ -128,7 +136,7 @@ class ZoneEntry extends HTMLElement {
             <div class="zone-entry ${editing ? 'editing' : ''}">
                 <div class="header">
                     <span>
-                        <span class="zone-name"></span><span class="shape-count"></span>
+                        <span class="zone-name"></span><span class="shape-count"></span><span class="zone-area"></span>
                     </span>
                     <span class="edit-btn-container"></span>
                 </div>
@@ -158,6 +166,18 @@ class ZoneEntry extends HTMLElement {
             this.shadowRoot.querySelector('.shape-count').textContent =
                 ` (${shape_count} shapes)`;
         }
+        // Area is a sanity check on a hand-drawn shape: a room-sized figure on
+        // something meant to be a property boundary is obvious here and
+        // invisible on the map. Rendered in whole m2 up to a hectare, then in
+        // hectares — 12483 m2 is harder to read than 1.25 ha.
+        const area = parseFloat(this.getAttribute('area-m2') ?? '');
+        const area_el = this.shadowRoot.querySelector('.zone-area');
+        if (area_el && Number.isFinite(area) && area > 0) {
+            area_el.textContent = area >= 10000
+                ? ` · ${(area / 10000).toFixed(2)} ha`
+                : ` · ${Math.round(area)} m²`;
+        }
+
         let input = this.shadowRoot.querySelector('input');
         if (input) input.value = name;
 

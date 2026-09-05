@@ -307,6 +307,10 @@ function generate_map(zones_url) {
             create_load_btn();
         });
 
+    // Opt-in tracker overlay. Resolves to nothing when overlay_entities is
+    // unset, which is the default.
+    if (typeof setup_tracker_overlay === 'function') setup_tracker_overlay(map);
+
     return {map, editableLayers};
 }
 
@@ -471,10 +475,20 @@ function render_zone_list() {
         }
         const count = shape_count(layer);
         if (count > 1) zone_entry.setAttribute('shape-count', String(count));
+        // Area is the cheapest sanity check there is on a hand-drawn zone: a
+        // room-sized number on something meant to be a property boundary is
+        // obvious at a glance and invisible on the map itself.
+        if (typeof pz_layer_area_m2 === 'function') {
+            const area = pz_layer_area_m2(layer);
+            if (area > 0) zone_entry.setAttribute('area-m2', String(Math.round(area)));
+        }
         zone_entry.addEventListener('edit', edit_zone_event);
 
         zone_list.appendChild(zone_entry);
     });
+
+    // Let the tracker overlay (if any) re-measure against the new shapes.
+    if (map && typeof map.fire === 'function') map.fire('pz:zoneschanged');
 
     // Distinct empty state — a blank list otherwise reads identically to a
     // still-loading one.

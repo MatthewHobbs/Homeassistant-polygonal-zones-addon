@@ -56,6 +56,8 @@
             <h2> Zones </h2>
             <div class="zone-list"></div>
         </div>
+        <!-- Populated only when overlay_entities is configured; stays hidden otherwise. -->
+        <div class="tracker-readout" hidden></div>
         <button class="save-btn btn" type="button">
             <span class="dirty-dot" hidden aria-hidden="true"></span>Save
         </button>
@@ -64,6 +66,7 @@
     </div>
 </div>
 
+<script src="./js/geometry.js"></script>
 <script src="./js/helpers.js"></script>
 <script src="./js/zone-entry.js"></script>
 <script src="./js/storage.js"></script>
@@ -71,5 +74,6 @@
 <script src="./js/ui-state.js"></script>
 <script src="./js/sidebar-toggle.js"></script>
 <script src="./js/map.js"></script>
+<script src="./js/trackers.js"></script>
 </body>
 </html>

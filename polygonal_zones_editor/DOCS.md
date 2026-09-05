@@ -99,6 +99,17 @@ overlay_entities:
   - device_tracker.the_van
 ```
 
+When configured, each device appears on the map as a marker with a dashed ring
+showing its reported GPS accuracy, and the sidebar lists which zones it is
+inside and how far it sits from their edges.
+
+That readout **measures; it does not predict**. It will tell you a device is
+"3.8 m outside Annex (within its accuracy)" — it will not tell you which zone
+the integration is going to report, because that decision is made by the
+integration using rules that are deliberately not duplicated here. Two
+implementations of the same rule drift, and an editor that is confidently wrong
+about a verdict is worse than one that offers none.
+
 Each entity is fetched from Home Assistant and reduced to five fields —
 entity id, friendly name, state, coordinates and GPS accuracy. Every other
 attribute is discarded here, so it never reaches the browser. Coordinates are

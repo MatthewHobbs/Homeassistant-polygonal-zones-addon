@@ -2,6 +2,18 @@
 
 ## 0.4.0 — 2026-09-05
 
+- **New: the zone list shows each zone's area.** A room-sized figure on
+  something meant to be a property boundary is obvious in the list and
+  invisible on the map. Shown in m² up to a hectare, then in hectares.
+- **New: live tracker overlay.** With `overlay_entities` set, the editor plots
+  those devices on the map with their GPS accuracy rings, and lists for each
+  one which zones it is inside and how far it is from their edges — so a
+  boundary that misclassifies a device is visible while you draw rather than
+  inferred afterwards from a log.
+  - The readout **measures, it does not predict.** It reports distances; it
+    never claims which zone the integration will report. Those rules live in
+    the integration, and a second implementation here would drift from them.
+
 - **New: plot live tracker positions on the map.** Set `overlay_entities` to a
   list of entity ids and the editor can show where those devices actually are
   while you draw, so a boundary that misclassifies something is visible rather
