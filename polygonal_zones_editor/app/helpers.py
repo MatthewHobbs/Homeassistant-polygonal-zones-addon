@@ -51,7 +51,7 @@ def allow_all_ips(options: dict) -> bool:
     fragile and surprising, and the shipped s6 service invokes the app with no
     such flags. Configure via the add-on's ``allow_all_ips`` option instead.
     """
-    return bool(options.get('allow_all_ips', False))
+    return bool(options.get("allow_all_ips", False))
 
 
 def allowed_ip(request: Request) -> bool:
@@ -80,10 +80,10 @@ def atomic_write_json(path: str, data) -> None:
     (overlayfs as used by HA OS, vfat, tmpfs) the rename may not be
     persisted to the directory inode before power is lost.
     """
-    directory = os.path.dirname(path) or '.'
-    fd, tmp_path = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=directory)
+    directory = os.path.dirname(path) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f)
             f.flush()
             os.fsync(f.fileno())
@@ -123,6 +123,8 @@ def load_options() -> dict:
         _LOGGER.exception("Failed to read %s; starting with default options.", OPTIONS_FILE)
         return {}
     if not isinstance(loaded, dict):
-        _LOGGER.warning("%s did not contain a JSON object; starting with default options.", OPTIONS_FILE)
+        _LOGGER.warning(
+            "%s did not contain a JSON object; starting with default options.", OPTIONS_FILE
+        )
         return {}
     return loaded

@@ -11,6 +11,7 @@ def reset_save_rate_limit():
     """Each test gets a clean rate-limit state. Without this, accumulated
     failures leak between tests and later suites spuriously hit 429."""
     import main
+
     main._save_failures.clear()
     yield
     main._save_failures.clear()
@@ -120,9 +121,7 @@ def test_zones_json_returns_304_on_wildcard_if_none_match(allow_all_client, tmp_
 
 def test_zones_json_returns_200_on_stale_if_none_match(allow_all_client, tmp_zones_file):
     """If the client's cached ETag doesn't match, serve the full body."""
-    r = allow_all_client.get(
-        "/zones.json", headers={"If-None-Match": '"notarealtag"'}
-    )
+    r = allow_all_client.get("/zones.json", headers={"If-None-Match": '"notarealtag"'})
     assert r.status_code == 200
     assert r.headers.get("etag") != '"notarealtag"'
     assert b"FeatureCollection" in r.content
@@ -243,14 +242,16 @@ def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_fil
     stable_id = "aaaa1111bbbb2222cccc3333dddd4444"
     payload = {
         "type": "FeatureCollection",
-        "features": [{
-            "type": "Feature",
-            "properties": {"name": "Home", "id": stable_id},
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
-            },
-        }],
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Home", "id": stable_id},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
     }
     r = allow_all_client.post("/save_zones", json=payload)
     assert r.status_code == 200
@@ -259,7 +260,8 @@ def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_fil
 
 
 def test_save_zones_backfills_missing_id_and_non_dict_properties(
-    allow_all_client, tmp_zones_file,
+    allow_all_client,
+    tmp_zones_file,
 ):
     """Feature with properties=null (allowed on input) gets a fresh
     properties dict carrying a backfilled id. Feature with an empty id
@@ -337,14 +339,16 @@ def test_save_zones_rejects_non_int_nested_schema_version(allow_all_client, tmp_
 def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
     payload = {
         "type": "FeatureCollection",
-        "features": [{
-            "type": "Feature",
-            "properties": {"name": "x", "id": 42},
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
-            },
-        }],
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "x", "id": 42},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
     }
     r = allow_all_client.post("/save_zones", json=payload)
     assert r.status_code == 422
@@ -354,14 +358,16 @@ def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
 def test_save_zones_rejects_empty_id(allow_all_client, tmp_zones_file):
     payload = {
         "type": "FeatureCollection",
-        "features": [{
-            "type": "Feature",
-            "properties": {"name": "x", "id": ""},
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
-            },
-        }],
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "x", "id": ""},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
     }
     r = allow_all_client.post("/save_zones", json=payload)
     assert r.status_code == 422
@@ -393,26 +399,49 @@ def test_save_zones_rejects_non_geojson(allow_all_client, tmp_zones_file):
     assert tmp_zones_file.read_text() == original
 
 
-@pytest.mark.parametrize("payload", [
-    # Top-level not a FeatureCollection.
-    [],
-    "string",
-    42,
-    # Features not a list.
-    {"type": "FeatureCollection", "features": "oops"},
-    # Feature is not a dict.
-    {"type": "FeatureCollection", "features": ["not a dict"]},
-    # Feature missing 'type' key (treated as wrong type).
-    {"type": "FeatureCollection", "features": [{"geometry": {"type": "Polygon", "coordinates": []}}]},
-    # Geometry not a dict.
-    {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": "oops"}]},
-    # Geometry type not in Polygon/MultiPolygon.
-    {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}}]},
-    # Coordinates not a list.
-    {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": "oops"}}]},
-    # Properties is a non-None non-dict value.
-    {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": "oops", "geometry": {"type": "Polygon", "coordinates": []}}]},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # Top-level not a FeatureCollection.
+        [],
+        "string",
+        42,
+        # Features not a list.
+        {"type": "FeatureCollection", "features": "oops"},
+        # Feature is not a dict.
+        {"type": "FeatureCollection", "features": ["not a dict"]},
+        # Feature missing 'type' key (treated as wrong type).
+        {
+            "type": "FeatureCollection",
+            "features": [{"geometry": {"type": "Polygon", "coordinates": []}}],
+        },
+        # Geometry not a dict.
+        {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": "oops"}]},
+        # Geometry type not in Polygon/MultiPolygon.
+        {
+            "type": "FeatureCollection",
+            "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}}],
+        },
+        # Coordinates not a list.
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": "oops"}}
+            ],
+        },
+        # Properties is a non-None non-dict value.
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": "oops",
+                    "geometry": {"type": "Polygon", "coordinates": []},
+                }
+            ],
+        },
+    ],
+)
 def test_save_zones_rejects_malformed_shapes(allow_all_client, tmp_zones_file, payload):
     original = tmp_zones_file.read_text()
     response = allow_all_client.post("/save_zones", json=payload)
@@ -432,46 +461,83 @@ def _polygon(coords):
     return {"type": "Polygon", "coordinates": coords}
 
 
-@pytest.mark.parametrize("payload,expect_detail_contains", [
-    # Ring integrity
-    (_feature(_polygon([[[0, 0], [1, 0], [1, 1]]])),
-        "at least 4 positions"),
-    (_feature(_polygon([[[0, 0], [1, 0], [1, 1], [2, 2]]])),
-        "not closed"),
-    (_feature(_polygon("oops")),
-        "Polygon coordinates must be a list"),
-    (_feature(_polygon([])),
-        "Polygon must have at least one ring"),
-    (_feature(_polygon([[[0, 0], [1, 0], [1, 1], "oops"]])),
-        "position must be a list"),
-    # Ring itself isn't a list (Polygon.coordinates contains a non-list).
-    (_feature(_polygon(["oops"])),
-        "ring must be a list"),
-    # Coordinate ranges
-    (_feature(_polygon([[[181, 0], [1, 0], [1, 1], [181, 0]]])),
-        "longitude out of range"),
-    (_feature(_polygon([[[0, 91], [1, 0], [1, 1], [0, 91]]])),
-        "latitude out of range"),
-    # Non-numeric coordinates — bool is explicitly rejected even though it
-    # subclasses int in Python (True == 1, False == 0 would otherwise pass).
-    (_feature(_polygon([[[True, 0], [1, 0], [1, 1], [True, 0]]])),
-        "longitude must be a number"),
-    (_feature(_polygon([[["oops", 0], [1, 0], [1, 1], ["oops", 0]]])),
-        "longitude must be a number"),
-    # MultiPolygon shape
-    ({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}, "geometry": {"type": "MultiPolygon", "coordinates": "oops"}}]},
-        "MultiPolygon coordinates must be a list"),
-    ({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}, "geometry": {"type": "MultiPolygon", "coordinates": []}}]},
-        "MultiPolygon must have at least one polygon"),
-    # Geometry type
-    (_feature({"type": "LineString", "coordinates": [[0, 0], [1, 1]]}),
-        "Polygon or MultiPolygon"),
-    # Properties shape
-    ({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": "oops", "geometry": _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]])}]},
-        "properties: must be a dict"),
-])
+@pytest.mark.parametrize(
+    "payload,expect_detail_contains",
+    [
+        # Ring integrity
+        (_feature(_polygon([[[0, 0], [1, 0], [1, 1]]])), "at least 4 positions"),
+        (_feature(_polygon([[[0, 0], [1, 0], [1, 1], [2, 2]]])), "not closed"),
+        (_feature(_polygon("oops")), "Polygon coordinates must be a list"),
+        (_feature(_polygon([])), "Polygon must have at least one ring"),
+        (_feature(_polygon([[[0, 0], [1, 0], [1, 1], "oops"]])), "position must be a list"),
+        # Ring itself isn't a list (Polygon.coordinates contains a non-list).
+        (_feature(_polygon(["oops"])), "ring must be a list"),
+        # Coordinate ranges
+        (_feature(_polygon([[[181, 0], [1, 0], [1, 1], [181, 0]]])), "longitude out of range"),
+        (_feature(_polygon([[[0, 91], [1, 0], [1, 1], [0, 91]]])), "latitude out of range"),
+        # Non-numeric coordinates — bool is explicitly rejected even though it
+        # subclasses int in Python (True == 1, False == 0 would otherwise pass).
+        (
+            _feature(_polygon([[[True, 0], [1, 0], [1, 1], [True, 0]]])),
+            "longitude must be a number",
+        ),
+        (
+            _feature(_polygon([[["oops", 0], [1, 0], [1, 1], ["oops", 0]]])),
+            "longitude must be a number",
+        ),
+        # MultiPolygon shape
+        (
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {},
+                        "geometry": {"type": "MultiPolygon", "coordinates": "oops"},
+                    }
+                ],
+            },
+            "MultiPolygon coordinates must be a list",
+        ),
+        (
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {},
+                        "geometry": {"type": "MultiPolygon", "coordinates": []},
+                    }
+                ],
+            },
+            "MultiPolygon must have at least one polygon",
+        ),
+        # Geometry type
+        (
+            _feature({"type": "LineString", "coordinates": [[0, 0], [1, 1]]}),
+            "Polygon or MultiPolygon",
+        ),
+        # Properties shape
+        (
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": "oops",
+                        "geometry": _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]]),
+                    }
+                ],
+            },
+            "properties: must be a dict",
+        ),
+    ],
+)
 def test_save_zones_rejects_invalid_geometry_with_detail(
-    allow_all_client, tmp_zones_file, payload, expect_detail_contains,
+    allow_all_client,
+    tmp_zones_file,
+    payload,
+    expect_detail_contains,
 ):
     original = tmp_zones_file.read_text()
     r = allow_all_client.post("/save_zones", json=payload)
@@ -589,7 +655,9 @@ def test_save_zones_accepts_null_properties(allow_all_client, tmp_zones_file):
 
 
 def test_save_zones_rejects_body_over_cap_with_small_content_length(
-    allow_all_client, tmp_zones_file, monkeypatch,
+    allow_all_client,
+    tmp_zones_file,
+    monkeypatch,
 ):
     """Client lies about Content-Length — header says small, body is large.
     The pre-read gate (content-length check) passes, but the post-read
@@ -632,7 +700,8 @@ def test_save_zones_rejects_non_string_name(allow_all_client, tmp_zones_file):
 def test_save_zones_rejects_invalid_json(allow_all_client, tmp_zones_file):
     original = tmp_zones_file.read_text()
     response = allow_all_client.post(
-        "/save_zones", content=b"not json",
+        "/save_zones",
+        content=b"not json",
         headers={"content-type": "application/json"},
     )
     assert response.status_code == 400
@@ -643,7 +712,8 @@ def test_save_zones_rejects_oversize_payload(allow_all_client, tmp_zones_file):
     original = tmp_zones_file.read_text()
     huge = "x" * (512 * 1024 + 1)
     response = allow_all_client.post(
-        "/save_zones", content=huge.encode(),
+        "/save_zones",
+        content=huge.encode(),
         headers={"content-type": "application/json"},
     )
     assert response.status_code == 413
@@ -791,6 +861,7 @@ def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
     app, _ = main.generate_app({"save_token": "sekrit"})
     client = TestClient(app)
     import helpers
+
     original_allowed_ip_helpers = helpers.allowed_ip
     original_allowed_ip_main = main.allowed_ip
     try:
@@ -816,6 +887,7 @@ def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
     # TestClient doesn't expose a way to set request.client.host directly, so
     # we monkeypatch allowed_ip to confirm the bypass works in principle.
     import helpers
+
     original_allowed_ip = helpers.allowed_ip
     main_allowed_ip = main.allowed_ip
     try:
@@ -933,9 +1005,7 @@ def test_security_headers_applied(allow_all_client):
     assert "https://*.tile.openstreetmap.org" in csp
     assert "https://*.basemaps.cartocdn.com" in csp
     img_src_sources = next(
-        d.strip().split()
-        for d in csp.split(";")
-        if d.strip().startswith("img-src")
+        d.strip().split() for d in csp.split(";") if d.strip().startswith("img-src")
     )
     assert any(t == "https://server.arcgisonline.com" for t in img_src_sources)
 
@@ -1085,7 +1155,8 @@ def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_facto
 
 
 def test_zones_json_returns_401_when_save_token_set_and_no_header(
-    app_factory, tmp_zones_file,
+    app_factory,
+    tmp_zones_file,
 ):
     """With save_token set and allow_all_ips off, a non-ingress GET with
     no X-Save-Token header returns 401 (token required) rather than 403
@@ -1101,7 +1172,8 @@ def test_zones_json_returns_401_when_save_token_set_and_no_header(
 
 
 def test_zones_json_token_unlocks_lan_without_allow_all_ips(
-    app_factory, tmp_zones_file,
+    app_factory,
+    tmp_zones_file,
 ):
     """Mirror of test_save_token_works_without_allow_all_ips for reads.
     save_token is the stronger signal; setting it should unlock LAN
@@ -1115,22 +1187,27 @@ def test_zones_json_token_unlocks_lan_without_allow_all_ips(
 
 def test_parse_trusted_proxies_handles_empty_and_list(app_factory):
     import main
+
     assert main._parse_trusted_proxies({}) == []
     assert main._parse_trusted_proxies({"trusted_proxies": ""}) == []
     assert main._parse_trusted_proxies({"trusted_proxies": "10.0.0.5"}) == ["10.0.0.5"]
-    assert main._parse_trusted_proxies(
-        {"trusted_proxies": " 192.168.1.1 ,10.0.0.5 "}
-    ) == ["192.168.1.1", "10.0.0.5"]
+    assert main._parse_trusted_proxies({"trusted_proxies": " 192.168.1.1 ,10.0.0.5 "}) == [
+        "192.168.1.1",
+        "10.0.0.5",
+    ]
 
 
-@pytest.mark.parametrize("dangerous", [
-    "*",
-    "0.0.0.0",
-    "0.0.0.0/0",
-    "::",
-    "::/0",
-    "172.30.32.2",
-])
+@pytest.mark.parametrize(
+    "dangerous",
+    [
+        "*",
+        "0.0.0.0",
+        "0.0.0.0/0",
+        "::",
+        "::/0",
+        "172.30.32.2",
+    ],
+)
 def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dangerous):
     """Wildcards and the ingress IP must never be handed to uvicorn's
     forwarded_allow_ips — doing so lets any on-path attacker forge
@@ -1164,12 +1241,15 @@ def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplo
     assert "*" in messages
 
 
-@pytest.mark.parametrize("supernet", [
-    "172.30.32.0/24",   # direct containing /24
-    "172.30.0.0/16",    # broader
-    "172.0.0.0/8",      # even broader
-    "128.0.0.0/1",      # upper half of IPv4 (172.30.32.2 lives here)
-])
+@pytest.mark.parametrize(
+    "supernet",
+    [
+        "172.30.32.0/24",  # direct containing /24
+        "172.30.0.0/16",  # broader
+        "172.0.0.0/8",  # even broader
+        "128.0.0.0/1",  # upper half of IPv4 (172.30.32.2 lives here)
+    ],
+)
 def test_parse_trusted_proxies_drops_ingress_supernets(app_factory, caplog, supernet):
     """A CIDR that contains the ingress IP (172.30.32.2) is the same
     mistake as listing the ingress IP directly — the attacker forges
@@ -1222,7 +1302,8 @@ def test_parse_trusted_proxies_rejects_unparseable_entries(app_factory, caplog):
 
 
 def test_save_with_if_match_on_missing_file_omits_current_etag(
-    app_factory, tmp_zones_file,
+    app_factory,
+    tmp_zones_file,
 ):
     """When the zones file is unreadable at etag-check time, the 412
     body omits `current_etag` entirely (rather than returning
@@ -1259,11 +1340,15 @@ def _ha_state(entity_id, lat, lon, acc=8, name="Thing", state="home"):
         "entity_id": entity_id,
         "state": state,
         "attributes": {
-            "latitude": lat, "longitude": lon, "gps_accuracy": acc,
+            "latitude": lat,
+            "longitude": lon,
+            "gps_accuracy": acc,
             "friendly_name": name,
             # A real state object carries far more than the map needs; the
             # route must drop all of it rather than pass it through.
-            "battery_level": 42, "source_type": "gps", "secret_note": "private",
+            "battery_level": 42,
+            "source_type": "gps",
+            "secret_note": "private",
         },
     }
 
@@ -1271,39 +1356,57 @@ def _ha_state(entity_id, lat, lon, acc=8, name="Thing", state="home"):
 def test_overlay_entities_empty_by_default():
     """Opt-in: with no option set, nothing is ever requested or returned."""
     import main
+
     assert main.overlay_entities({}) == []
 
 
-@pytest.mark.parametrize("raw,expected", [
-    (["device_tracker.a"], ["device_tracker.a"]),
-    ("device_tracker.a, device_tracker.b", ["device_tracker.a", "device_tracker.b"]),
-    ("device_tracker.a\ndevice_tracker.b", ["device_tracker.a", "device_tracker.b"]),
-    (["device_tracker.a", "device_tracker.a"], ["device_tracker.a"]),
-    (["  device_tracker.a  ", ""], ["device_tracker.a"]),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (["device_tracker.a"], ["device_tracker.a"]),
+        ("device_tracker.a, device_tracker.b", ["device_tracker.a", "device_tracker.b"]),
+        ("device_tracker.a\ndevice_tracker.b", ["device_tracker.a", "device_tracker.b"]),
+        (["device_tracker.a", "device_tracker.a"], ["device_tracker.a"]),
+        (["  device_tracker.a  ", ""], ["device_tracker.a"]),
+    ],
+)
 def test_overlay_entities_accepts_list_or_string(raw, expected):
     import main
+
     assert main.overlay_entities({"overlay_entities": raw}) == expected
 
 
-@pytest.mark.parametrize("bad", [
-    "../../secret", "device_tracker.a/../b", "device_tracker.a?x=1",
-    "DEVICE_TRACKER.A", "nodot", "device_tracker.", ".a", "device_tracker.a b",
-    "device_tracker.a#frag", "http://evil/x",
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../../secret",
+        "device_tracker.a/../b",
+        "device_tracker.a?x=1",
+        "DEVICE_TRACKER.A",
+        "nodot",
+        "device_tracker.",
+        ".a",
+        "device_tracker.a b",
+        "device_tracker.a#frag",
+        "http://evil/x",
+    ],
+)
 def test_overlay_entities_rejects_anything_not_an_entity_id(bad):
     """These ids end up in a URL path — only HA's own shape is accepted."""
     import main
+
     assert main.overlay_entities({"overlay_entities": [bad]}) == []
 
 
 def test_overlay_entities_rejects_non_list_option():
     import main
+
     assert main.overlay_entities({"overlay_entities": {"a": 1}}) == []
 
 
 def test_overlay_entities_capped():
     import main
+
     many = [f"device_tracker.d{i}" for i in range(main.MAX_OVERLAY_ENTITIES + 5)]
     assert len(main.overlay_entities({"overlay_entities": many})) == main.MAX_OVERLAY_ENTITIES
 
@@ -1311,28 +1414,40 @@ def test_overlay_entities_capped():
 def test_overlay_point_keeps_only_map_fields_and_rounds():
     """Everything the map doesn't need is dropped before it crosses the wire."""
     import main
+
     p = main._overlay_point(
         "device_tracker.a",
         _ha_state("device_tracker.a", 51.947133802662975, -0.6274616792121955, 2.34),
     )
     assert p == {
-        "entity_id": "device_tracker.a", "name": "Thing", "state": "home",
-        "latitude": 51.9471, "longitude": -0.6275, "gps_accuracy": 2.3,
+        "entity_id": "device_tracker.a",
+        "name": "Thing",
+        "state": "home",
+        "latitude": 51.9471,
+        "longitude": -0.6275,
+        "gps_accuracy": 2.3,
     }
     assert "battery_level" not in p and "secret_note" not in p
 
 
-@pytest.mark.parametrize("payload", [
-    None, "not a dict", {}, {"attributes": "not a dict"},
-    {"attributes": {}},
-    {"attributes": {"latitude": 1}},
-    {"attributes": {"latitude": "51.9", "longitude": -0.6}},
-    {"attributes": {"latitude": True, "longitude": -0.6}},
-    {"attributes": {"latitude": float("nan"), "longitude": -0.6}},
-    {"attributes": {"latitude": float("inf"), "longitude": -0.6}},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        "not a dict",
+        {},
+        {"attributes": "not a dict"},
+        {"attributes": {}},
+        {"attributes": {"latitude": 1}},
+        {"attributes": {"latitude": "51.9", "longitude": -0.6}},
+        {"attributes": {"latitude": True, "longitude": -0.6}},
+        {"attributes": {"latitude": float("nan"), "longitude": -0.6}},
+        {"attributes": {"latitude": float("inf"), "longitude": -0.6}},
+    ],
+)
 def test_overlay_point_rejects_unusable_payloads(payload):
     import main
+
     assert main._overlay_point("device_tracker.a", payload) is None
 
 
@@ -1340,17 +1455,26 @@ def test_overlay_point_rejects_unusable_payloads(payload):
 def test_overlay_point_tolerates_bad_accuracy(acc):
     """A missing or nonsense accuracy must not discard an otherwise good fix."""
     import main
-    p = main._overlay_point("device_tracker.a", {
-        "state": "home", "attributes": {"latitude": 51.9, "longitude": -0.6, "gps_accuracy": acc},
-    })
+
+    p = main._overlay_point(
+        "device_tracker.a",
+        {
+            "state": "home",
+            "attributes": {"latitude": 51.9, "longitude": -0.6, "gps_accuracy": acc},
+        },
+    )
     assert p is not None and p["gps_accuracy"] is None
 
 
 def test_overlay_point_falls_back_to_entity_id_for_name():
     import main
-    p = main._overlay_point("device_tracker.a", {
-        "attributes": {"latitude": 51.9, "longitude": -0.6},
-    })
+
+    p = main._overlay_point(
+        "device_tracker.a",
+        {
+            "attributes": {"latitude": 51.9, "longitude": -0.6},
+        },
+    )
     assert p["name"] == "device_tracker.a" and p["state"] == "unknown"
 
 
@@ -1368,15 +1492,21 @@ def test_trackers_json_blocks_unauthorized_client(restricted_client):
 
 def test_trackers_json_without_supervisor_token(app_factory, monkeypatch):
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
-    client = TestClient(app_factory({
-        "allow_all_ips": True, "overlay_entities": ["device_tracker.a"],
-    }))
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.a"],
+            }
+        )
+    )
     body = client.get("/trackers.json").json()
     assert body == {"configured": True, "trackers": [], "error": "no_supervisor_token"}
 
 
 def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
     import main
+
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
     asked = []
 
@@ -1385,14 +1515,19 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
         return _ha_state(entity_id, 51.9471338, -0.6274617, 5, name=entity_id)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    client = TestClient(app_factory({
-        "allow_all_ips": True,
-        "overlay_entities": ["device_tracker.car", "sensor.not_a_tracker"],
-    }))
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.car", "sensor.not_a_tracker"],
+            }
+        )
+    )
     body = client.get("/trackers.json").json()
     assert body["configured"] is True
     assert [t["entity_id"] for t in body["trackers"]] == [
-        "device_tracker.car", "sensor.not_a_tracker",
+        "device_tracker.car",
+        "sensor.not_a_tracker",
     ]
     # Only the opted-in ids were ever asked for, with the add-on's own token.
     assert [a[0] for a in asked] == ["device_tracker.car", "sensor.not_a_tracker"]
@@ -1402,6 +1537,7 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
 def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypatch):
     """One unreachable entity must not empty the whole overlay."""
     import main
+
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
 
     def fake_fetch(entity_id, token):
@@ -1410,18 +1546,24 @@ def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypa
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    client = TestClient(app_factory({
-        "allow_all_ips": True,
-        "overlay_entities": ["device_tracker.broken", "device_tracker.ok"],
-    }))
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.broken", "device_tracker.ok"],
+            }
+        )
+    )
     body = client.get("/trackers.json").json()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
 
 
 def test_fetch_state_returns_none_on_transport_error(monkeypatch):
     import main
+
     def boom(*_a, **_k):
         raise urllib.error.URLError("no route to host")
+
     monkeypatch.setattr(main.urllib.request, "urlopen", boom)
     assert main._fetch_state("device_tracker.a", "tok") is None
 
@@ -1432,8 +1574,10 @@ def test_fetch_state_parses_a_good_response(monkeypatch):
     class _Resp:
         def read(self):
             return json.dumps({"state": "home", "attributes": {}}).encode()
+
         def __enter__(self):
             return self
+
         def __exit__(self, *_a):
             return False
 
@@ -1459,11 +1603,13 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     Without this the overlay would be a fresh guess budget for the same token:
     an attacker locked out of the other two paths could keep trying here.
     """
-    app = app_factory({
-        "allow_all_ips": True,
-        "save_token": "sekrit",
-        "overlay_entities": ["device_tracker.a"],
-    })
+    app = app_factory(
+        {
+            "allow_all_ips": True,
+            "save_token": "sekrit",
+            "overlay_entities": ["device_tracker.a"],
+        }
+    )
     client = TestClient(app)
 
     import main
