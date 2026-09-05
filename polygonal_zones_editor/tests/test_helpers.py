@@ -115,16 +115,19 @@ def test_configure_logging_applies_level_on_subsequent_call():
     helpers.configure_logging(logging.INFO)
 
 
-@pytest.mark.parametrize("value,expected", [
-    ("debug", "DEBUG"),
-    ("INFO", "INFO"),
-    ("Warning", "WARNING"),
-    ("error", "ERROR"),
-    ("critical", "CRITICAL"),
-    (None, "INFO"),
-    ("nonsense", "INFO"),
-    (42, "INFO"),
-])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("debug", "DEBUG"),
+        ("INFO", "INFO"),
+        ("Warning", "WARNING"),
+        ("error", "ERROR"),
+        ("critical", "CRITICAL"),
+        (None, "INFO"),
+        ("nonsense", "INFO"),
+        (42, "INFO"),
+    ],
+)
 def test_resolve_log_level(value, expected):
     import logging
 
@@ -255,9 +258,7 @@ def test_atomic_write_json_fsyncs_parent_directory(tmp_path, monkeypatch):
     assert len(fsynced_fds) == 2, f"expected 2 fsync calls, got {len(fsynced_fds)}"
 
 
-def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(
-    tmp_path, monkeypatch
-):
+def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path, monkeypatch):
     """Simulate a crash mid-write: json.dump raises after the temp file is
     opened but before the rename happens. The destination must be untouched
     and no stray temp file must remain."""

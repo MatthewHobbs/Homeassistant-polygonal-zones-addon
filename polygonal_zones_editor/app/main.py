@@ -168,8 +168,7 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
         if request.url.path in AUTHZ_EXEMPT_PATHS:
             return await call_next(request)
         if not allow_request(self.options, request):
-            _LOGGER.warning("Blocked request from %s on %s",
-                            request.client.host, request.url.path)
+            _LOGGER.warning("Blocked request from %s on %s", request.client.host, request.url.path)
             return PlainTextResponse("not allowed", status_code=403)
         return await call_next(request)
 
@@ -219,6 +218,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     X-Frame-Options + CSP frame-ancestors block clickjacking, the CSP
     baseline contains XSS to the already-loaded origins.
     """
+
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -271,9 +271,7 @@ def _validate_linear_ring(ring, where: str) -> int:
     if not isinstance(ring, list):
         raise ValueError(f"{where}: ring must be a list of positions")
     if len(ring) < _MIN_RING_POSITIONS:
-        raise ValueError(
-            f"{where}: ring must have at least {_MIN_RING_POSITIONS} positions"
-        )
+        raise ValueError(f"{where}: ring must have at least {_MIN_RING_POSITIONS} positions")
     for i, pos in enumerate(ring):
         _validate_position(pos, f"{where}[{i}]")
     if ring[0] != ring[-1]:
@@ -343,9 +341,7 @@ def _validate_feature_collection(obj) -> None:
         gtype = geom.get("type")
         coords = geom.get("coordinates")
         if gtype == "Polygon":
-            total_vertices = _validate_polygon_coordinates(
-                coords, f"{where}.geometry.coordinates"
-            )
+            total_vertices = _validate_polygon_coordinates(coords, f"{where}.geometry.coordinates")
         elif gtype == "MultiPolygon":
             if not isinstance(coords, list):
                 raise ValueError(
@@ -361,9 +357,7 @@ def _validate_feature_collection(obj) -> None:
                     polygon, f"{where}.geometry.coordinates[{p_idx}]"
                 )
         else:
-            raise ValueError(
-                f"{where}.geometry.type: must be Polygon or MultiPolygon"
-            )
+            raise ValueError(f"{where}.geometry.type: must be Polygon or MultiPolygon")
         if total_vertices > _MAX_VERTICES_PER_FEATURE:
             raise ValueError(
                 f"{where}: vertex count {total_vertices} exceeds cap of {_MAX_VERTICES_PER_FEATURE}"
@@ -397,9 +391,7 @@ def _validate_feature_collection(obj) -> None:
                         f"{where}.properties.id: must be a non-empty string if present"
                     )
                 if feature_id in seen_ids:
-                    raise ValueError(
-                        f"{where}.properties.id: duplicate zone id (must be unique)"
-                    )
+                    raise ValueError(f"{where}.properties.id: duplicate zone id (must be unique)")
                 seen_ids.add(feature_id)
 
 
@@ -442,7 +434,9 @@ def save_zones_generator(options: dict):
             _LOGGER.warning(
                 "Rate limit hit on /save_zones for %s (%d failures in %ds). "
                 "Further attempts refused for the remainder of the window.",
-                client_host, _SAVE_FAILURE_LIMIT, _SAVE_FAILURE_WINDOW_SECONDS,
+                client_host,
+                _SAVE_FAILURE_LIMIT,
+                _SAVE_FAILURE_WINDOW_SECONDS,
             )
             return JSONResponse(
                 {"error": "too many failed attempts"},
@@ -462,13 +456,20 @@ def save_zones_generator(options: dict):
                 )
             _LOGGER.warning(
                 "Blocked request from %s on %s",
-                client_host, request.url.path,
+                client_host,
+                request.url.path,
             )
             return PlainTextResponse("not allowed", status_code=403)
 
         content_length = request.headers.get("content-length")
-        if content_length is None or not content_length.isdigit() or int(content_length) > MAX_SAVE_BYTES:
-            return JSONResponse({"error": "payload too large or missing Content-Length"}, status_code=413)
+        if (
+            content_length is None
+            or not content_length.isdigit()
+            or int(content_length) > MAX_SAVE_BYTES
+        ):
+            return JSONResponse(
+                {"error": "payload too large or missing Content-Length"}, status_code=413
+            )
 
         body = await request.body()
         if len(body) > MAX_SAVE_BYTES:
@@ -497,7 +498,9 @@ def save_zones_generator(options: dict):
             if current != if_match:
                 _LOGGER.info(
                     "Conflict on save from %s: client If-Match=%s, current=%s",
-                    request.client.host, if_match, current,
+                    request.client.host,
+                    if_match,
+                    current,
                 )
                 # Omit current_etag from the body when the file is
                 # unreadable — a JSON `null` would force clients into
@@ -542,10 +545,13 @@ def _normalised_theme(options: dict) -> str:
 
 def config_json_generator(options: dict):
     async def config_json(_request: Request) -> JSONResponse:
-        return JSONResponse({
-            "zone_colour": options.get("zone_colour", "green"),
-            "theme": _normalised_theme(options),
-        })
+        return JSONResponse(
+            {
+                "zone_colour": options.get("zone_colour", "green"),
+                "theme": _normalised_theme(options),
+            }
+        )
+
     return config_json
 
 
@@ -572,7 +578,8 @@ def overlay_entities(options: dict) -> list[str]:
     if not isinstance(raw, list):
         _LOGGER.warning(
             "overlay_entities is %s, expected a list or comma-separated string "
-            "— ignoring it and plotting nothing.", type(raw).__name__,
+            "— ignoring it and plotting nothing.",
+            type(raw).__name__,
         )
         return []
     out: list[str] = []
@@ -583,7 +590,8 @@ def overlay_entities(options: dict) -> list[str]:
         if not _ENTITY_ID_RE.match(candidate):
             _LOGGER.warning(
                 "Ignoring overlay entity %r: not a valid entity id "
-                "(expected e.g. device_tracker.my_phone).", candidate,
+                "(expected e.g. device_tracker.my_phone).",
+                candidate,
             )
             continue
         if candidate not in out:
@@ -591,7 +599,8 @@ def overlay_entities(options: dict) -> list[str]:
     if len(out) > MAX_OVERLAY_ENTITIES:
         _LOGGER.warning(
             "overlay_entities lists %d entities; using the first %d.",
-            len(out), MAX_OVERLAY_ENTITIES,
+            len(out),
+            MAX_OVERLAY_ENTITIES,
         )
         out = out[:MAX_OVERLAY_ENTITIES]
     return out
@@ -668,9 +677,12 @@ def trackers_json_generator(options: dict):
         if not token:
             _LOGGER.warning(
                 "overlay_entities is set but %s is missing — is homeassistant_api "
-                "enabled for this add-on? Plotting nothing.", SUPERVISOR_TOKEN_ENV,
+                "enabled for this add-on? Plotting nothing.",
+                SUPERVISOR_TOKEN_ENV,
             )
-            return JSONResponse({"configured": True, "trackers": [], "error": "no_supervisor_token"})
+            return JSONResponse(
+                {"configured": True, "trackers": [], "error": "no_supervisor_token"}
+            )
 
         def _gather() -> list[dict]:
             found = []
@@ -697,7 +709,9 @@ def zones_json_generator(options: dict):
             _LOGGER.warning(
                 "Rate limit hit on /zones.json for %s (%d failures in %ds). "
                 "Further attempts refused for the remainder of the window.",
-                client_host, _SAVE_FAILURE_LIMIT, _SAVE_FAILURE_WINDOW_SECONDS,
+                client_host,
+                _SAVE_FAILURE_LIMIT,
+                _SAVE_FAILURE_WINDOW_SECONDS,
             )
             return JSONResponse(
                 {"error": "too many failed attempts"},
@@ -931,7 +945,9 @@ if __name__ == "__main__":  # pragma: no cover
         )
     if allow_all_ips(options):
         if (options.get("save_token") or "").strip():
-            _LOGGER.info("allow_all_ips is on; /save_zones requires X-Save-Token from non-ingress clients.")
+            _LOGGER.info(
+                "allow_all_ips is on; /save_zones requires X-Save-Token from non-ingress clients."
+            )
         else:
             _LOGGER.warning(
                 "allow_all_ips is enabled and no save_token is set — /save_zones is reachable from any IP. "
