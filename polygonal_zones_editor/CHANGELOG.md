@@ -5,6 +5,18 @@
 - **New: the zone list shows each zone's area.** A room-sized figure on
   something meant to be a property boundary is obvious in the list and
   invisible on the map. Shown in m² up to a hectare, then in hectares.
+- **Docs: what this add-on is and is not good for.** Zone accuracy is set by the
+  devices being tested, not by how carefully you draw. Added a plain table of
+  real-world GPS accuracies and a straight answer that room-level presence
+  indoors is the wrong job for this tool — a 4 m room is smaller than a
+  stationary phone's error circle, and no amount of careful drawing fixes that.
+- **Changed: the drawing toolbar now uses Leaflet-Geoman** in place of
+  Leaflet-Draw. Snapping, cleaner vertex handling, and a maintained upstream.
+  The bundle is larger (~313 kB vs ~73 kB); it is served from the add-on, not a
+  CDN. Both toolbar controls carry `aria-label`, `title` and `role="button"` —
+  Geoman ships its primary buttons unlabelled, which is worse than what it
+  replaced, so they are named explicitly and the build-time smoke now asserts
+  it per-control rather than toolbar-wide.
 - **New: live tracker overlay.** With `overlay_entities` set, the editor plots
   those devices on the map with their GPS accuracy rings, and lists for each
   one which zones it is inside and how far it is from their edges — so a

@@ -4,6 +4,55 @@ Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, n
 
 > **Note — 32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for add-ons. The last release of this add-on for those arches is **0.2.25** — from 0.2.26 onward, only `aarch64` and `amd64` images are published. If you're running on a 32-bit host (Raspberry Pi 0/1, 32-bit OS on a Pi 2/3, 32-bit Intel Atom, etc.) either pin to 0.2.25 via the Supervisor version picker or upgrade your host to a 64-bit HA OS installation. Supervisor stops offering updates automatically once the architecture mismatch is detected, so there's no risk of accidentally pulling an incompatible image.
 
+## What this add-on is good for — and what it isn't
+
+Zones drawn here are compared against positions reported by phones, cars and
+trackers. **The accuracy of the answer is set by those devices, not by how
+carefully you draw.** A boundary placed to the centimetre is still only as good
+as the fix being tested against it.
+
+For a sense of scale, from real devices:
+
+| Source | Typical reported accuracy |
+| --- | --- |
+| Phone outdoors, good sky view | 5–15 m |
+| Phone indoors | 15–65 m |
+| Vehicle tracker with a proper antenna | 3–10 m |
+| Some vehicle APIs | reports `0`, meaning *no figure given* |
+
+A fix is a circle, not a point. A device standing still will drift across
+several metres between reports, and the companion integration inflates each
+zone by the reported accuracy before testing containment — so a device can
+match a zone whose edge it is several metres outside.
+
+**This works well for:**
+
+- property boundaries, paddocks, yards, car parks
+- "is the car home or not", "is the van on site"
+- any zone whose smallest dimension is comfortably larger than the accuracy of
+  the devices you are testing against — as a rule of thumb, **20 m across or
+  more**
+
+**This works badly for:**
+
+- rooms inside a building. A 4 m × 5 m room is smaller than the error circle of
+  a phone standing still in it. Adjacent rooms will swap at random, and a
+  device *outside the building* can match one: a car parked on a driveway has
+  been observed matching an indoor kitchen zone, because a 5 m accuracy ring
+  reached it.
+- anything needing pinpoint or "which side of this line" precision
+- distinguishing places a few metres apart
+
+**If you want room-level presence indoors, this is the wrong tool** and no
+amount of careful drawing will fix it — the limit is the positioning
+technology, not the polygon. Wi-Fi access-point association, Bluetooth room
+sensors (ESPresense and similar), or mmWave occupancy sensors solve that
+problem properly. This add-on is for outdoor, property-scale zones.
+
+The editor's optional tracker overlay (below) exists partly to make this
+visible: it shows each device's accuracy ring against your zones, so you can
+see whether a boundary is meaningful at the scale you have drawn it.
+
 ## Configuration
 
 All options live under **Settings → Add-ons → Polygonal Zones → Configuration**. Defaults are sensible for a stock Home Assistant install — the only setting most people change is `zone_colour`.

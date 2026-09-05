@@ -68,10 +68,12 @@
     color: var(--popup-text) !important;
 }
 
-/* The leaflet-draw white-sprite icons need a filter only on dark, so this
-   one rule has to be applied conditionally rather than driven by a var. */
+/* Leaflet's own control icons are dark-on-light sprites, and Geoman's toolbar
+   buttons are dark inline SVG on a white button — both need inverting on a
+   dark ground, which a colour variable can't express. Geoman's container is
+   .leaflet-pm-toolbar (the leaflet-draw selector this replaced is gone). */
 @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .leaflet-draw-toolbar a,
+    :root:not([data-theme="light"]) .leaflet-pm-toolbar a,
     :root:not([data-theme="light"]) .leaflet-bar a {
         filter: invert(0.9) hue-rotate(180deg);
     }
@@ -83,7 +85,7 @@
         color: #88baff !important;
     }
 }
-:root[data-theme="dark"] .leaflet-draw-toolbar a,
+:root[data-theme="dark"] .leaflet-pm-toolbar a,
 :root[data-theme="dark"] .leaflet-bar a {
     filter: invert(0.9) hue-rotate(180deg);
 }

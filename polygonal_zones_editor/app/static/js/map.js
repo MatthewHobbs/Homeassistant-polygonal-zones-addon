@@ -315,58 +315,84 @@ function generate_map(zones_url) {
 }
 
 function setup_editing(map, editableLayers) {
-    const drawing_options = {
-        position: 'topleft',
-        draw: {
-            polyline: false,
-            polygon: {
-                allowIntersection: false,
-                drawError: {
-                    color: '#e1e100',
-                    message: '<strong>Oh snap!<strong> you can\'t draw that!'
-                },
-                shapeOptions: {
-                    color: window.ZONE_COLOUR
-                }
-            },
-            circle: false,
-            rectangle: false,
-            marker: false,
-            circlemarker: false
-        },
-        edit: {
-            featureGroup: editableLayers,
-            edit: false,
-            remove: true
-        }
-    };
-
-    let drawControl = new L.Control.Draw(drawing_options);
-    let drawnItems = new L.FeatureGroup();
-
-    map.addControl(drawControl);
-    map.addLayer(drawnItems);
-
-    // Leaflet-draw toolbar anchors ship with a `title` attribute only; many
-    // screen readers (NVDA, VoiceOver on iOS) either ignore or inconsistently
-    // announce `title` for interactive anchors. Copy every title into an
-    // aria-label so the Draw / Delete / Clear-all controls are programmatically
-    // labelled (WCAG 2.2 SC 4.1.2). Deferred to the next microtask because
-    // addControl synchronously inserts the DOM but the exact anchor set depends
-    // on the drawing_options object (no marker, no circle, etc.).
-    Promise.resolve().then(() => {
-        document
-            .querySelectorAll('.leaflet-draw-toolbar a[title]:not([aria-label])')
-            .forEach(a => a.setAttribute('aria-label', a.getAttribute('title')));
+    // Geoman replaces Leaflet-Draw here. Only the controls this editor needs
+    // are enabled: zones are polygons, so every other shape is off.
+    map.pm.setGlobalOptions({
+        allowSelfIntersection: false,
+        snappable: true,
+        snapDistance: 12,
+        // Drawn shapes inherit the configured zone colour, matching what the
+        // loaded zones are rendered with.
+        pathOptions: { color: window.ZONE_COLOUR },
+        templineStyle: { color: window.ZONE_COLOUR },
+        hintlineStyle: { color: window.ZONE_COLOUR, dashArray: '5,5' },
     });
 
-    map.on('draw:deleted', function (e) {
-        let layers = e.layers;
-        layers.eachLayer(layer => {
-            editableLayers.removeLayer(layer);
-        });
-        // Rebuild the list once, after all removals — deleting N zones used to
-        // trigger N full DOM rebuilds of the entire zone list.
+    map.pm.addControls({
+        position: 'topleft',
+        drawPolygon: true,
+        removalMode: true,
+        // Per-zone editing is driven from the sidebar's edit button
+        // (edit_zone_event), not a global toolbar mode — keeping the toolbar
+        // free of a second, competing way to enter edit mode.
+        editMode: false,
+        dragMode: false,
+        cutPolygon: false,
+        rotateMode: false,
+        drawMarker: false,
+        drawCircle: false,
+        drawCircleMarker: false,
+        drawPolyline: false,
+        drawRectangle: false,
+        drawText: false,
+    });
+
+    // Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman needs more work here
+    // than Leaflet-Draw did, in two different ways:
+    //
+    //  - Its *action* buttons (Finish, Cancel, Remove Last Vertex) carry a
+    //    `title` only. Many screen readers — NVDA, VoiceOver on iOS — ignore or
+    //    inconsistently announce `title` on interactive anchors, so mirror it
+    //    into an aria-label.
+    //  - Its *primary* buttons (draw, delete) carry no title, no text and no
+    //    label at all: they are bare icon anchors, so there is nothing to
+    //    mirror. They have to be named outright, keyed off the icon class
+    //    Geoman puts on the child div.
+    //
+    // They are also anchors without href, which are not links; role="button"
+    // makes them announce as the controls they actually are.
+    const PM_CONTROL_LABELS = {
+        'leaflet-pm-icon-polygon': 'Draw a zone',
+        'leaflet-pm-icon-delete': 'Delete a zone',
+    };
+    Promise.resolve().then(() => {
+        // Geoman renders one .leaflet-pm-toolbar per control block, so there
+        // are several — scoping to the first labelled the draw button and left
+        // delete bare, which is precisely the failure this patch exists to
+        // prevent. Query across all of them.
+        document.querySelectorAll('.leaflet-pm-toolbar a[title]:not([aria-label])')
+            .forEach(a => a.setAttribute('aria-label', a.getAttribute('title')));
+
+        document.querySelectorAll('.leaflet-pm-toolbar a.leaflet-buttons-control-button')
+            .forEach(a => {
+                if (!a.hasAttribute('role')) a.setAttribute('role', 'button');
+                if (a.hasAttribute('aria-label')) return;
+                const icon = a.querySelector('[class*="leaflet-pm-icon-"]');
+                if (!icon) return;
+                const key = Array.from(icon.classList)
+                    .find(c => Object.prototype.hasOwnProperty.call(PM_CONTROL_LABELS, c));
+                if (key) {
+                    a.setAttribute('aria-label', PM_CONTROL_LABELS[key]);
+                    // Sighted keyboard users get a tooltip too; Geoman ships none.
+                    if (!a.hasAttribute('title')) a.setAttribute('title', PM_CONTROL_LABELS[key]);
+                }
+            });
+    });
+
+    // Geoman removes one layer per click, so unlike Leaflet-Draw's batched
+    // draw:deleted there is no N-deletions-one-rebuild case to optimise for.
+    map.on('pm:remove', function (e) {
+        editableLayers.removeLayer(e.layer);
         render_zone_list();
         mark_dirty();
 
@@ -375,13 +401,8 @@ function setup_editing(map, editableLayers) {
         }
     });
 
-    map.on('draw:created', function (e) {
-        let type = e.layerType,
-            layer = e.layer;
-
-        if (type === 'marker') {
-            layer.bindPopup('A popup!');
-        }
+    map.on('pm:create', function (e) {
+        let layer = e.layer;
 
         // Generate a unique "Zone N" name. Layer-count + 1 collided after
         // deletions (delete zone 2 of 3, draw a new one → "Zone 3" duplicated
@@ -414,6 +435,11 @@ function setup_editing(map, editableLayers) {
             }
         };
 
+        // Geoman adds the new shape to the map itself, unlike Leaflet-Draw
+        // which handed over an unattached layer. Take it off the map before
+        // handing it to editableLayers, or it ends up owned by both and a
+        // later group removal leaves an orphan rendering on the map.
+        map.removeLayer(layer);
         editableLayers.addLayer(layer);
         render_zone_list();
         mark_dirty();
@@ -424,7 +450,7 @@ function setup_editing(map, editableLayers) {
 
 function edit_zone_event(e) {
     // disable editing for all zones.
-    editableLayers.eachLayer(layer => layer.editing.disable());
+    editableLayers.eachLayer(layer => { if (layer.pm) layer.pm.disable(); });
     document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
 
     let oldName = e.detail.oldName || e.detail.name
@@ -438,7 +464,7 @@ function edit_zone_event(e) {
     // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
         map.fitBounds(layer.getBounds());
-        layer.editing.enable();
+        layer.pm.enable({ allowSelfIntersection: false });
     } else {
         // once we stop we will disable editing and save the changes
         layer.feature.properties.name = e.detail.name;

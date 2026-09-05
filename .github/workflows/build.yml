@@ -255,17 +255,23 @@ jobs:
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
-                  # A11y regression guard (#116). The leaflet-draw toolbar
-                  # anchors are patched post-addControl to mirror their
-                  # title= into aria-label (WCAG 2.2 SC 4.1.2). The
-                  # zone-entry rename input lives inside shadow DOM where
-                  # <label for=…> never associates per spec, so it uses
-                  # aria-label directly.
+                  # A11y regression guard (#116). The Geoman toolbar anchors
+                  # are patched post-addControls to mirror their title= into
+                  # aria-label (WCAG 2.2 SC 4.1.2). The zone-entry rename input
+                  # lives inside shadow DOM where <label for=…> never
+                  # associates per spec, so it uses aria-label directly.
+                  # Assert the PRIMARY controls specifically. Geoman labels its
+                  # action buttons (Finish/Cancel) itself, so a check for "any
+                  # aria-label in the toolbar" passes even when the draw and
+                  # delete buttons are bare unlabelled icons — which is exactly
+                  # what the Leaflet-Draw -> Geoman swap initially produced.
                   draw_aria = await page.evaluate(
-                      "() => document.querySelector('.leaflet-draw-draw-polygon')?.getAttribute('aria-label')"
+                      "() => Array.from(document.querySelectorAll("
+                      "'.leaflet-pm-toolbar a.leaflet-buttons-control-button'))"
+                      ".map(a => a.getAttribute('aria-label') || '').join('|')"
                   )
-                  if not draw_aria:
-                      print(f"FAIL leaflet-draw polygon control missing aria-label; got: {draw_aria!r}")
+                  if not draw_aria or "" in draw_aria.split("|"):
+                      print(f"FAIL Geoman primary toolbar controls missing aria-label; got: {draw_aria!r}")
                       for e in errors: print(" -", e)
                       sys.exit(1)
 
