@@ -9,7 +9,7 @@ ARG BUILD_FROM
 # x/crypto >= 0.52.0 and overwrite the base copy below. Verified: trivy reports 0 CVEs
 # on the result. Tracking upstream fix: https://github.com/home-assistant/tempio/issues/132
 # Remove this stage (and the COPY below) once a patched tempio ships in the base image.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS tempio
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS tempio
 # Pinned to an immutable commit for reproducible builds (tempio main @ 2026-06-30 —
 # the revision verified to scan clean). Bump deliberately when upstream patches x/crypto.
 ARG TEMPIO_REF=5420e16c8cca89903809c842b9925d5fe6778129
