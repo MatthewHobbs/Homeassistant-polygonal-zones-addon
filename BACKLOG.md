@@ -7,6 +7,46 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## The release path's action bumps are unverified by any PR check (2026-09-05) — OPEN, P2
+
+**Component:** `.github/workflows/release.yml`
+
+PR #30 bumped eight actions. Seven are exercised by `build.yml` / `lint.yml` / `test.yml` on every
+pull request. One is not:
+
+```
+- uses: actions/attest-build-provenance@977bb373...  # v3
++ uses: actions/attest-build-provenance@4d101475...  # v4.2.2
+```
+
+That action appears **only** in `release.yml`, which triggers on `v*` tags and `workflow_dispatch`.
+No pull-request check runs it. So #30 going green across all six required checks said nothing at
+all about the riskiest line in it — and this is a **major** version jump, v3 → v4.
+
+It matters more here than a normal action bump because provenance is load-bearing: `config.yaml`
+documents Sigstore attestation as *the* image-integrity mechanism, with the `codenotary:` key
+deliberately unset because CAS is discontinued.
+
+```
+gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> \
+  --owner MatthewHobbs
+```
+
+If v4 changed the attestation's shape or subject handling, the first symptom is a failed or
+unverifiable **release** — the most expensive place to find out, and the one moment when rolling
+back is hardest.
+
+**Nothing is known to be broken.** This is a coverage gap, not a defect.
+
+**Before the next release:** dispatch `release.yml` manually via `workflow_dispatch` and verify the
+resulting attestation with the command above, rather than discovering the answer during a real tag.
+
+**Longer term:** cover the attestation step against a throwaway artifact on a schedule, so release
+tooling stops being the one code path that only production exercises. `docs/RUNBOOK.md` already
+covers partial-release recovery; this is about not needing it.
+
+---
+
 ## `save_token` gates reads as well as writes, contrary to its own description (2026-09-05) — OPEN, P1
 
 **Component:** `app/main.py` (`IPAllowMiddleware` / auth layer) + `config.yaml` option description
