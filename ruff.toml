@@ -1,0 +1,34 @@
+# Mirrors the companion integration's configuration
+# (MatthewHobbs/Homeassistant-polygonal-zones) so both halves of the project
+# are held to one standard.
+line-length = 100
+target-version = "py313"
+
+[lint]
+select = [
+  "E",     # pycodestyle errors
+  "W",     # pycodestyle warnings
+  "F",     # pyflakes
+  "I",     # isort
+  "UP",    # pyupgrade
+  "B",     # flake8-bugbear
+  "SIM",   # flake8-simplify
+  "ASYNC", # flake8-async
+  "RUF",   # ruff-specific
+]
+ignore = [
+  "E501",  # line length is handled by the formatter
+  "B008",  # function call in default argument (common HA/Starlette pattern)
+]
+
+[lint.isort]
+force-sort-within-sections = true
+# The app runs with `pythonpath = app`, so these are imported as bare modules
+# and would otherwise be sorted in with third-party packages — which reorders
+# every import block in the repo for no benefit.
+known-first-party = ["const", "helpers", "main"]
+
+[lint.per-file-ignores]
+# Tests import the app modules inside functions on purpose: conftest chdirs to
+# app/ first, so a module-level import would resolve before that happens.
+"polygonal_zones_editor/tests/*" = ["PLC0415"]

@@ -1,17 +1,20 @@
+from collections import defaultdict, deque
+from email.utils import formatdate
 import hashlib
 import ipaddress
 import json
 import logging
 import math
 import os
+import re
 import secrets
 import time
+import urllib.error
+import urllib.request
 import uuid
-from collections import defaultdict, deque
-from email.utils import formatdate
 
-import uvicorn
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -19,7 +22,19 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+import uvicorn
 
+from const import (
+    DATA_FOLDER,
+    MAX_OVERLAY_ENTITIES,
+    MAX_SAVE_BYTES,
+    OVERLAY_COORD_DECIMALS,
+    OVERLAY_TIMEOUT_SECONDS,
+    SCHEMA_VERSION,
+    SUPERVISOR_API,
+    SUPERVISOR_TOKEN_ENV,
+    ZONES_FILE,
+)
 from helpers import (
     allow_all_ips,
     allow_request,
@@ -29,7 +44,6 @@ from helpers import (
     load_options,
     resolve_log_level,
 )
-from const import DATA_FOLDER, ZONES_FILE, MAX_SAVE_BYTES, SCHEMA_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,7 +54,7 @@ _LOGGER = logging.getLogger(__name__)
 # now that reads are also token-gated — a user setting save_token without
 # allow_all_ips: true expects the token to unlock BOTH LAN reads and LAN
 # writes, same as on /save_zones.
-AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json"})
+AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
 
 # Rate limit on /save_zones authorisation failures. Protects against brute-
 # forcing save_token when the port is exposed on LAN. Only failures count;
@@ -535,6 +549,143 @@ def config_json_generator(options: dict):
     return config_json
 
 
+# --- Tracker overlay -------------------------------------------------------
+
+# Entity ids are user-supplied config that ends up in a URL path. Accept only
+# the shape Home Assistant itself guarantees — lowercase domain, dot, object id
+# — so nothing can smuggle a path traversal or query string into the Supervisor
+# call. Anything else is dropped and logged rather than sanitised: a silently
+# rewritten entity id would be a confusing thing to debug.
+_ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
+
+
+def overlay_entities(options: dict) -> list[str]:
+    """The entity ids the user has opted in to plotting, validated and capped.
+
+    Empty by default. The editor is LAN-reachable whenever allow_all_ips is on,
+    so the overlay must never become a general state proxy — only ids named
+    here are ever requested from Home Assistant or returned to a client.
+    """
+    raw = options.get("overlay_entities") or []
+    if isinstance(raw, str):
+        raw = [part for part in re.split(r"[,\n]", raw)]
+    if not isinstance(raw, list):
+        _LOGGER.warning(
+            "overlay_entities is %s, expected a list or comma-separated string "
+            "— ignoring it and plotting nothing.", type(raw).__name__,
+        )
+        return []
+    out: list[str] = []
+    for item in raw:
+        candidate = str(item).strip()
+        if not candidate:
+            continue
+        if not _ENTITY_ID_RE.match(candidate):
+            _LOGGER.warning(
+                "Ignoring overlay entity %r: not a valid entity id "
+                "(expected e.g. device_tracker.my_phone).", candidate,
+            )
+            continue
+        if candidate not in out:
+            out.append(candidate)
+    if len(out) > MAX_OVERLAY_ENTITIES:
+        _LOGGER.warning(
+            "overlay_entities lists %d entities; using the first %d.",
+            len(out), MAX_OVERLAY_ENTITIES,
+        )
+        out = out[:MAX_OVERLAY_ENTITIES]
+    return out
+
+
+def _fetch_state(entity_id: str, token: str) -> dict | None:
+    """Fetch one entity's state through the Supervisor proxy. Blocking."""
+    req = urllib.request.Request(
+        f"{SUPERVISOR_API}/states/{entity_id}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as err:
+        # One unreachable or malformed entity must not fail the whole overlay:
+        # the map is still useful with the trackers that did resolve.
+        _LOGGER.debug("Overlay fetch failed for %s: %s", entity_id, err)
+        return None
+
+
+def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
+    """Reduce a full HA state object to the few fields the map needs.
+
+    Everything else — every other attribute the entity carries — is discarded
+    here rather than at the client, so it never crosses the wire.
+    """
+    if not isinstance(payload, dict):
+        return None
+    attrs = payload.get("attributes")
+    if not isinstance(attrs, dict):
+        return None
+    lat, lon = attrs.get("latitude"), attrs.get("longitude")
+    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+        return None
+    if isinstance(lat, bool) or isinstance(lon, bool):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    acc = attrs.get("gps_accuracy")
+    if isinstance(acc, bool) or not isinstance(acc, (int, float)) or not math.isfinite(acc):
+        acc = None
+    return {
+        "entity_id": entity_id,
+        "name": str(attrs.get("friendly_name") or entity_id),
+        "state": str(payload.get("state") or "unknown"),
+        "latitude": round(float(lat), OVERLAY_COORD_DECIMALS),
+        "longitude": round(float(lon), OVERLAY_COORD_DECIMALS),
+        "gps_accuracy": None if acc is None else round(float(acc), 1),
+    }
+
+
+def trackers_json_generator(options: dict):
+    async def trackers_json(request: Request) -> JSONResponse:
+        # Same read gate as /zones.json — this returns positions, so it must
+        # not be reachable on terms the zones file isn't.
+        client_host = request.client.host or "unknown"
+        if _rate_limit_exceeded(client_host):
+            return JSONResponse({"error": "too many failed attempts"}, status_code=429)
+        ok, reason = authorise_read(options, request)
+        if not ok:
+            _record_save_failure(client_host)
+            status = 401 if reason == "invalid_token" else 403
+            return JSONResponse({"error": "not authorised"}, status_code=status)
+
+        entities = overlay_entities(options)
+        if not entities:
+            # Opted out (the default). Say so explicitly rather than returning
+            # an empty list, so the editor can distinguish "not configured"
+            # from "configured but nothing has a position right now".
+            return JSONResponse({"configured": False, "trackers": []})
+
+        token = os.environ.get(SUPERVISOR_TOKEN_ENV, "")
+        if not token:
+            _LOGGER.warning(
+                "overlay_entities is set but %s is missing — is homeassistant_api "
+                "enabled for this add-on? Plotting nothing.", SUPERVISOR_TOKEN_ENV,
+            )
+            return JSONResponse({"configured": True, "trackers": [], "error": "no_supervisor_token"})
+
+        def _gather() -> list[dict]:
+            found = []
+            for entity_id in entities:
+                point = _overlay_point(entity_id, _fetch_state(entity_id, token))
+                if point is not None:
+                    found.append(point)
+            return found
+
+        trackers = await run_in_threadpool(_gather)
+        return JSONResponse({"configured": True, "trackers": trackers})
+
+    return trackers_json
+
+
 def zones_json_generator(options: dict):
     async def zones_json(request: Request) -> Response:
         # When save_token is set, non-ingress reads require the same
@@ -573,10 +724,12 @@ def zones_json_generator(options: dict):
         # Pass the file bytes through verbatim — atomic_write_json guarantees
         # the file is always valid JSON, so re-parsing and re-serialising via
         # JSONResponse would be a pointless round-trip.
-        try:
+        def _read_zones() -> tuple[bytes, float]:
             with open(ZONES_FILE, "rb") as f:
-                body = f.read()
-            mtime = os.stat(ZONES_FILE).st_mtime
+                return f.read(), os.stat(ZONES_FILE).st_mtime
+
+        try:
+            body, mtime = await run_in_threadpool(_read_zones)
         except OSError:
             # File missing or unreadable (ownership drift after a Supervisor
             # remount, disk error, etc.). Return 503 with a log line rather
@@ -636,6 +789,7 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
         Route("/save_zones", save_zones_generator(options), methods=["POST"]),
         Route("/zones.json", zones_json_generator(options), methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
+        Route("/trackers.json", trackers_json_generator(options), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
         # html=True makes "/" return index.html. Explicit Routes above take
         # precedence on their exact paths.

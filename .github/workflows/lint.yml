@@ -32,6 +32,24 @@ jobs:
         with:
           path: "./polygonal_zones_editor"
 
+  ruff:
+    # Python lint for the add-on's app + tests. The companion integration has
+    # run ruff since its first release; this repo did not, so `pytest` was the
+    # only thing reading the Python at all. Config in ruff.toml mirrors the
+    # integration's rule set so both halves of the project are held to one
+    # standard.
+    #
+    # Lint only for now — `ruff format` would reformat five existing files,
+    # which belongs in its own change rather than riding along with whatever
+    # PR happens to add the job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run ruff
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          args: check --output-format=github
+
   shellcheck:
     # Lint the release helper and the s6 init / service scripts with shellcheck.
     # The release-merge.sh script gates every version bump, and the rootfs

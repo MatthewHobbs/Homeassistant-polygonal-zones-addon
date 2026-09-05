@@ -117,7 +117,7 @@ def load_options() -> dict:
     if not os.path.exists(OPTIONS_FILE):
         return {}
     try:
-        with open(OPTIONS_FILE, 'r') as f:
+        with open(OPTIONS_FILE) as f:
             loaded = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOGGER.exception("Failed to read %s; starting with default options.", OPTIONS_FILE)

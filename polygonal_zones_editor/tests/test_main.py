@@ -1,5 +1,6 @@
 import json
 import sys
+import urllib.error
 
 import pytest
 from starlette.testclient import TestClient
@@ -221,7 +222,7 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     stored = json.loads(tmp_zones_file.read_text())
     assert stored["type"] == payload["type"]
     assert len(stored["features"]) == len(payload["features"])
-    for sent, got in zip(payload["features"], stored["features"]):
+    for sent, got in zip(payload["features"], stored["features"], strict=True):
         assert sent["type"] == got["type"]
         assert sent["geometry"] == got["geometry"]
         assert got["properties"]["name"] == sent["properties"]["name"]
@@ -603,7 +604,6 @@ def test_save_zones_rejects_body_over_cap_with_small_content_length(
 
     # Patch request body reading to return huge bytes after header check.
     from starlette.requests import Request
-    original_body = Request.body
 
     async def lying_body(self):
         return huge_body
@@ -806,8 +806,9 @@ def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
 def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
     """Ingress (172.30.32.2) is always allowed even when a token is set —
     the HA UI Save button must keep working without knowing the token."""
-    import main
     from starlette.testclient import TestClient as TC
+
+    import main
 
     app, _ = main.generate_app({"save_token": "s3cret"})
     # Simulate a request from the ingress IP.
@@ -1136,6 +1137,7 @@ def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dange
     X-Forwarded-For: 172.30.32.2 and bypass the ingress-IP check on
     /save_zones. The parser drops them and logs an error."""
     import logging
+
     import main
 
     with caplog.at_level(logging.ERROR):
@@ -1148,6 +1150,7 @@ def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dange
 def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplog):
     """Mixed input: dangerous entries are dropped, safe ones preserved."""
     import logging
+
     import main
 
     with caplog.at_level(logging.ERROR):
@@ -1174,6 +1177,7 @@ def test_parse_trusted_proxies_drops_ingress_supernets(app_factory, caplog, supe
     matches were blocked; ipaddress-based containment check catches
     the supernet bypass."""
     import logging
+
     import main
 
     with caplog.at_level(logging.ERROR):
@@ -1187,6 +1191,7 @@ def test_parse_trusted_proxies_accepts_non_ingress_cidrs(app_factory, caplog):
     """A CIDR that does NOT contain the ingress IP is kept. Common case:
     a real reverse proxy on the LAN."""
     import logging
+
     import main
 
     with caplog.at_level(logging.ERROR):
@@ -1204,6 +1209,7 @@ def test_parse_trusted_proxies_rejects_unparseable_entries(app_factory, caplog):
     previously they'd silently slip through to uvicorn's
     forwarded_allow_ips, where behaviour is undefined."""
     import logging
+
     import main
 
     with caplog.at_level(logging.ERROR):
@@ -1237,3 +1243,236 @@ def test_save_with_if_match_on_missing_file_omits_current_etag(
     assert body == {"error": "precondition failed"}
     assert "current_etag" not in body
     assert "etag" not in r.headers
+
+
+# --- Tracker overlay (/trackers.json) --------------------------------------
+#
+# The overlay plots live tracker positions so a user can see *why* a zone
+# misclassifies a device. It reaches Home Assistant through the Supervisor
+# proxy, so the tests below care most about what it refuses to do: fetch
+# anything not explicitly opted in, trust an entity id from config, or hand
+# positions to a client the zones file itself wouldn't be handed to.
+
+
+def _ha_state(entity_id, lat, lon, acc=8, name="Thing", state="home"):
+    return {
+        "entity_id": entity_id,
+        "state": state,
+        "attributes": {
+            "latitude": lat, "longitude": lon, "gps_accuracy": acc,
+            "friendly_name": name,
+            # A real state object carries far more than the map needs; the
+            # route must drop all of it rather than pass it through.
+            "battery_level": 42, "source_type": "gps", "secret_note": "private",
+        },
+    }
+
+
+def test_overlay_entities_empty_by_default():
+    """Opt-in: with no option set, nothing is ever requested or returned."""
+    import main
+    assert main.overlay_entities({}) == []
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (["device_tracker.a"], ["device_tracker.a"]),
+    ("device_tracker.a, device_tracker.b", ["device_tracker.a", "device_tracker.b"]),
+    ("device_tracker.a\ndevice_tracker.b", ["device_tracker.a", "device_tracker.b"]),
+    (["device_tracker.a", "device_tracker.a"], ["device_tracker.a"]),
+    (["  device_tracker.a  ", ""], ["device_tracker.a"]),
+])
+def test_overlay_entities_accepts_list_or_string(raw, expected):
+    import main
+    assert main.overlay_entities({"overlay_entities": raw}) == expected
+
+
+@pytest.mark.parametrize("bad", [
+    "../../secret", "device_tracker.a/../b", "device_tracker.a?x=1",
+    "DEVICE_TRACKER.A", "nodot", "device_tracker.", ".a", "device_tracker.a b",
+    "device_tracker.a#frag", "http://evil/x",
+])
+def test_overlay_entities_rejects_anything_not_an_entity_id(bad):
+    """These ids end up in a URL path — only HA's own shape is accepted."""
+    import main
+    assert main.overlay_entities({"overlay_entities": [bad]}) == []
+
+
+def test_overlay_entities_rejects_non_list_option():
+    import main
+    assert main.overlay_entities({"overlay_entities": {"a": 1}}) == []
+
+
+def test_overlay_entities_capped():
+    import main
+    many = [f"device_tracker.d{i}" for i in range(main.MAX_OVERLAY_ENTITIES + 5)]
+    assert len(main.overlay_entities({"overlay_entities": many})) == main.MAX_OVERLAY_ENTITIES
+
+
+def test_overlay_point_keeps_only_map_fields_and_rounds():
+    """Everything the map doesn't need is dropped before it crosses the wire."""
+    import main
+    p = main._overlay_point(
+        "device_tracker.a",
+        _ha_state("device_tracker.a", 51.947133802662975, -0.6274616792121955, 2.34),
+    )
+    assert p == {
+        "entity_id": "device_tracker.a", "name": "Thing", "state": "home",
+        "latitude": 51.9471, "longitude": -0.6275, "gps_accuracy": 2.3,
+    }
+    assert "battery_level" not in p and "secret_note" not in p
+
+
+@pytest.mark.parametrize("payload", [
+    None, "not a dict", {}, {"attributes": "not a dict"},
+    {"attributes": {}},
+    {"attributes": {"latitude": 1}},
+    {"attributes": {"latitude": "51.9", "longitude": -0.6}},
+    {"attributes": {"latitude": True, "longitude": -0.6}},
+    {"attributes": {"latitude": float("nan"), "longitude": -0.6}},
+    {"attributes": {"latitude": float("inf"), "longitude": -0.6}},
+])
+def test_overlay_point_rejects_unusable_payloads(payload):
+    import main
+    assert main._overlay_point("device_tracker.a", payload) is None
+
+
+@pytest.mark.parametrize("acc", [None, "8", True, float("nan")])
+def test_overlay_point_tolerates_bad_accuracy(acc):
+    """A missing or nonsense accuracy must not discard an otherwise good fix."""
+    import main
+    p = main._overlay_point("device_tracker.a", {
+        "state": "home", "attributes": {"latitude": 51.9, "longitude": -0.6, "gps_accuracy": acc},
+    })
+    assert p is not None and p["gps_accuracy"] is None
+
+
+def test_overlay_point_falls_back_to_entity_id_for_name():
+    import main
+    p = main._overlay_point("device_tracker.a", {
+        "attributes": {"latitude": 51.9, "longitude": -0.6},
+    })
+    assert p["name"] == "device_tracker.a" and p["state"] == "unknown"
+
+
+def test_trackers_json_reports_not_configured_by_default(allow_all_client):
+    r = allow_all_client.get("/trackers.json")
+    assert r.status_code == 200
+    assert r.json() == {"configured": False, "trackers": []}
+
+
+def test_trackers_json_blocks_unauthorized_client(restricted_client):
+    """Positions are at least as sensitive as the zones file — same gate."""
+    r = restricted_client.get("/trackers.json")
+    assert r.status_code in (401, 403)
+
+
+def test_trackers_json_without_supervisor_token(app_factory, monkeypatch):
+    monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    client = TestClient(app_factory({
+        "allow_all_ips": True, "overlay_entities": ["device_tracker.a"],
+    }))
+    body = client.get("/trackers.json").json()
+    assert body == {"configured": True, "trackers": [], "error": "no_supervisor_token"}
+
+
+def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
+    import main
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    asked = []
+
+    def fake_fetch(entity_id, token):
+        asked.append((entity_id, token))
+        return _ha_state(entity_id, 51.9471338, -0.6274617, 5, name=entity_id)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = TestClient(app_factory({
+        "allow_all_ips": True,
+        "overlay_entities": ["device_tracker.car", "sensor.not_a_tracker"],
+    }))
+    body = client.get("/trackers.json").json()
+    assert body["configured"] is True
+    assert [t["entity_id"] for t in body["trackers"]] == [
+        "device_tracker.car", "sensor.not_a_tracker",
+    ]
+    # Only the opted-in ids were ever asked for, with the add-on's own token.
+    assert [a[0] for a in asked] == ["device_tracker.car", "sensor.not_a_tracker"]
+    assert {a[1] for a in asked} == {"stub-token"}
+
+
+def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypatch):
+    """One unreachable entity must not empty the whole overlay."""
+    import main
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+
+    def fake_fetch(entity_id, token):
+        if entity_id.endswith("broken"):
+            return None
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = TestClient(app_factory({
+        "allow_all_ips": True,
+        "overlay_entities": ["device_tracker.broken", "device_tracker.ok"],
+    }))
+    body = client.get("/trackers.json").json()
+    assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+
+
+def test_fetch_state_returns_none_on_transport_error(monkeypatch):
+    import main
+    def boom(*_a, **_k):
+        raise urllib.error.URLError("no route to host")
+    monkeypatch.setattr(main.urllib.request, "urlopen", boom)
+    assert main._fetch_state("device_tracker.a", "tok") is None
+
+
+def test_fetch_state_parses_a_good_response(monkeypatch):
+    import main
+
+    class _Resp:
+        def read(self):
+            return json.dumps({"state": "home", "attributes": {}}).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *_a):
+            return False
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["auth"] = req.headers.get("Authorization")
+        captured["timeout"] = timeout
+        return _Resp()
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    assert main._fetch_state("device_tracker.a", "tok") == {"state": "home", "attributes": {}}
+    assert captured["url"] == f"{main.SUPERVISOR_API}/states/device_tracker.a"
+    assert captured["auth"] == "Bearer tok"
+    assert captured["timeout"] == main.OVERLAY_TIMEOUT_SECONDS
+
+
+def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file):
+    """A failed /trackers.json read counts toward the same per-IP bucket as
+    /save_zones and /zones.json, and is refused once the bucket is full.
+
+    Without this the overlay would be a fresh guess budget for the same token:
+    an attacker locked out of the other two paths could keep trying here.
+    """
+    app = app_factory({
+        "allow_all_ips": True,
+        "save_token": "sekrit",
+        "overlay_entities": ["device_tracker.a"],
+    })
+    client = TestClient(app)
+
+    import main
+
+    # Exhaust the bucket on the write path with wrong-token POSTs.
+    for _ in range(main._SAVE_FAILURE_LIMIT):
+        client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "wrong"})
+
+    # Correct token now, but the bucket is full — the overlay is refused too.
+    r = client.get("/trackers.json", headers={"X-Save-Token": "sekrit"})
+    assert r.status_code == 429
+    assert r.json() == {"error": "too many failed attempts"}
