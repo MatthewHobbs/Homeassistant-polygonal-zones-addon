@@ -1,32 +1,53 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  // Renovate config for this repo. If Renovate is enabled, it keeps the
-  // digest-pinned base images in polygonal_zones_editor/build.yaml fresh —
-  // Dependabot's built-in docker manager doesn't handle custom YAML fields
-  // like `build_from:` that drive `ARG BUILD_FROM` in the Dockerfile.
+  // Renovate owns what Dependabot cannot see here: the digest-pinned base images in
+  // .github/base-images.yaml, which drive `ARG BUILD_FROM` in the Dockerfile. Dependabot's
+  // docker manager only understands a literal `FROM` line, so it cannot follow a custom YAML
+  // field.
   //
-  // Dependabot (configured in .github/dependabot.yml) continues to handle
-  // pip, GitHub Actions, and `FROM` lines in Dockerfiles.
-  "extends": ["config:recommended"],
+  // It also takes GitHub Actions and the Dockerfile's own `FROM` lines, so that neither bot
+  // raises a duplicate PR for them. Python stays with Dependabot: requirements-lock.txt is a
+  // hash-locked `uv pip compile` output installed with --require-hashes, and Renovate cannot
+  // regenerate those hashes - it would edit the lock and leave it inconsistent.
+  //
+  // enabledManagers is deliberately an allow-list. config:recommended enables every manager,
+  // which would have Renovate and Dependabot both raising pip PRs.
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitTypeAll(build)",
+  ],
+  "enabledManagers": ["github-actions", "dockerfile", "custom.regex"],
   "timezone": "Europe/London",
-  "schedule": ["before 9am on monday"],
+  // Personal repo, worked on at weekends: have the PRs waiting on Saturday morning rather
+  // than arriving on a Monday.
+  "schedule": ["before 6am on saturday"],
+  "semanticCommits": "enabled",
+  "semanticCommitScope": "deps",
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 3,
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Keep HA addon base-image digests in build.yaml fresh",
-      "fileMatch": ["^\\.github/base-images\\.yaml$"],
+      "description": "Keep the HA addon base-image digests in .github/base-images.yaml fresh",
+      "managerFilePatterns": ["/^\\.github/base-images\\.yaml$/"],
       "matchStrings": [
-        "(?<depName>ghcr\\.io/home-assistant/[a-z0-9]+-base):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "(?<depName>ghcr\\.io/home-assistant/[a-z0-9]+-base):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)",
       ],
-      "datasourceTemplate": "docker"
-    }
+      "datasourceTemplate": "docker",
+    },
   ],
   "packageRules": [
     {
-      "description": "Group all HA base-image digest bumps into one PR per week",
+      "description": "One PR for all base-image digest bumps - they must move together, since build.yml and release.yml build every arch from the same matrix.",
       "matchDatasources": ["docker"],
-      "matchPackagePrefixes": ["ghcr.io/home-assistant/"],
-      "groupName": "home-assistant-base-images"
-    }
-  ]
+      "matchPackageNames": ["ghcr.io/home-assistant/**"],
+      "groupName": "home-assistant-base-images",
+    },
+    {
+      "description": "One PR for all GitHub Actions, matching the grouping Dependabot used before this change.",
+      "matchManagers": ["github-actions"],
+      "groupName": "actions",
+    },
+  ],
 }
