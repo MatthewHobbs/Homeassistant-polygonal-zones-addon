@@ -1,30 +1,19 @@
+# Dependabot — Python only. GitHub Actions, the Dockerfile FROM lines, and the digest-pinned
+# base images in .github/base-images.yaml moved to Renovate (.github/renovate.json5), which can
+# follow a custom YAML field that Dependabot's docker manager cannot.
+#
+# Python stays here: requirements-lock.txt is a hash-locked `uv pip compile` output installed
+# with --require-hashes, and Dependabot understands the requirements.txt/lock pair.
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      actions:
-        patterns:
-          - "*"
-
   - package-ecosystem: "pip"
     directory: "/polygonal_zones_editor"
     schedule:
       interval: "weekly"
+      day: "saturday"
+      time: "06:00"
+      timezone: "Europe/London"
     groups:
       python:
         patterns:
           - "*"
-
-  # Dockerfile in /polygonal_zones_editor uses `ARG BUILD_FROM` + `FROM
-  # ${BUILD_FROM}`, so Dependabot's docker manager sees no pinned FROM line
-  # to update. Base-image digests actually live in
-  # polygonal_zones_editor/build.yaml and are updated by Renovate's custom
-  # regex manager (.github/renovate.json5). Leaving this entry here so any
-  # future Dockerfile FROM ghcr.io/... line still gets tracked.
-  - package-ecosystem: "docker"
-    directory: "/polygonal_zones_editor"
-    schedule:
-      interval: "weekly"
