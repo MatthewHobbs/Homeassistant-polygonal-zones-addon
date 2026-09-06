@@ -17,9 +17,9 @@
 #     curl -sI \
 #       -H "Authorization: Bearer $TOKEN" \
 #       -H "Accept: application/vnd.oci.image.index.v1+json" \
-#       "https://ghcr.io/v2/home-assistant/${arch}-base/manifests/3.19" \
+#       "https://ghcr.io/v2/home-assistant/${arch}-base/manifests/3.24" \
 #       | awk '/docker-content-digest/{print $2}'
 #   done
 build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.21@sha256:5100b3a2e4741440e7bd587c124920fa3bf02287c4de3cb48aacef7049530ee1
-  amd64:   ghcr.io/home-assistant/amd64-base:3.21@sha256:995fc8a44059b3bac015603f63b56b1bf935c2227c5176823d9bb76b45fc2249
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.24@sha256:265232fe91fb4271f75f17ebd4bb0749ab24fc8a64d8db38ddaccd460e9580ee
+  amd64:   ghcr.io/home-assistant/amd64-base:3.24@sha256:db83d263152a02d6daf3415a73132b2386f43a03a9c248bdaabe047b067c8eea
