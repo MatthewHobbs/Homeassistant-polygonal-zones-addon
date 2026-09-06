@@ -36,6 +36,25 @@
       ],
       "datasourceTemplate": "docker",
     },
+    {
+      "customType": "regex",
+      // TEMPIO_REF pins the tempio build stage by immutable commit SHA. No manifest declares
+      // it, so Dependabot cannot see it at all - it sat on an untagged mid-main commit from
+      // 2026-06-30 with no way to notice 2026.07.0 had shipped.
+      //
+      // Tags, not the branch head: a bump should mean an upstream release, not merely the
+      // newest commit on main. Versioning is `loose` because tempio uses calendar versions
+      // like 2026.07.0, which semver rejects for the leading zero in the month.
+      "description": "Track the tempio build-stage pin against upstream releases",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "# tempio (?<currentValue>[\\d.]+)\nARG TEMPIO_REF=(?<currentDigest>[a-f0-9]{40})",
+      ],
+      "autoReplaceStringTemplate": "# tempio {{{newValue}}}\nARG TEMPIO_REF={{{newDigest}}}",
+      "depNameTemplate": "home-assistant/tempio",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "loose",
+    },
   ],
   "packageRules": [
     {
