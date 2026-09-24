@@ -178,13 +178,76 @@ jobs:
           python3 -m playwright install --with-deps chromium >/dev/null
 
           python3 - <<'PY'
-          import asyncio, sys
+          import asyncio, re, sys
           from playwright.async_api import async_playwright
+
+          # 127.0.0.1 is a secure context, so on its own it cannot see bugs
+          # that only bite over plain HTTP on the LAN, which is how HA is
+          # often opened (#46). This name maps to the same server but is not.
+          INSECURE_HOST = "polyzones.test"
+
+          # Draw a triangle with the real Geoman toolbar, save it through the
+          # app's own save_zones(), and check it reached /zones.json. A
+          # function, unlike the rest of this step, because it runs once per
+          # origin.
+          async def draw_and_save(page, label, errors):
+              def fail(msg):
+                  print(f"FAIL [{label}] {msg}")
+                  for e in errors: print(" -", e)
+                  sys.exit(1)
+
+              # Empty ground well away from the smoke zones, so no click lands
+              # on (or snaps to) an existing polygon.
+              await page.evaluate("() => map.setView([50.5, 10.5], 10)")
+              before = await page.evaluate(
+                  "() => editableLayers.getLayers().map(l => l.feature.properties.id)"
+              )
+              box = await page.locator("#map").bounding_box()
+              points = [(0.15, 0.3), (0.35, 0.3), (0.25, 0.6)]
+              points = [(box["x"] + box["width"] * fx, box["y"] + box["height"] * fy) for fx, fy in points]
+              await page.click(".leaflet-pm-toolbar .leaflet-pm-icon-polygon")
+              # Clicking the first vertex again is what closes the shape.
+              for x, y in points + points[:1]:
+                  await page.mouse.click(x, y)
+                  await page.wait_for_timeout(100)
+              await page.wait_for_timeout(300)
+
+              page_errors = [e for e in errors if e.startswith("pageerror")]
+              if page_errors:
+                  fail("JS error while creating a zone")
+              after = await page.evaluate(
+                  "() => editableLayers.getLayers().map(l => l.feature.properties.id)"
+              )
+              if len(after) != len(before) + 1:
+                  fail(f"expected {len(before) + 1} zones after drawing one, got {len(after)}")
+              new_ids = [i for i in after if i not in before]
+              if len(new_ids) != 1 or not re.fullmatch(r"[0-9a-f]{32}", new_ids[0] or ""):
+                  fail(f"new zone's properties.id missing or wrong shape: {new_ids!r}")
+              new_id = new_ids[0]
+              if await page.locator(f'zone-entry[zone-id="{new_id}"]').count() != 1:
+                  fail(f"no zone-entry rendered for the new zone {new_id}")
+
+              async with page.expect_response(
+                  lambda r: r.url.endswith("/save_zones") and r.request.method == "POST"
+              ) as saved:
+                  await page.evaluate("() => save_zones()")
+              save_status = (await saved.value).status
+              if save_status != 200:
+                  fail(f"draw→save round-trip returned {save_status} (expected 200)")
+              persisted = await page.evaluate(
+                  "async () => (await fetch('./zones.json').then(r => r.json()))"
+              )
+              persisted_ids = [(f.get("properties") or {}).get("id") for f in persisted.get("features") or []]
+              if new_id not in persisted_ids:
+                  fail(f"new zone {new_id} not in /zones.json after save")
+              print(f"OK [{label}] drew a zone, id {new_id}, saved and persisted")
 
           async def main():
               errors = []
               async with async_playwright() as p:
-                  browser = await p.chromium.launch()
+                  browser = await p.chromium.launch(
+                      args=[f"--host-resolver-rules=MAP {INSECURE_HOST} 127.0.0.1"]
+                  )
                   page = await browser.new_page()
                   page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
                   page.on("console", lambda m: m.type == "error" and errors.append(f"console.error: {m.text}"))
@@ -335,36 +398,29 @@ jobs:
                   await page.select_option("#pz-basemap-select", "auto")
                   await page.wait_for_timeout(150)
 
-                  # Draw→save round-trip regression guard. Earlier versions
-                  # of the draw:created handler set `layer.feature` without
-                  # `type: "Feature"`; Leaflet's toGeoJSON then emitted a
-                  # feature missing the type field, which the server-side
-                  # validator rejected with 422. No test covered the full
-                  # draw→save path (the smoke above POSTs a pre-made
-                  # payload). This assertion closes the gap.
-                  save_status = await page.evaluate(
-                      """async () => {
-                          const layer = L.polygon([[50, 10], [50, 11], [51, 10]]);
-                          map.fire('draw:created', {layerType: 'polygon', layer});
-                          const headers = {'Content-Type': 'application/json'};
-                          const features = [];
-                          editableLayers.eachLayer(l => {
-                              const f = l.toGeoJSON();
-                              f.properties = {name: l.feature.properties.name};
-                              features.push(f);
-                          });
-                          const r = await fetch('./save_zones', {
-                              method: 'POST',
-                              headers: headers,
-                              body: JSON.stringify({type: 'FeatureCollection', features}),
-                          });
-                          return r.status;
-                      }"""
-                  )
-                  if save_status != 200:
-                      print(f"FAIL draw→save round-trip returned {save_status} (expected 200)")
-                      for e in errors: print(" -", e)
+                  # Draw→save round-trip regression guard. The pm:create
+                  # handler once built a feature without `type: "Feature"`
+                  # (422 on save), and later called crypto.randomUUID(),
+                  # which does not exist over plain HTTP, so the new zone
+                  # was silently dropped (#46). An earlier version of this
+                  # check fired Leaflet-Draw's draw:created, which nothing
+                  # has listened to since the Geoman swap, and passed with
+                  # no create handler at all. It now draws through the
+                  # toolbar, first on 127.0.0.1 and then on a non-secure
+                  # origin.
+                  await draw_and_save(page, "secure origin", errors)
+
+                  insecure = await browser.new_page()
+                  insecure.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+                  insecure.on("console", lambda m: m.type == "error" and errors.append(f"console.error: {m.text}"))
+                  await insecure.goto(f"http://{INSECURE_HOST}:8000/", wait_until="networkidle")
+                  # Without this the check could run on a secure origin and
+                  # pass whether or not the bug is there.
+                  if await insecure.evaluate("() => window.isSecureContext") is not False:
+                      print(f"FAIL http://{INSECURE_HOST}:8000/ is a secure context; the non-secure check would prove nothing")
                       sys.exit(1)
+                  await draw_and_save(insecure, "non-secure origin", errors)
+                  await insecure.close()
 
                   # Contract-marker regression guard. Assert the server stamps
                   # schema_version: 1 in the canonical foreign-member location

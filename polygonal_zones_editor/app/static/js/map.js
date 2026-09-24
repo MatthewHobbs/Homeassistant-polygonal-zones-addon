@@ -423,15 +423,13 @@ function setup_editing(map, editableLayers) {
         // draw → save round-trip end-to-end.
         //
         // `properties.id` is the stable binding handle automations use
-        // across renames. Generated client-side via crypto.randomUUID()
-        // (available in every browser HA supports; ingress runs current
-        // Chromium/WebKit). Server backfills one if the client omits it,
+        // across renames. Server backfills one if the client omits it,
         // so curl restores of pre-versioned files still work.
         layer.feature = {
             type: 'Feature',
             properties: {
                 name: name,
-                id: crypto.randomUUID().replace(/-/g, '')
+                id: new_zone_id()
             }
         };
 
@@ -446,6 +444,17 @@ function setup_editing(map, editableLayers) {
 
         delete_load_btn();
     });
+}
+
+// 32 lowercase hex characters: a UUID with the dashes removed. randomUUID
+// exists only in secure contexts, and HA is often opened over plain HTTP on
+// the LAN, where calling it threw and the drawn zone was silently lost (#46).
+function new_zone_id() {
+    if (typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID().replace(/-/g, '');
+    }
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)),
+        b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function edit_zone_event(e) {

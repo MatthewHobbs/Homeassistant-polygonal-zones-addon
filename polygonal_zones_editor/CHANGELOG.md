@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.1 — 2026-09-24
+
+- **Fixed: new zones can be drawn and saved when the editor is opened over
+  plain HTTP (#46).** With Home Assistant opened over plain HTTP, as it often is
+  on the LAN (`http://homeassistant.local:8123`), a finished shape was silently
+  dropped: it stayed on the map but never joined the zone list, and Save had
+  nothing new to send. The id generator used a browser API that only exists on secure
+  origins; it now falls back to one that is available everywhere, and ids keep
+  the same 32-character shape.
+- **Internal:** the build-time smoke's draw-and-save check had not drawn
+  anything since the Geoman swap. It fired Leaflet-Draw's `draw:created`, which
+  nothing listens to any more, and passed even with no create handler at all.
+  It now draws a zone with the real toolbar and saves it, once on a secure
+  origin and once on a plain-HTTP one, and fails on any page error.
+
 ## 0.4.0 — 2026-09-05
 
 - **New: the zone list shows each zone's area.** A room-sized figure on
