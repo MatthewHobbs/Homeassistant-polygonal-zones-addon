@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 — 2026-09-24
+## 0.4.1 — 2026-09-25
 
 - **Fixed: new zones can be drawn and saved when the editor is opened over
   plain HTTP (#46).** With Home Assistant opened over plain HTTP, as it often is
@@ -14,6 +14,9 @@
   nothing listens to any more, and passed even with no create handler at all.
   It now draws a zone with the real toolbar and saves it, once on a secure
   origin and once on a plain-HTTP one, and fails on any page error.
+- **Dependencies:** Home Assistant base image 3.24, uvicorn 0.53.0 and anyio
+  4.15.1 (#42, #45). The patched tempio built into the image now comes from
+  its 2026.07.0 release instead of an untagged commit (#40).
 
 ## 0.4.0 — 2026-09-05
 
