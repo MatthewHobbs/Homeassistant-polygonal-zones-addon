@@ -40,8 +40,11 @@ NAME="${PILOT_NAME:-pz-supervisor}"
 CORE_VERSION="${CORE_VERSION:-stable}"
 IMAGE_SOURCE="${PILOT_IMAGE_SOURCE:-checkout}"
 WORKDIR="${PILOT_WORKDIR:-}"
+# Only a directory this run created is removed on exit; a caller's is theirs.
+WORKDIR_OWNED=0
 if [[ -z "$WORKDIR" ]]; then
   WORKDIR="$(mktemp -d)"
+  WORKDIR_OWNED=1
 fi
 mkdir -p "$WORKDIR"
 # The registry lives on the devcontainer's loopback: Docker allows plain HTTP
@@ -400,10 +403,16 @@ cmd_down() {
   log "Removed $NAME and its volumes"
 }
 
+cleanup_all() {
+  cmd_down
+  ((WORKDIR_OWNED)) && rm -rf "$WORKDIR"
+  return 0
+}
+
 cmd_all() {
   local t0=$SECONDS t phase timings=""
   export PILOT_WORKDIR="$WORKDIR"
-  [[ "${PILOT_KEEP:-0}" == 1 ]] || trap 'cmd_down' EXIT
+  [[ "${PILOT_KEEP:-0}" == 1 ]] || trap 'cleanup_all' EXIT
   # Each phase in its own process: a function called on the left of || runs
   # with set -e disabled, which would let a failed step pass silently.
   for phase in build up versions sideload install provenance probe; do
