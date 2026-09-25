@@ -7,6 +7,28 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — OPEN, P3
+
+**Component:** `scripts/release-merge.sh`
+
+On the bump path, `tag_and_watch` calls `wait_for_main_version` (line 121) whether or not it is a
+dry run. That function (lines 107-115) polls `main`'s `config.yaml` for the new version. A dry run
+never merges, so `main` still has the old version, and after 30 seconds the preview fails:
+
+```
+STATUS:FAILED post-merge-version-mismatch: main=0.4.0 expected=0.4.1
+```
+
+Seen on PR #48 (0.4.0 → 0.4.1). Every pre-merge check had already passed: PR state, required
+checks, mergeability and the version bump. The real run then released v0.4.1 cleanly, because it
+merges before this check. So `--dry-run` cannot preview a release, which is the case it exists
+for. The real run is unaffected.
+
+**Fix:** skip `wait_for_main_version` when `DRY_RUN=1` and log what it would wait for, as the merge
+and tag steps already do. Cover it with a check that fails on today's script.
+
+---
+
 ## The release path's action bumps are unverified by any PR check (2026-09-05) — OPEN, P2
 
 **Component:** `.github/workflows/release.yml`
