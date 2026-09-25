@@ -1,0 +1,86 @@
+name: Supervisor pilot
+
+# ADR 0001: install, configure and use the add-on under a real stable-channel
+# Supervisor and Core, in the official add-on devcontainer, on both arches.
+# Nightly and on demand, and NOT a required check until ADR row 5 promotes it.
+# All of the logic is in scripts/supervisor-pilot.sh, which runs the same
+# way locally.
+
+on:
+  workflow_dispatch:
+    inputs:
+      floor_core:
+        description: Core version for the floor leg (the companion integration's minimum)
+        type: string
+        default: "2026.7.1"
+      disable_apparmor:
+        description: Install the add-on with apparmor false (diagnosis only)
+        type: boolean
+        default: false
+  schedule:
+    - cron: "37 3 * * *"
+  # Row 5 will call this from release.yml before publishing.
+  workflow_call:
+    inputs:
+      floor_core:
+        type: string
+        default: "2026.7.1"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Prefixed so a call from release.yml, which inherits the caller's
+  # github.workflow and github.ref, does not cancel a sibling there.
+  group: supervisor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pilot:
+    name: ${{ matrix.arch }} / Core ${{ matrix.core }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, aarch64]
+        # "stable" is whatever stable.json names today; the other leg pins
+        # Core to the floor under the same stable Supervisor (ADR row 11).
+        core: ["stable", "${{ inputs.floor_core || '2026.7.1' }}"]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      CORE_VERSION: ${{ matrix.core }}
+      PILOT_KEEP: "1"
+      PILOT_DISABLE_APPARMOR: ${{ inputs.disable_apparmor && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the add-on under the stable Supervisor
+        env:
+          PILOT_WORKDIR: ${{ runner.temp }}/pilot
+        run: scripts/supervisor-pilot.sh all
+
+      - name: Collect diagnostics
+        if: failure()
+        env:
+          PILOT_WORKDIR: ${{ runner.temp }}/pilot
+        run: scripts/supervisor-pilot.sh diagnostics "$PILOT_WORKDIR/diagnostics"
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: supervisor-pilot-${{ matrix.arch }}-${{ matrix.core }}
+          path: ${{ runner.temp }}/pilot/diagnostics
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Tear down
+        if: always()
+        run: scripts/supervisor-pilot.sh down
