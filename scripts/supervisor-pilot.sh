@@ -355,13 +355,17 @@ cmd_probe() {
   local ingress pid uid
   ingress="$(ha_cli apps info "$SLUG" --raw-json | jq -er .data.ingress_url)" || fail "no ingress_url"
 
-  # Non-root regression guard from build.yml, on the Supervisor-run container.
+  # The same guard as build.yml's smoke, on the Supervisor-run container:
+  # exactly uid 1001, and that uid must be `app`.
   pid="$(dc docker exec "$ADDON_CONTAINER" pgrep -f 'python main.py' | head -n1 || true)"
   [[ -n "$pid" ]] || fail "could not find python main.py in $ADDON_CONTAINER"
   # shellcheck disable=SC2016 # $2 is awk's, not the shell's
   uid="$(dc docker exec "$ADDON_CONTAINER" awk '/^Uid:/{print $2}' "/proc/$pid/status")"
-  [[ "$uid" != 0 ]] || fail "web service runs as root under the Supervisor"
-  log "OK web service runs as uid $uid under the Supervisor"
+  # shellcheck disable=SC2016 # $3 and $1 are awk's
+  user="$(dc docker exec "$ADDON_CONTAINER" awk -F: -v u="$uid" '$3 == u {print $1}' /etc/passwd)"
+  [[ "$uid" == 1001 && "$user" == app ]] ||
+    fail "web service runs as uid=${uid:-?}(${user:-?}) under the Supervisor, expected uid=1001(app)"
+  log "OK web service runs as uid=$uid($user) under the Supervisor"
 
   local base
   base="$(core_url)" || fail "Core is not answering on 8123 or 80"

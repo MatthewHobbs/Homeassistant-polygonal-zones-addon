@@ -7,6 +7,21 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## The draw-and-save browser check exists twice (2026-09-25) — OPEN, P3
+
+**Component:** `.github/workflows/build.yml`, `scripts/supervisor_probe.py`
+
+The Supervisor pilot (ADR 0001) needed build.yml's draw-and-save check through Core's ingress,
+and build.yml could not be edited in the same change, so `supervisor_probe.py` carries a copy of
+`draw_and_save`. Two copies of a regression guard drift: a fix to one, such as the #46
+non-secure-origin leg, has to be made twice or is silently missing from the other.
+
+**Fix:** move build.yml's Playwright heredoc into `scripts/` and have both the standalone smoke
+and the pilot import the one `draw_and_save`. Keep the pilot's ingress-specific parts (Core
+login, the ingress session, the option check) where they are.
+
+---
+
 ## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — OPEN, P3
 
 **Component:** `scripts/release-merge.sh`

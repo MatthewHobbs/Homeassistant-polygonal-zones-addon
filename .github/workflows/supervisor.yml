@@ -7,6 +7,14 @@ name: Supervisor pilot
 # way locally.
 
 on:
+  # A PR that changes the pilot runs it, so the change is proven on the real
+  # runners before it merges. Other PRs never trigger it.
+  pull_request:
+    paths:
+      - .github/workflows/supervisor.yml
+      - scripts/supervisor-pilot.sh
+      - scripts/supervisor_probe.py
+      - scripts/supervisor-probe-requirements.txt
   workflow_dispatch:
     inputs:
       floor_core:

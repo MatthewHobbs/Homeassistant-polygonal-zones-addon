@@ -15,8 +15,10 @@ venv:
     uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements-dev.txt
 
 lint:
-    ruff check polygonal_zones_editor
-    shellcheck -x scripts/release-merge.sh
+    # Same scope as lint.yml's ruff-action: the repo root, so scripts/ is covered.
+    ruff check
+    ruff format --check
+    shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh
 
 test: venv
     cd polygonal_zones_editor && ../.venv/bin/python -m pytest -v
