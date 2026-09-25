@@ -53,11 +53,23 @@ jobs:
               "aarch64": "linux/arm64",
               "amd64":   "linux/amd64",
           }
-          missing = set(tags) - set(arch_to_platform)
+          # Each arch builds and boots on a native runner, as
+          # home-assistant/addons' builder.yml does, so the smoke and
+          # Playwright run the real binaries rather than QEMU's emulation.
+          arch_to_runner = {
+              "aarch64": "ubuntu-24.04-arm",
+              "amd64":   "ubuntu-latest",
+          }
+          missing = set(tags) - (set(arch_to_platform) & set(arch_to_runner))
           if missing:
               raise SystemExit(f"unknown arches: {sorted(missing)}")
           includes = [
-              {"arch": arch, "platform": arch_to_platform[arch], "base": refs[arch]}
+              {
+                  "arch": arch,
+                  "platform": arch_to_platform[arch],
+                  "runner": arch_to_runner[arch],
+                  "base": refs[arch],
+              }
               for arch in tags
           ]
           print("include=" + json.dumps(includes))
@@ -66,14 +78,13 @@ jobs:
   docker-build:
     name: Build (${{ matrix.arch }})
     needs: matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.matrix.outputs.include) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Build polygonal_zones_editor image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -87,9 +98,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Smoke-test every arch. amd64 loads + runs natively; aarch64 loads and
-      # runs via the QEMU binfmt set up above (slower, but catches arm64-specific
-      # boot regressions before they reach RPi / HA Yellow / HA Green users).
+      # Smoke-test every arch, each natively on its own runner, which catches
+      # arm64-specific boot regressions before they reach RPi / HA Yellow /
+      # HA Green users.
       # Verifies the addon boots under a Supervisor-style /data mount (root-owned
       # options.json), which would have caught the regressions in 0.2.0 and 0.2.1.
       - name: Build smoke image
@@ -113,8 +124,7 @@ jobs:
 
           docker run -d --name smoke -p 8000:8000 -v "$DATA":/data polygonal-zones:smoke
 
-          # Wait up to 90s for /healthz (generous headroom: aarch64 boots under
-          # QEMU emulation, which is much slower than the native amd64 run).
+          # Wait up to 90s for /healthz (generous headroom for a cold runner).
           for i in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:8000/healthz | grep -q ok; then
               echo "OK /healthz responded on attempt $i"
@@ -148,8 +158,9 @@ jobs:
             ]}' \
             http://127.0.0.1:8000/save_zones | grep -q '"status":"ok"' && echo "OK /save_zones round-trip"
 
-          # The web service must run as non-root (uid != 0). Regression guard
-          # for #14. BusyBox ps doesn't support -p, so read /proc directly.
+          # The web service must run as the Dockerfile's `app` user, uid 1001.
+          # Regression guard for #14. Rejecting only uid 0 would pass a drop to
+          # the wrong account. BusyBox ps doesn't support -p, so read /proc.
           PID=$(docker exec smoke pgrep -f 'python main.py' | head -n1 || true)
           if [ -z "$PID" ]; then
             echo "FAIL could not locate python main.py process"
@@ -158,12 +169,13 @@ jobs:
             exit 1
           fi
           WEB_UID=$(docker exec smoke awk '/^Uid:/{print $2}' "/proc/$PID/status")
-          if [ "$WEB_UID" = "0" ]; then
-            echo "FAIL web service is running as root (uid 0)"
+          WEB_USER=$(docker exec smoke awk -F: -v uid="$WEB_UID" '$3 == uid {print $1}' /etc/passwd)
+          if [ "$WEB_UID" != "1001" ] || [ "$WEB_USER" != "app" ]; then
+            echo "FAIL web service runs as uid=${WEB_UID:-?}(${WEB_USER:-?}), expected uid=1001(app)"
             docker logs smoke
             exit 1
           fi
-          echo "OK web service runs as uid $WEB_UID (non-root)"
+          echo "OK web service runs as uid=$WEB_UID($WEB_USER)"
 
       # Headless-browser smoke: load index.html, ensure no JS errors and that
       # the zone we POSTed above actually renders. Catches client-side
@@ -171,7 +183,6 @@ jobs:
       # 0.2.8 module-scope bug where /zones.json returned 200 but the page
       # showed "Failed to load zones" because of a JS ReferenceError).
       - name: Frontend smoke (Playwright)
-        if: matrix.arch == 'amd64'
         run: |
           set -euo pipefail
           python3 -m pip install --quiet playwright
@@ -516,8 +527,23 @@ jobs:
           asyncio.run(main())
           PY
 
+      # A handled exception can still leave every probe and the browser smoke
+      # green, so read the log once all of that traffic has run. Capture first:
+      # `docker logs | grep -q` under pipefail can SIGPIPE the writer and turn
+      # a match into a miss.
+      - name: No Python traceback in the container log
+        run: |
+          set -euo pipefail
+          LOGS=$(docker logs smoke 2>&1)
+          if grep -qF 'Traceback (most recent call last)' <<< "$LOGS"; then
+            echo "FAIL container log contains a Python traceback"
+            printf '%s\n' "$LOGS"
+            exit 1
+          fi
+          echo "OK no Python traceback in the container log"
+
       - name: Container logs and cleanup
-        if: matrix.arch == 'amd64' && always()
+        if: always()
         run: |
           echo "--- container logs ---"
           docker logs smoke || true
