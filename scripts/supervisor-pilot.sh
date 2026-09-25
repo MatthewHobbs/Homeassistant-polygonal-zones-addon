@@ -393,6 +393,17 @@ cmd_diagnostics() {
   ha_cli core logs >"$out/core.log" 2>&1 || true
   ha_cli apps logs "$SLUG" >"$out/addon.log" 2>&1 || true
   ha_cli resolution info --raw-json >"$out/resolution.json" 2>&1 || true
+  # AppArmor is the runner host's kernel, not the devcontainer's: a denial for
+  # the add-on's profile shows up in the host ring buffer with the operation
+  # and address family that was refused, which the add-on's own log never says.
+  {
+    echo "kernel: $(dc uname -r 2>&1)"
+    echo "apparmor enabled: $(dc cat /sys/module/apparmor/parameters/enabled 2>&1)"
+    echo "--- loaded profiles matching the add-on"
+    dc grep -i polygonal /sys/kernel/security/apparmor/profiles 2>&1
+    echo "--- dmesg apparmor lines"
+    dc dmesg 2>&1 | grep -i apparmor
+  } >"$out/apparmor.txt" 2>&1 || true
   log "Diagnostics in $out"
 }
 
