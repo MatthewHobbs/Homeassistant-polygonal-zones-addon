@@ -182,7 +182,9 @@ tracker_refresh_seconds: 30
 ```
 
 Polling pauses while the browser tab is hidden and catches up when you return.
-If a poll fails, the map keeps the last positions rather than clearing them.
+If Home Assistant cannot be asked about an entity on a poll, its last position
+stays on the map rather than vanishing; an entity Home Assistant answers for
+without coordinates is removed, because that is a real report of no position.
 The option does nothing while `overlay_entities` is empty.
 
 ### Before you add people

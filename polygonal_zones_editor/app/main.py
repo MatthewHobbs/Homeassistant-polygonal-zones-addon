@@ -718,17 +718,29 @@ def trackers_json_generator(options: dict):
             )
             return _uncached({"configured": True, "trackers": [], "error": "no_supervisor_token"})
 
-        def _gather() -> list[dict]:
-            found = []
+        def _gather() -> tuple[list[dict], list[str]]:
+            # An entity Home Assistant could not be asked about is listed, not
+            # dropped: a polling client must be able to tell "unreachable" from
+            # "reported no position", or an outage wipes every marker.
+            found, unavailable = [], []
             for entity_id in entities:
-                point = _overlay_point(entity_id, _fetch_state(entity_id, token))
+                payload = _fetch_state(entity_id, token)
+                if payload is None:
+                    unavailable.append(entity_id)
+                    continue
+                point = _overlay_point(entity_id, payload)
                 if point is not None:
                     found.append(point)
-            return found
+            return found, unavailable
 
-        trackers = await run_in_threadpool(_gather)
+        trackers, unavailable = await run_in_threadpool(_gather)
         return _uncached(
-            {"configured": True, "trackers": trackers, "refresh_seconds": refresh_seconds}
+            {
+                "configured": True,
+                "trackers": trackers,
+                "unavailable": unavailable,
+                "refresh_seconds": refresh_seconds,
+            }
         )
 
     return trackers_json

@@ -1628,6 +1628,34 @@ def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypa
     )
     body = client.get("/trackers.json").json()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    # ...and is named, so a polling editor keeps its last position instead of
+    # reading its absence as "no position now".
+    assert body["unavailable"] == ["device_tracker.broken"]
+
+
+def test_trackers_json_drops_entities_that_report_no_position(app_factory, monkeypatch):
+    """Reachable but without coordinates is a real answer, not an outage."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+
+    def fake_fetch(entity_id, token):
+        if entity_id.endswith("indoors"):
+            return {"entity_id": entity_id, "state": "home", "attributes": {}}
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.indoors", "device_tracker.ok"],
+            }
+        )
+    )
+    body = client.get("/trackers.json").json()
+    assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    assert body["unavailable"] == []
 
 
 def test_fetch_state_returns_none_on_transport_error(monkeypatch):

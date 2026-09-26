@@ -190,8 +190,14 @@ function pz_fetch_trackers() {
         .then((r) => (r.ok ? r.json() : null));
 }
 
+/* A tracker the add-on could not read this poll keeps its last position; one
+ * that Home Assistant answered for but without coordinates is dropped, since
+ * that is real data saying there is no position. */
 function pz_apply_trackers(body) {
-    pz_trackers = Array.isArray(body.trackers) ? body.trackers : [];
+    const fresh = Array.isArray(body.trackers) ? body.trackers : [];
+    const unavailable = new Set(Array.isArray(body.unavailable) ? body.unavailable : []);
+    const kept = pz_trackers.filter((t) => unavailable.has(t.entity_id));
+    pz_trackers = fresh.concat(kept);
     pz_render_markers();
     pz_render_readout();
 }
