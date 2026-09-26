@@ -100,6 +100,28 @@ poll() {
   log "OK (${description}, $((SECONDS - start))s)"
 }
 
+# `docker run` of an image not yet local asks the registry once, and one
+# timed-out header from mcr.microsoft.com failed a pilot whose add-on was
+# already up (run 36235596621). The sleeps total 75s, so a real outage
+# still fails well inside the job timeout.
+pull_image() {
+  local image="$1" attempt delay=5
+  # The references are digest-pinned, so a local hit is the exact image and
+  # needs no registry: a run on a warm daemon survives an outage.
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return
+  fi
+  for attempt in 1 2 3 4 5; do
+    if docker pull --quiet "$image" >/dev/null; then
+      return
+    fi
+    ((attempt < 5)) || fail "could not pull $image after $attempt attempts"
+    log "pull of $image failed (attempt $attempt/5), retrying in ${delay}s"
+    sleep "$delay"
+    delay=$((delay * 2))
+  done
+}
+
 docker_arch() {
   case "$(docker version --format '{{.Server.Arch}}')" in
     amd64 | x86_64) echo amd64 ;;
@@ -148,7 +170,7 @@ cmd_build() {
     --load \
     "$REPO_ROOT/$ADDON_DIR"
 
-  docker pull --quiet "$REGISTRY_IMAGE" >/dev/null
+  pull_image "$REGISTRY_IMAGE"
   docker tag "$REGISTRY_IMAGE" "$REGISTRY_TAG"
   docker save "$tag" "$REGISTRY_TAG" -o "$WORKDIR/images.tar"
   {
@@ -163,6 +185,7 @@ cmd_up() {
   if docker container inspect "$NAME" >/dev/null 2>&1; then
     fail "container $NAME already exists; run '$0 down' first"
   fi
+  pull_image "$DEVCONTAINER_IMAGE"
   log "Starting devcontainer $DEVCONTAINER_IMAGE"
   # SUPERVISOR_CHANNEL explicitly: the devcontainer defaults to dev and its
   # template to beta. --privileged: it runs systemd and its own dockerd.
@@ -376,6 +399,7 @@ cmd_probe() {
   local base
   base="$(core_url)" || fail "Core is not answering on 8123 or 80"
   log "Probing through Core ingress at $base$ingress"
+  pull_image "$PLAYWRIGHT_IMAGE"
   # Shares the devcontainer's network namespace, so Core is on its loopback
   # here and in CI alike, with no published ports.
   docker run --rm --network "container:$NAME" \
