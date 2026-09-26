@@ -1,33 +1,41 @@
 # Testing
 
-This repo has three layers of automated testing, plus a manual live-HA-OS layer for anything CI can't cover.
+This repo has four layers of automated testing, plus a manual live-HA-OS layer for anything CI can't cover.
 
 ## Automated (CI)
 
 | Layer | What it runs | Where |
 |---|---|---|
 | `Tests` | `pytest -v` (100% line coverage gated by `--cov-fail-under=100`) | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
-| `Lint addon` | `frenck/action-addon-linter` + `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
-| `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`) + amd64 smoke boot + Playwright headless page load | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
+| `Lint addon` | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within the global bound, and `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
+| `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
+| `Supervisor pilot` (nightly / on demand, not yet required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer, on both arches | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
 
-The amd64 smoke step in `build.yml` boots the container with a stub `options.json` mount and probes:
+The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
 - `/zones.json` returning a valid GeoJSON `FeatureCollection`
 - `POST /save_zones` round-trips a minimal Polygon payload
 - the web service runs as uid 1001 (not root) — regression guard for the s6 privilege-drop fallback
-- the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`
+- no Python traceback in the container log
+- the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`, drawn and saved through the real Geoman toolbar on both a secure and a non-secure origin
 
-All three workflows gate the release pipeline. A tag push to `v*` can't publish images until `Tests`, `Lint`, and `Build` (incl. amd64 smoke boot + Playwright) are all green.
+`Tests`, `Lint`, and `Build` gate the release pipeline: a tag push to `v*` can't publish images until all three are green on the tagged SHA. `Supervisor pilot` does not gate release yet (ADR 0001 row 5) — a release can still ship without it.
+
+## Supervisor pilot (nightly / on demand)
+
+`.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). Each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). It installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor — this is what caught the profile's unix-socket-mediation break, fixed in 0.4.2 — on a newer parser and kernel than HA OS ships.
+
+It runs nightly and on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release; ADR 0001 row 5 tracks promoting it once a trial period shows no non-flaky failures.
 
 ## Manual — live HA OS
 
-Some regressions only show up under a real Supervisor. Reasons:
+The Supervisor pilot now covers install, setting a *valid* option through the Supervisor API, ingress, and AppArmor enforcement — but on a devcontainer, not HA OS itself, and only the happy path. Some things still only show up under a real HA OS install, or need a case the pilot doesn't probe:
 
-- `config.yaml` schema validation (e.g. `zone_colour: match(...)`) only fires when Supervisor applies the configuration.
-- Ingress (`172.30.32.2`) isn't synthesisable from a plain docker run — you need Supervisor's networking.
+- `config.yaml` schema *rejection* (e.g. `zone_colour: match(...)` refusing `""` or `rgb(...)`) — the pilot only round-trips a valid value.
 - `backup: hot` behaviour requires triggering a Supervisor snapshot.
-- AppArmor profile enforcement is off when the addon runs outside Supervisor.
-- Codenotary signature verification is only performed by Supervisor on install.
+- Codenotary signature verification (provenance) is only performed by Supervisor on install.
+- HA OS's actual kernel and AppArmor parser versions, which differ from the devcontainer's (see ADR 0001's 2026-09-26 amendment).
+- Real hardware (RPi, HA Yellow/Green) rather than a GitHub Actions runner.
 
 **Do these before merging any PR that touches `Dockerfile`, `rootfs/`, `config.yaml`, `build.yaml`, or `apparmor.txt`:**
 
