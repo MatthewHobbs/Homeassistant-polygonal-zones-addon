@@ -1,3 +1,13 @@
+# Policy ABI pinned to 3.0. A parser compiles a profile against the running
+# kernel's feature set unless told otherwise. A parser newer than 4.0 on a
+# kernel from 6.17, which mediates unix sockets, then produced a policy under
+# which `network,` granted no unix socket at all: s6 could not create its
+# control socket and the add-on never started. Found by the ADR 0001 pilot on
+# Ubuntu 24.04 runners; HA OS 18.3's parser 3.1.7 cannot produce that
+# encoding, so users were not hit. The pin keeps the encoding this profile was
+# written and tested against, on every parser from 3.0 up.
+abi <abi/3.0>,
+
 #include <tunables/global>
 
 # AppArmor profile for the Polygonal Zones addon.

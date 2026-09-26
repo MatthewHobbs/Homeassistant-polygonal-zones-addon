@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.3 — 2026-09-26
+
+- **Changed: the add-on now requires Home Assistant 2026.8.1 or newer.**
+  `config.yaml` declares a minimum Core version for the first time. Installs
+  on an older Core keep 0.4.2 and are not offered this update until Home
+  Assistant is upgraded. The value follows the owner's rule that a declared
+  minimum is at most the `.1` release of the month before current stable
+  (2026.9.3 today), so every install from 2026.8.1 onward keeps receiving
+  updates. CI now checks the declared value against `stable.json` on every
+  run, and the Supervisor-level test (ADR 0001) runs the add-on on exactly
+  that Core under the current stable Supervisor.
+
+## 0.4.2 — 2026-09-26
+
+- **Fixed: the AppArmor profile pins its policy ABI, so the add-on keeps
+  starting on newer AppArmor setups.** Linux 6.17 added unix-socket mediation
+  to AppArmor. A parser newer than 4.0 compiling this profile on such a kernel
+  produced a policy under which `network,` granted no unix socket: s6 could
+  not create its control socket and the add-on never started. HA OS 18.3
+  (kernel 6.18) still ships parser 3.1.7, which cannot produce that encoding,
+  so no user has been hit; the next parser bump would have hit everyone. Found
+  by the new Supervisor-level CI test (ADR 0001), which failed every run on
+  Ubuntu 24.04 runners until the pin.
+
 ## 0.4.1 — 2026-09-25
 
 - **Fixed: new zones can be drawn and saved when the editor is opened over
