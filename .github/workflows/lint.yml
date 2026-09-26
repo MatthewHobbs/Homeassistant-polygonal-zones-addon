@@ -83,7 +83,7 @@ jobs:
         # explicitly by path. `-x` lets shellcheck follow sourced files.
         run: |
           set -euo pipefail
-          shellcheck -x scripts/release-merge.sh
+          shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh
           shellcheck -x \
             polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms \
             polygonal_zones_editor/rootfs/etc/services.d/web/run \

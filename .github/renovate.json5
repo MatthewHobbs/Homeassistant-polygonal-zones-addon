@@ -55,6 +55,18 @@
       "datasourceTemplate": "github-tags",
       "versioningTemplate": "loose",
     },
+    {
+      "customType": "regex",
+      // The devcontainer, Playwright and registry images the Supervisor pilot runs, each a
+      // quoted `name:tag@digest`. The tag is the exact upstream tag (6-apps, v1.63.0-noble),
+      // so the lookup can find it; a tag that does not exist upstream fails silently.
+      "description": "Keep the Supervisor pilot's digest-pinned images fresh",
+      "managerFilePatterns": ["/^scripts/supervisor-pilot\\.sh$/"],
+      "matchStrings": [
+        "\"(?<depName>(?:ghcr\\.io|mcr\\.microsoft\\.com|docker\\.io)/[a-z0-9._/-]+):(?<currentValue>[A-Za-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})\"",
+      ],
+      "datasourceTemplate": "docker",
+    },
   ],
   "packageRules": [
     {
@@ -62,6 +74,11 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/home-assistant/**"],
       "groupName": "home-assistant-base-images",
+    },
+    {
+      "description": "The pilot's images move on their own, not with the add-on's base images. After the base-image rule so it wins for the devcontainer, which that rule's ghcr.io/home-assistant/** also matches.",
+      "matchFileNames": ["scripts/supervisor-pilot.sh"],
+      "groupName": "supervisor-pilot-images",
     },
     {
       "description": "One PR for all GitHub Actions, matching the grouping Dependabot used before this change.",
