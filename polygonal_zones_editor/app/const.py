@@ -32,9 +32,14 @@ SCHEMA_VERSION = 1
 SUPERVISOR_API = "http://supervisor/core/api"
 SUPERVISOR_TOKEN_ENV = "SUPERVISOR_TOKEN"
 
-# Per-request budget for the whole overlay fetch. Home Assistant is on the
-# same host, so this is a stall guard rather than a latency allowance.
+# Budget for the whole overlay fetch, per /trackers.json request: both the
+# per-entity socket timeout and the deadline the gather waits for all of them.
+# Home Assistant is on the same host, so this is a stall guard rather than a
+# latency allowance. Entities that miss it are reported unavailable.
 OVERLAY_TIMEOUT_SECONDS = 5.0
+# Entities are fetched concurrently so the deadline is the whole cost of an
+# outage, not a multiple of it; this caps the threads one poll can use.
+OVERLAY_FETCH_WORKERS = 8
 
 # Ceiling on how many entities the overlay will fetch, whatever the option
 # says. Each is a separate Supervisor call; an accidental 200-entity list

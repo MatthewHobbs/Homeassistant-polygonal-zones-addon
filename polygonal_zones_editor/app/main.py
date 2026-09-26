@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, wait
 from email.utils import formatdate
 import hashlib
 import ipaddress
@@ -32,6 +33,7 @@ from const import (
     MAX_TRACKER_REFRESH_SECONDS,
     MIN_TRACKER_REFRESH_SECONDS,
     OVERLAY_COORD_DECIMALS,
+    OVERLAY_FETCH_WORKERS,
     OVERLAY_TIMEOUT_SECONDS,
     SCHEMA_VERSION,
     SUPERVISOR_API,
@@ -719,12 +721,19 @@ def trackers_json_generator(options: dict):
             return _uncached({"configured": True, "trackers": [], "error": "no_supervisor_token"})
 
         def _gather() -> tuple[list[dict], list[str]]:
-            # An entity Home Assistant could not be asked about is listed, not
-            # dropped: a polling client must be able to tell "unreachable" from
-            # "reported no position", or an outage wipes every marker.
+            # One deadline for the whole overlay, with the fetches concurrent:
+            # sequential per-entity timeouts would let 25 entities behind an
+            # unreachable Supervisor hold this worker for 25 timeouts, and the
+            # editor polls this. An entity Home Assistant could not be asked
+            # about in time is listed, not dropped, so a polling client can tell
+            # "unreachable" from "reported no position" and keep its marker.
+            pool = ThreadPoolExecutor(max_workers=min(len(entities), OVERLAY_FETCH_WORKERS))
+            futures = {pool.submit(_fetch_state, e, token): e for e in entities}
+            done, _ = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
+            pool.shutdown(wait=False, cancel_futures=True)
             found, unavailable = [], []
-            for entity_id in entities:
-                payload = _fetch_state(entity_id, token)
+            for future, entity_id in futures.items():
+                payload = future.result() if future in done else None
                 if payload is None:
                     unavailable.append(entity_id)
                     continue

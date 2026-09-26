@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 import urllib.error
 
 import pytest
@@ -1655,6 +1656,56 @@ def test_trackers_json_drops_entities_that_report_no_position(app_factory, monke
     )
     body = client.get("/trackers.json").json()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    assert body["unavailable"] == []
+
+
+def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monkeypatch):
+    """A stalled entity costs one timeout for the whole poll, not one per entity,
+    and is reported unavailable rather than making the fast ones wait."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    monkeypatch.setattr(main, "OVERLAY_TIMEOUT_SECONDS", 0.2)
+
+    def fake_fetch(entity_id, token):
+        if entity_id.endswith("stalled"):
+            time.sleep(1.0)
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.stalled", "device_tracker.ok"],
+            }
+        )
+    )
+    started = time.monotonic()
+    body = client.get("/trackers.json").json()
+    assert time.monotonic() - started < 0.8
+    assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    assert body["unavailable"] == ["device_tracker.stalled"]
+
+
+def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
+    """25 entities at 50 ms each take ~1.25 s sequentially; the deadline only
+    holds if they overlap. Keeps the response order of the option."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+
+    def fake_fetch(entity_id, token):
+        time.sleep(0.05)
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    entities = [f"device_tracker.t{i:02d}" for i in range(25)]
+    client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
+    started = time.monotonic()
+    body = client.get("/trackers.json").json()
+    assert time.monotonic() - started < 0.6
+    assert [t["entity_id"] for t in body["trackers"]] == entities
     assert body["unavailable"] == []
 
 

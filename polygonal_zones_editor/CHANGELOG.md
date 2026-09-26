@@ -17,8 +17,11 @@
   overlay was only created if the first read returned at least one position.
 - **Internal:** `GET /trackers.json` now answers with `Cache-Control: no-store`
   and, when `overlay_entities` is set, includes `refresh_seconds` and
-  `unavailable`, the listed entities it could not read on that poll. The body
-  for an unconfigured overlay is unchanged.
+  `unavailable`, the listed entities it could not read on that poll. The
+  entities are read concurrently under one five-second deadline per request,
+  where before each had its own, so an unreachable Home Assistant costs a poll
+  five seconds rather than five per listed entity. The body for an
+  unconfigured overlay is unchanged.
 
 ## 0.4.3 — 2026-09-26
 
