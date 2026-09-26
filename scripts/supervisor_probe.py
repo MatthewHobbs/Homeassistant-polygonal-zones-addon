@@ -226,21 +226,38 @@ async def draw_and_save(page, label, errors):
 async def tracker_position(page, entity_id):
     """The editor's own view of an overlay entity, straight from its live
     `pz_trackers` array — never re-fetch /trackers.json ourselves, or a poll
-    the editor never made would pass the check."""
+    the editor never made would pass the check. `pz_trackers` is declared with
+    `let` at the top of a classic (non-module) script, so it is a lexical
+    binding of the page's global scope, not a `window` property; reading
+    `window.pz_trackers` is always undefined."""
     return await page.evaluate(
-        "(id) => { const t = (window.pz_trackers || []).find(t => t.entity_id === id);"
+        "(id) => { const t = (typeof pz_trackers !== 'undefined' ? pz_trackers : [])"
+        ".find(t => t.entity_id === id);"
         " return t ? [t.latitude, t.longitude] : null; }",
         entity_id,
     )
+
+
+async def wait_for_tracker(page, entity_id, timeout_s):
+    """The overlay's first read is a real fetch through the Supervisor to Core,
+    not the instant thing a stub makes it look like; give it room to land."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    position = None
+    while asyncio.get_event_loop().time() < deadline:
+        position = await tracker_position(page, entity_id)
+        if position is not None:
+            return position
+        await asyncio.sleep(1)
+    return position
 
 
 async def tracker_refresh(page, base, token, entity_id, refresh_seconds):
     """Move `zone.home` through Core's own service call and confirm the
     editor's next poll — through the real Supervisor and Core, not a stub —
     picks up the new position without a reload (#47, ADR 0001)."""
-    before = await tracker_position(page, entity_id)
+    before = await wait_for_tracker(page, entity_id, 20)
     if before is None:
-        fail(f"tracker overlay never showed {entity_id} before the location change")
+        fail(f"tracker overlay never showed {entity_id} within 20s of the page loading")
     lat, lon = before
     moved = (round(lat + 0.05, 4), round(lon + 0.05, 4))
     http(
