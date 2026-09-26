@@ -8,6 +8,12 @@ smoke probes and its draw-and-save check against the ingress URL.
 
 The draw-and-save check is duplicated from build.yml's Frontend smoke step,
 which this change must not touch; fold the two together once it can.
+
+tracker_refresh() proves the tracker overlay (ADR 0001, issue #47) end to end:
+a real Core service call moves `zone.home`, and the check watches the editor's
+own polling — not a stub — pick the new position up without a reload. The
+container-verify stub in the addon PR covers every edge case (outages,
+concurrency, hidden tabs); this only has to show the real stack agrees.
 """
 
 import argparse
@@ -35,7 +41,7 @@ def fail(msg, errors=()):
     sys.exit(1)
 
 
-def http(method, url, data=None, form=False):
+def http(method, url, data=None, form=False, token=None):
     headers = {}
     body = None
     if data is not None:
@@ -45,6 +51,8 @@ def http(method, url, data=None, form=False):
         else:
             body = json.dumps(data).encode()
             headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.load(resp)
@@ -215,6 +223,69 @@ async def draw_and_save(page, label, errors):
     print(f"OK [{label}] drew a zone, id {new_id}, saved and persisted")
 
 
+async def tracker_position(page, entity_id):
+    """The editor's own view of an overlay entity, straight from its live
+    `pz_trackers` array — never re-fetch /trackers.json ourselves, or a poll
+    the editor never made would pass the check. `pz_trackers` is declared with
+    `let` at the top of a classic (non-module) script, so it is a lexical
+    binding of the page's global scope, not a `window` property; reading
+    `window.pz_trackers` is always undefined."""
+    return await page.evaluate(
+        "(id) => { const t = (typeof pz_trackers !== 'undefined' ? pz_trackers : [])"
+        ".find(t => t.entity_id === id);"
+        " return t ? [t.latitude, t.longitude] : null; }",
+        entity_id,
+    )
+
+
+async def wait_for_tracker(page, entity_id, timeout_s):
+    """The overlay's first read is a real fetch through the Supervisor to Core,
+    not the instant thing a stub makes it look like; give it room to land."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    position = None
+    while asyncio.get_event_loop().time() < deadline:
+        position = await tracker_position(page, entity_id)
+        if position is not None:
+            return position
+        await asyncio.sleep(1)
+    return position
+
+
+async def tracker_refresh(page, base, token, entity_id, refresh_seconds):
+    """Move `zone.home` through Core's own service call and confirm the
+    editor's next poll — through the real Supervisor and Core, not a stub —
+    picks up the new position without a reload (#47, ADR 0001)."""
+    before = await wait_for_tracker(page, entity_id, 20)
+    if before is None:
+        fail(f"tracker overlay never showed {entity_id} within 20s of the page loading")
+    lat, lon = before
+    moved = (round(lat + 0.05, 4), round(lon + 0.05, 4))
+    http(
+        "POST",
+        f"{base}/api/services/homeassistant/set_location",
+        {"latitude": moved[0], "longitude": moved[1]},
+        token=token,
+    )
+    print(f"OK moved {entity_id} via homeassistant.set_location: {before} -> {moved}")
+
+    # Two polls of margin: the option is validated (and 1-9 raised to 10) by
+    # the add-on itself, so this waits on whatever the Supervisor actually
+    # holds, not on the value this script asked for.
+    deadline = asyncio.get_event_loop().time() + refresh_seconds * 2 + 20
+    after = before
+    while asyncio.get_event_loop().time() < deadline:
+        after = await tracker_position(page, entity_id)
+        if after is not None and after != before:
+            break
+        await asyncio.sleep(1)
+    if after is None or after == before:
+        fail(
+            f"{entity_id} still reports {after} through the editor "
+            f"{refresh_seconds * 2 + 20}s after moving it to {moved}"
+        )
+    print(f"OK [{entity_id}] editor picked up the moved position via its own poll: {after}")
+
+
 async def open_editor(context, origin, ingress, errors, expect_secure):
     page = await context.new_page()
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
@@ -238,6 +309,12 @@ async def main():
     ap.add_argument("--base", required=True)
     ap.add_argument("--ingress", required=True, help="ingress_url from the Supervisor")
     ap.add_argument("--expect-colour", required=True)
+    ap.add_argument(
+        "--tracker-entity",
+        help="overlay entity to move and watch update through ingress polling; "
+        "omit to skip the tracker-refresh check",
+    )
+    ap.add_argument("--tracker-refresh-seconds", type=int, default=10)
     args = ap.parse_args()
     base = args.base.rstrip("/")
     port = urllib.parse.urlsplit(base).port
@@ -267,8 +344,12 @@ async def main():
 
         await smoke(context.request, base + args.ingress, args.expect_colour)
 
-        page = await open_editor(context, base, args.ingress, errors, True)
-        await draw_and_save(page, "secure origin", errors)
+        secure_page = await open_editor(context, base, args.ingress, errors, True)
+        await draw_and_save(secure_page, "secure origin", errors)
+        if args.tracker_entity:
+            await tracker_refresh(
+                secure_page, base, token, args.tracker_entity, args.tracker_refresh_seconds
+            )
         page = await open_editor(context, insecure, args.ingress, errors, False)
         await draw_and_save(page, "non-secure origin", errors)
 
