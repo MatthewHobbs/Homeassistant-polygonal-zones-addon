@@ -46,3 +46,10 @@ MAX_OVERLAY_ENTITIES = 25
 # user can place by hand on a map; full float precision would put ~0.1 mm
 # positions into a LAN-reachable response for no benefit.
 OVERLAY_COORD_DECIMALS = 4
+
+# How often an open editor re-polls /trackers.json; 0 loads positions once per
+# page view. Every poll costs one Supervisor call per entity, so the floor stops
+# a slip like "1" from turning 25 entities into 25 calls a second per open tab.
+DEFAULT_TRACKER_REFRESH_SECONDS = 60
+MIN_TRACKER_REFRESH_SECONDS = 10
+MAX_TRACKER_REFRESH_SECONDS = 3600

@@ -1482,6 +1482,78 @@ def test_trackers_json_reports_not_configured_by_default(allow_all_client):
     r = allow_all_client.get("/trackers.json")
     assert r.status_code == 200
     assert r.json() == {"configured": False, "trackers": []}
+    assert r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, 60),
+        (60, 60),
+        (0, 0),
+        (10, 10),
+        (3600, 3600),
+        (1, 10),
+        (9, 10),
+        (86400, 3600),
+    ],
+)
+def test_tracker_refresh_seconds(raw, expected):
+    import main
+
+    options = {} if raw is None else {"tracker_refresh_seconds": raw}
+    assert main.tracker_refresh_seconds(options) == expected
+
+
+def test_tracker_refresh_seconds_explicit_null_uses_default():
+    import main
+
+    assert main.tracker_refresh_seconds({"tracker_refresh_seconds": None}) == 60
+
+
+@pytest.mark.parametrize("bad", [True, False, -5, 30.5, "60", [60]])
+def test_tracker_refresh_seconds_rejects_non_seconds(bad, caplog):
+    """`true` is not one second and "60" is not sixty: both fall back, loudly."""
+    import logging
+
+    import main
+
+    with caplog.at_level(logging.WARNING):
+        assert main.tracker_refresh_seconds({"tracker_refresh_seconds": bad}) == 60
+    assert any("tracker_refresh_seconds" in rec.message for rec in caplog.records)
+
+
+def test_tracker_refresh_seconds_logs_when_clamped(caplog):
+    import logging
+
+    import main
+
+    with caplog.at_level(logging.WARNING):
+        assert main.tracker_refresh_seconds({"tracker_refresh_seconds": 2}) == 10
+    assert any("outside 10-3600" in rec.message for rec in caplog.records)
+
+
+def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypatch):
+    """The editor learns the interval from the same response it polls, and the
+    response must not be cached or every later poll sees the first position."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    monkeypatch.setattr(
+        main, "_fetch_state", lambda eid, _t: _ha_state(eid, 51.9471338, -0.6274617)
+    )
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.car"],
+                "tracker_refresh_seconds": 15,
+            }
+        )
+    )
+    r = client.get("/trackers.json")
+    assert r.json()["refresh_seconds"] == 15
+    assert r.headers["cache-control"] == "no-store"
 
 
 def test_trackers_json_blocks_unauthorized_client(restricted_client):
