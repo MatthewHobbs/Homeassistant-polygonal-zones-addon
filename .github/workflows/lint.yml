@@ -66,6 +66,23 @@ jobs:
         with:
           args: format --check --diff
 
+  ha-floor:
+    # ADR 0001 row 12: config.yaml's `homeassistant:` floor must satisfy the
+    # global rule (at most the .1 of the month before current stable Core,
+    # read live from stable.json). Deliberately NOT a required check, like the
+    # companion integration's, so an outage at version.home-assistant.io
+    # cannot block every merge (owner, 2026-09-25). Skipped when release.yml
+    # calls this workflow on a tag for the same reason: the tagged SHA already
+    # ran it on its PR and on main.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Declared HA floor is within the global bound
+        run: scripts/ha-floor-check.sh
+
   shellcheck:
     # Lint the release helper and the s6 init / service scripts with shellcheck.
     # The release-merge.sh script gates every version bump, and the rootfs
@@ -83,7 +100,7 @@ jobs:
         # explicitly by path. `-x` lets shellcheck follow sourced files.
         run: |
           set -euo pipefail
-          shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh
+          shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh
           shellcheck -x \
             polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms \
             polygonal_zones_editor/rootfs/etc/services.d/web/run \

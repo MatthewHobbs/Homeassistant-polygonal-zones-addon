@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.3 — 2026-09-26
+
+- **Changed: the add-on now requires Home Assistant 2026.8.1 or newer.**
+  `config.yaml` declares a minimum Core version for the first time. Installs
+  on an older Core keep 0.4.2 and are not offered this update until Home
+  Assistant is upgraded. The value follows the owner's rule that a declared
+  minimum is at most the `.1` release of the month before current stable
+  (2026.9.3 today), so every install from 2026.8.1 onward keeps receiving
+  updates. CI now checks the declared value against `stable.json` on every
+  run, and the Supervisor-level test (ADR 0001) runs the add-on on exactly
+  that Core under the current stable Supervisor.
+
 ## 0.4.2 — 2026-09-26
 
 - **Fixed: the AppArmor profile pins its policy ABI, so the add-on keeps
