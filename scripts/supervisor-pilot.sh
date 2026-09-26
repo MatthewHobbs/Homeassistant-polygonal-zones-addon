@@ -54,6 +54,12 @@ REGISTRY_TAG="pz-pilot-registry:local"
 # A distinctive colour, so /config.json can only report it if the option set
 # through the Supervisor reached the app.
 PROBE_COLOUR="#1a2b3c"
+# zone.home always exists and carries live latitude/longitude, so the tracker
+# overlay (#47, ADR 0001) can be proven end to end without a real
+# device_tracker. The interval is the add-on's own floor: real, not the
+# stub's, so a change to that floor shows up here too.
+TRACKER_ENTITY="${PILOT_TRACKER_ENTITY:-zone.home}"
+TRACKER_REFRESH_SECONDS="${PILOT_TRACKER_REFRESH_SECONDS:-10}"
 PROVENANCE_LABEL="io.github.matthewhobbs.polygonal-zones.pilot-build"
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -347,10 +353,16 @@ cmd_install() {
   log "Installing $SLUG"
   ha_ok store apps install "$SLUG" || fail "install of $SLUG failed"
   log "Setting options through the Supervisor API"
-  # The Supervisor validates the whole set, so change two keys of the current one.
+  # The Supervisor validates the whole set, so change several keys of the current one.
   local options
   options="$(ha_cli apps info "$SLUG" --raw-json |
-    jq -ce --arg c "$PROBE_COLOUR" '{options: (.data.options + {zone_colour: $c, log_level: "debug"})}')" ||
+    jq -ce --arg c "$PROBE_COLOUR" --arg e "$TRACKER_ENTITY" --argjson secs "$TRACKER_REFRESH_SECONDS" '
+      {options: (.data.options + {
+        zone_colour: $c,
+        log_level: "debug",
+        overlay_entities: [$e],
+        tracker_refresh_seconds: $secs,
+      })}')" ||
     fail "could not read the add-on's current options"
   supervisor_post "/addons/$SLUG/options" "$options" || fail "Supervisor rejected the options"
   log "Starting $SLUG"
@@ -408,7 +420,8 @@ cmd_probe() {
     "$PLAYWRIGHT_IMAGE" \
     bash -c 'pip install --quiet --no-cache-dir --break-system-packages --require-hashes \
         -r /probe/requirements.txt && exec python3 /probe/probe.py "$@"' probe \
-    --base "$base" --ingress "$ingress" --expect-colour "$PROBE_COLOUR"
+    --base "$base" --ingress "$ingress" --expect-colour "$PROBE_COLOUR" \
+    --tracker-entity "$TRACKER_ENTITY" --tracker-refresh-seconds "$TRACKER_REFRESH_SECONDS"
 }
 
 cmd_diagnostics() {
