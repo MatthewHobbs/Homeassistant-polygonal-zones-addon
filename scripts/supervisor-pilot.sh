@@ -56,9 +56,12 @@ REGISTRY_TAG="pz-pilot-registry:local"
 PROBE_COLOUR="#1a2b3c"
 # zone.home always exists and carries live latitude/longitude, so the tracker
 # overlay (#47, ADR 0001) can be proven end to end without a real
-# device_tracker. The interval is the add-on's own floor: real, not the
-# stub's, so a change to that floor shows up here too.
-TRACKER_ENTITY="${PILOT_TRACKER_ENTITY:-zone.home}"
+# device_tracker. Fixed, not PILOT_-overridable like the rest of this file's
+# knobs: the only way this script moves it is homeassistant.set_location,
+# which changes Home Assistant's configured home location and so only ever
+# moves zone.home. Pointing overlay_entities at a different entity would just
+# make the probe time out waiting for a position that never changes.
+TRACKER_ENTITY="zone.home"
 TRACKER_REFRESH_SECONDS="${PILOT_TRACKER_REFRESH_SECONDS:-10}"
 PROVENANCE_LABEL="io.github.matthewhobbs.polygonal-zones.pilot-build"
 
