@@ -2,6 +2,7 @@
 
 - **Status:** Accepted (2026-09-25)
 - **Context:** the owner's requirement of 2026-09-25 that add-ons are tested against the current general-release Home Assistant, and the RFC it produced (see References), decided as option A.
+- **Amended (2026-09-26):** the pilot's first GitHub runs found the shipped AppArmor profile fails on modern AppArmor; fixed and released as 0.4.2, and AppArmor is enforced in the pilot after all (see the amendment below)
 - **North star:** every release of this add-on has been installed, configured and used under the current stable Supervisor, with both the current stable Core and the oldest Core it declares, on both architectures users run, before it ships.
 
 ## Decision
@@ -15,7 +16,7 @@ Test the add-on in CI under a real Supervisor running the stable channel, using 
 | 3 | Test the image that would ship. `config.yaml` names a published `image:`, so for an unreleased PR the Supervisor has to build locally, and it builds from `build.yaml`'s `build_from`, which still says 3.21 while releases use 3.24 from `base-images.yaml` (inferred, not yet observed). Either make `build.yaml` agree with `base-images.yaml` and enforce it in CI, or side-load the CI-built image under the tag the Supervisor expects. Row 1 establishes which works. Whichever route is taken, every run must prove, before any probe, that the running container was built from the commit under test (for example a commit-SHA label checked against the checkout). Otherwise the Supervisor can pull the published image and the run goes green on old code | polygonal-zones | Open | |
 | 4 | Reuse the existing assertions: the smoke probes, then the Playwright draw-and-save through the ingress URL, which exercises #46's failure mode on the real path | polygonal-zones | Open | |
 | 5 | Run it nightly and on demand, not yet required. After about two weeks, promote it if every failure had a known cause that wasn't flakiness. Promotion means both a required PR check and a job that `release.yml` runs before publishing, alongside tests, lint and build, because a tag-triggered release never sees a PR check. Promotion is the owner's call, recorded here. Owner, 2026-09-25: releases stay ungated during the trial | owner | Open | |
-| 6 | Add an AppArmor compile check (`apparmor_parser -Q -K`, as a290 and r5 do). Enforcement stays in TESTING.md's manual HA OS layer until someone shows the devcontainer can enforce it | polygonal-zones | Done | #51 |
+| 6 | Add an AppArmor compile check (`apparmor_parser -Q -K`, as a290 and r5 do). Enforcement stays in TESTING.md's manual HA OS layer until someone shows the devcontainer can enforce it. Amended 2026-09-26: it can, and does; see the amendment | polygonal-zones | Done | #51 |
 | 7 | Tighten the standalone smoke: assert `uid=1001(app)` (CLAUDE.md says it does; `build.yml:161` only rejects uid 0), and fail on any traceback in the container log | polygonal-zones | Done | #51 |
 | 8 | Build and boot aarch64 on native `ubuntu-24.04-arm` instead of QEMU, and run Playwright on both arches | polygonal-zones | Done | #51 |
 | 9 | Update TESTING.md and EVALUATION.md, which still say only amd64 is booted, and describe the new layer | polygonal-zones | Open | |
@@ -57,6 +58,12 @@ Copied from the RFC's options table as it stood when it was decided.
 - **CI today:** the "Build (aarch64)" job on #49 printed `OK /healthz`, `OK /zones.json shape` and `OK /save_zones round-trip`, which confirms CI boots aarch64 under QEMU. Playwright's `if: matrix.arch == 'amd64'` confirms the browser test is amd64-only.
 - **Published aarch64 0.4.1 image:** booted natively on Apple Silicon (`uname -m` inside it gave `aarch64`, against an amd64 control that gave `x86_64`) and passed every smoke check and the browser test on both origins. Stopping it then made `/healthz` fail, so the checks could fail. The same stop also exited 137 and logged "Web service exited with status 256", which is unexplained and seen once.
 - **Not established:** that A boots on `ubuntu-24.04-arm`; that AppArmor can be enforced under A; runtime and flakiness for this add-on; that the Supervisor builds a local add-on from `build.yaml`'s base (row 3).
+
+## Amendment (2026-09-26)
+
+The pilot's first runs on GitHub (PR #52) failed on all four jobs at the add-on's start. The runner kernel's audit line: `apparmor="DENIED" operation="create" class="net" info="failed protocol match" profile="local_polygonal_zones" comm="s6-ipcserver-so" family="unix" sock_type="stream"`. Established: Linux 6.17 added unix-socket mediation to AppArmor (`security/apparmor/af_unix.c` is absent in 6.16 and present in 6.17); a policy compiled by a recent parser carries the new network encoding, and under it the profile's bare `network,` grants no unix access. HA OS 18.0 moved to kernel 6.18 but 18.3 still builds AppArmor parser 3.1.7, whose network code has no such encoding, so HA OS users take the kernel's legacy path and were not hit. That last step is inferred from source, not observed on an HA OS box.
+
+Decision (owner, 2026-09-26): fix the profile and release it as 0.4.2 on its own, before the pilot merges. The first candidate, adding `unix,`, was run on the runners and changed nothing: the same denial on socket create. It is not in the fix. Pinning the policy ABI (`abi <abi/3.0>,`) turned all four jobs green (run 36227020887, 133 to 188 s per job): the parser then emits the encoding this profile was written against, and the kernel's legacy path honours `network,`. Verification: parsers 3.0.4 and 4.0.1 both compile the pinned profile and both reject a bogus `abi/9.9`. Consequence: the pilot enforces AppArmor on a newer parser and kernel than HA OS ships, so it catches this class of breakage before HA OS's next parser bump does. Row 6's "enforcement stays manual" is superseded for the pilot; the manual HA OS layer remains for what the devcontainer cannot reproduce.
 
 ## References
 

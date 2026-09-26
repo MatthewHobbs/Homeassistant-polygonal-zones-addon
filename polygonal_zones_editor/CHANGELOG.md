@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.2 — 2026-09-26
+
+- **Fixed: the AppArmor profile pins its policy ABI, so the add-on keeps
+  starting on newer AppArmor setups.** Linux 6.17 added unix-socket mediation
+  to AppArmor. A parser newer than 4.0 compiling this profile on such a kernel
+  produced a policy under which `network,` granted no unix socket: s6 could
+  not create its control socket and the add-on never started. HA OS 18.3
+  (kernel 6.18) still ships parser 3.1.7, which cannot produce that encoding,
+  so no user has been hit; the next parser bump would have hit everyone. Found
+  by the new Supervisor-level CI test (ADR 0001), which failed every run on
+  Ubuntu 24.04 runners until the pin.
+
 ## 0.4.1 — 2026-09-25
 
 - **Fixed: new zones can be drawn and saved when the editor is opened over
