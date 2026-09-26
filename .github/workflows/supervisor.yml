@@ -15,12 +15,14 @@ on:
       - scripts/supervisor-pilot.sh
       - scripts/supervisor_probe.py
       - scripts/supervisor-probe-requirements.txt
+      # The floor leg's Core version comes from these two.
+      - scripts/ha-floor-check.sh
+      - polygonal_zones_editor/config.yaml
   workflow_dispatch:
     inputs:
       floor_core:
-        description: Core version for the floor leg (the companion integration's minimum)
+        description: Override the floor leg's Core version (default is config.yaml's homeassistant:)
         type: string
-        default: "2026.7.1"
       disable_apparmor:
         description: Install the add-on with apparmor false (diagnosis only)
         type: boolean
@@ -31,8 +33,8 @@ on:
   workflow_call:
     inputs:
       floor_core:
+        description: Override the floor leg's Core version (default is config.yaml's homeassistant:)
         type: string
-        default: "2026.7.1"
 
 permissions:
   contents: read
@@ -44,8 +46,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  floor:
+    # The floor leg tests the Core the add-on declares (ADR rows 10 and 11),
+    # read from config.yaml so it cannot drift from what the Supervisor
+    # enforces on users. The floor_core input only overrides it.
+    name: Resolve the floor
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.floor.outputs.core }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: floor
+        env:
+          OVERRIDE: ${{ inputs.floor_core }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$OVERRIDE" ]]; then
+            core="$OVERRIDE"
+            echo "floor leg: Core $core (floor_core input, overriding config.yaml)"
+          else
+            core="$(scripts/ha-floor-check.sh --declared)"
+            echo "floor leg: Core $core (config.yaml homeassistant:)"
+          fi
+          echo "core=$core" >>"$GITHUB_OUTPUT"
+
   pilot:
     name: ${{ matrix.arch }} / Core ${{ matrix.core }}
+    needs: floor
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -53,8 +82,9 @@ jobs:
       matrix:
         arch: [amd64, aarch64]
         # "stable" is whatever stable.json names today; the other leg pins
-        # Core to the floor under the same stable Supervisor (ADR row 11).
-        core: ["stable", "${{ inputs.floor_core || '2026.7.1' }}"]
+        # Core to the declared floor under the same stable Supervisor (ADR
+        # row 11), resolved by the floor job above.
+        core: ["stable", "${{ needs.floor.outputs.core }}"]
         include:
           - arch: amd64
             runner: ubuntu-latest
