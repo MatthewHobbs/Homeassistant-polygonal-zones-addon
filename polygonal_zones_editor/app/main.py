@@ -637,6 +637,11 @@ def tracker_refresh_seconds(options: dict) -> int:
     return clamped
 
 
+# Shared by every /trackers.json request: a pool per request would multiply
+# the worker cap by the number of open editors, worst exactly during an outage.
+_OVERLAY_POOL = ThreadPoolExecutor(max_workers=OVERLAY_FETCH_WORKERS, thread_name_prefix="overlay")
+
+
 def _fetch_state(entity_id: str, token: str) -> dict | None:
     """Fetch one entity's state through the Supervisor proxy. Blocking."""
     req = urllib.request.Request(
@@ -727,10 +732,10 @@ def trackers_json_generator(options: dict):
             # editor polls this. An entity Home Assistant could not be asked
             # about in time is listed, not dropped, so a polling client can tell
             # "unreachable" from "reported no position" and keep its marker.
-            pool = ThreadPoolExecutor(max_workers=min(len(entities), OVERLAY_FETCH_WORKERS))
-            futures = {pool.submit(_fetch_state, e, token): e for e in entities}
-            done, _ = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
-            pool.shutdown(wait=False, cancel_futures=True)
+            futures = {_OVERLAY_POOL.submit(_fetch_state, e, token): e for e in entities}
+            done, pending = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
+            for future in pending:
+                future.cancel()  # still queued: do not spend the pool on a poll that has given up
             found, unavailable = [], []
             for future, entity_id in futures.items():
                 payload = future.result() if future in done else None

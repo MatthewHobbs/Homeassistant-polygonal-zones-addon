@@ -1709,6 +1709,36 @@ def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
     assert body["unavailable"] == []
 
 
+def test_trackers_json_caps_fetches_in_flight_across_all_polls(app_factory, monkeypatch):
+    """Ten editors polling at once share one pool: the Supervisor never sees
+    more than OVERLAY_FETCH_WORKERS calls in flight, whatever the tab count."""
+    from concurrent.futures import ThreadPoolExecutor as _Clients
+    import threading
+
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    lock = threading.Lock()
+    in_flight = {"now": 0, "peak": 0}
+
+    def fake_fetch(entity_id, token):
+        with lock:
+            in_flight["now"] += 1
+            in_flight["peak"] = max(in_flight["peak"], in_flight["now"])
+        time.sleep(0.05)
+        with lock:
+            in_flight["now"] -= 1
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    entities = [f"device_tracker.t{i}" for i in range(8)]
+    client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
+    with _Clients(max_workers=10) as clients:
+        bodies = list(clients.map(lambda _: client.get("/trackers.json").json(), range(10)))
+    assert all(len(b["trackers"]) == 8 and b["unavailable"] == [] for b in bodies)
+    assert in_flight["peak"] <= main.OVERLAY_FETCH_WORKERS
+
+
 def test_fetch_state_returns_none_on_transport_error(monkeypatch):
     import main
 

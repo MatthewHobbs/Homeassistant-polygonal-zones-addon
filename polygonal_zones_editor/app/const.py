@@ -38,7 +38,9 @@ SUPERVISOR_TOKEN_ENV = "SUPERVISOR_TOKEN"
 # latency allowance. Entities that miss it are reported unavailable.
 OVERLAY_TIMEOUT_SECONDS = 5.0
 # Entities are fetched concurrently so the deadline is the whole cost of an
-# outage, not a multiple of it; this caps the threads one poll can use.
+# outage, not a multiple of it. One pool is shared by every poll, so this caps
+# the Supervisor calls in flight for the whole add-on, however many editors
+# are open; polls queue behind it and report what misses their deadline.
 OVERLAY_FETCH_WORKERS = 8
 
 # Ceiling on how many entities the overlay will fetch, whatever the option
