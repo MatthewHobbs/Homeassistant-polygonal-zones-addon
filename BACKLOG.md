@@ -13,16 +13,17 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 The allow list went from 78 rules to 52. First, 2 rules were removed as dead: one-off `awk` log
 greps with a `.*` that Claude Code warns about. Then option (c) of `/prune-grants` removed 24
-more, dropping the dangerous and dead rules and keeping the routine ones. Matt chose (c) over
+more, dropping the dangerous and dead rules and keeping the rest. Matt chose (c) over
 emptying the list (a) or keeping only read-only rules (b).
 
-- Dropped as dangerous: `python3 *`, `bash *`, `awk *`, `git *`, `gh auth *`, `gh repo *`,
-  `gh release *`, `git config *`, `docker rm/rmi/exec/image *`, `pip3 install *`, `brew install *`.
+- Dropped as dangerous: rules that run arbitrary code, reveal credentials or delete remote
+  state: `python3 *`, `bash *`, `awk *`, `git *`, `gh auth *`, `gh repo *`, `gh release *`,
+  `git config *`, `docker rm/rmi/exec/image *`, `pip3 install *`, `brew install *`.
 - Dropped as dead: the PR-numbered `release-merge.sh` calls (104, 106, 22), the line-number `awk`
   reads, `mkdir -p vendor/...` and a single-file `head`.
-- Kept: web fetches, `gh pr/run/issue/label *`, the individual `git` subcommands
-  (`add`, `commit`, `checkout`, `fetch`, `pull`, `stash`, `restore`, `rebase`, `tag`), `docker buildx`,
-  `docker manifest`, `shellcheck`, `node --check` and read-only filters.
+
+Some kept rules still match state-changing forms. That was accepted in choosing (c), and is
+followed up in `claude-config`.
 
 The 2026-09-08 cross-repo scan counted 121 rules here. At the start of this session there were
 78. Why 43 went in between is not known: the file is untracked, so nothing records it.
@@ -31,9 +32,9 @@ The 2026-09-08 cross-repo scan counted 121 rules here. At the start of this sess
 file has no other keys, and a before/after comparison of everything else matched.
 
 **The file will grow back** each time "Yes, and don't ask again" is clicked. This prune does not
-stop the dangerous classes returning; the user-scope `deny`/`ask` rules and the PreToolUse guard
-in `claude-config` do that. Checking them during this prune found a gap in what they cover. The
-detail is tracked in `claude-config`, not here, because this repo is public and the gap is open.
+stop dangerous rules returning. The user-scope `deny`/`ask` rules and the PreToolUse guard in
+`claude-config` are meant to, and the periodic re-measurement reminder there is the check that the
+list has not regrown. Follow-up on those controls is tracked in `claude-config`.
 
 ---
 
