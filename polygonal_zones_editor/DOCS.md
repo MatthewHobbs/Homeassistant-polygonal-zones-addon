@@ -166,6 +166,27 @@ rounded to four decimal places (about 11 m), which is finer than any boundary
 you can place by hand and avoids putting sub-millimetre positions into a
 response.
 
+### How often positions refresh (`tracker_refresh_seconds`)
+
+While the editor is open it re-reads the listed entities every
+`tracker_refresh_seconds` seconds (default 60) and moves the markers in place,
+without a reload. Set it to `0` to load positions once when the page opens.
+Values from 1 to 9 are raised to 10: each poll is one Supervisor call per
+listed entity for every open tab, and trackers rarely report faster than that
+anyway. The largest accepted value is 3600.
+
+```yaml
+overlay_entities:
+  - device_tracker.my_car
+tracker_refresh_seconds: 30
+```
+
+Polling pauses while the browser tab is hidden and catches up when you return.
+If Home Assistant cannot be asked about an entity on a poll, its last position
+stays on the map rather than vanishing; an entity Home Assistant answers for
+without coordinates is removed, because that is a real report of no position.
+The option does nothing while `overlay_entities` is empty.
+
 ### Before you add people
 
 The positions are served from `GET /trackers.json`, which is reachable from

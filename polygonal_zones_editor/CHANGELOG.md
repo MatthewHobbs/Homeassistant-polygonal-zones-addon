@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.0 — 2026-09-26
+
+- **Added: tracker positions on the map now refresh while the editor is open
+  (#47).** Until now the positions of `overlay_entities` were read once when the
+  page loaded and a marker stayed put until you reloaded. A new option,
+  `tracker_refresh_seconds` (default 60), sets how often an open editor re-reads
+  them and moves the markers in place. `0` keeps the old load-once behaviour.
+  Values from 1 to 9 are raised to 10, because every poll is one Supervisor
+  call per listed entity for every open tab. Polling pauses while the browser
+  tab is hidden and catches up when you return. A tracker the add-on could
+  not read on a poll, because Home Assistant did not answer for it, keeps its
+  last position on the map rather than vanishing; one Home Assistant answers
+  for without coordinates is removed. A tracker that has no position
+  when the page opens and reports one later is now drawn, where before the
+  overlay was only created if the first read returned at least one position.
+- **Internal:** `GET /trackers.json` now answers with `Cache-Control: no-store`
+  and, when `overlay_entities` is set, includes `refresh_seconds` and
+  `unavailable`, the listed entities it could not read on that poll. The
+  entities are read concurrently under one five-second deadline per request,
+  where before each had its own, so an unreachable Home Assistant costs a poll
+  five seconds rather than five per listed entity. The body for an
+  unconfigured overlay is unchanged.
+
 ## 0.4.3 — 2026-09-26
 
 - **Changed: the add-on now requires Home Assistant 2026.8.1 or newer.**

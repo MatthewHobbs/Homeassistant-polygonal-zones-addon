@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, wait
 from email.utils import formatdate
 import hashlib
 import ipaddress
@@ -26,9 +27,13 @@ import uvicorn
 
 from const import (
     DATA_FOLDER,
+    DEFAULT_TRACKER_REFRESH_SECONDS,
     MAX_OVERLAY_ENTITIES,
     MAX_SAVE_BYTES,
+    MAX_TRACKER_REFRESH_SECONDS,
+    MIN_TRACKER_REFRESH_SECONDS,
     OVERLAY_COORD_DECIMALS,
+    OVERLAY_FETCH_WORKERS,
     OVERLAY_TIMEOUT_SECONDS,
     SCHEMA_VERSION,
     SUPERVISOR_API,
@@ -606,6 +611,37 @@ def overlay_entities(options: dict) -> list[str]:
     return out
 
 
+def tracker_refresh_seconds(options: dict) -> int:
+    """Seconds between the editor's /trackers.json polls; 0 means load once."""
+    raw = options.get("tracker_refresh_seconds", DEFAULT_TRACKER_REFRESH_SECONDS)
+    if raw is None:
+        return DEFAULT_TRACKER_REFRESH_SECONDS
+    # bool is an int subclass; `true` here is a config mistake, not "1 second".
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        _LOGGER.warning(
+            "tracker_refresh_seconds must be 0 or a whole number of seconds; using %d.",
+            DEFAULT_TRACKER_REFRESH_SECONDS,
+        )
+        return DEFAULT_TRACKER_REFRESH_SECONDS
+    if raw == 0:
+        return 0
+    clamped = min(max(raw, MIN_TRACKER_REFRESH_SECONDS), MAX_TRACKER_REFRESH_SECONDS)
+    if clamped != raw:
+        _LOGGER.warning(
+            "tracker_refresh_seconds %d is outside %d-%d; using %d.",
+            raw,
+            MIN_TRACKER_REFRESH_SECONDS,
+            MAX_TRACKER_REFRESH_SECONDS,
+            clamped,
+        )
+    return clamped
+
+
+# Shared by every /trackers.json request: a pool per request would multiply
+# the worker cap by the number of open editors, worst exactly during an outage.
+_OVERLAY_POOL = ThreadPoolExecutor(max_workers=OVERLAY_FETCH_WORKERS, thread_name_prefix="overlay")
+
+
 def _fetch_state(entity_id: str, token: str) -> dict | None:
     """Fetch one entity's state through the Supervisor proxy. Blocking."""
     req = urllib.request.Request(
@@ -654,24 +690,31 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
 
 
 def trackers_json_generator(options: dict):
+    refresh_seconds = tracker_refresh_seconds(options)
+
+    # The editor polls this, so a cached copy would freeze every marker at the
+    # position of whichever response the browser happened to keep.
+    def _uncached(body: dict, status_code: int = 200) -> JSONResponse:
+        return JSONResponse(body, status_code=status_code, headers={"Cache-Control": "no-store"})
+
     async def trackers_json(request: Request) -> JSONResponse:
         # Same read gate as /zones.json — this returns positions, so it must
         # not be reachable on terms the zones file isn't.
         client_host = request.client.host or "unknown"
         if _rate_limit_exceeded(client_host):
-            return JSONResponse({"error": "too many failed attempts"}, status_code=429)
+            return _uncached({"error": "too many failed attempts"}, status_code=429)
         ok, reason = authorise_read(options, request)
         if not ok:
             _record_save_failure(client_host)
             status = 401 if reason == "invalid_token" else 403
-            return JSONResponse({"error": "not authorised"}, status_code=status)
+            return _uncached({"error": "not authorised"}, status_code=status)
 
         entities = overlay_entities(options)
         if not entities:
             # Opted out (the default). Say so explicitly rather than returning
             # an empty list, so the editor can distinguish "not configured"
             # from "configured but nothing has a position right now".
-            return JSONResponse({"configured": False, "trackers": []})
+            return _uncached({"configured": False, "trackers": []})
 
         token = os.environ.get(SUPERVISOR_TOKEN_ENV, "")
         if not token:
@@ -680,20 +723,39 @@ def trackers_json_generator(options: dict):
                 "enabled for this add-on? Plotting nothing.",
                 SUPERVISOR_TOKEN_ENV,
             )
-            return JSONResponse(
-                {"configured": True, "trackers": [], "error": "no_supervisor_token"}
-            )
+            return _uncached({"configured": True, "trackers": [], "error": "no_supervisor_token"})
 
-        def _gather() -> list[dict]:
-            found = []
-            for entity_id in entities:
-                point = _overlay_point(entity_id, _fetch_state(entity_id, token))
+        def _gather() -> tuple[list[dict], list[str]]:
+            # One deadline for the whole overlay, with the fetches concurrent:
+            # sequential per-entity timeouts would let 25 entities behind an
+            # unreachable Supervisor hold this worker for 25 timeouts, and the
+            # editor polls this. An entity Home Assistant could not be asked
+            # about in time is listed, not dropped, so a polling client can tell
+            # "unreachable" from "reported no position" and keep its marker.
+            futures = {_OVERLAY_POOL.submit(_fetch_state, e, token): e for e in entities}
+            done, pending = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
+            for future in pending:
+                future.cancel()  # still queued: do not spend the pool on a poll that has given up
+            found, unavailable = [], []
+            for future, entity_id in futures.items():
+                payload = future.result() if future in done else None
+                if payload is None:
+                    unavailable.append(entity_id)
+                    continue
+                point = _overlay_point(entity_id, payload)
                 if point is not None:
                     found.append(point)
-            return found
+            return found, unavailable
 
-        trackers = await run_in_threadpool(_gather)
-        return JSONResponse({"configured": True, "trackers": trackers})
+        trackers, unavailable = await run_in_threadpool(_gather)
+        return _uncached(
+            {
+                "configured": True,
+                "trackers": trackers,
+                "unavailable": unavailable,
+                "refresh_seconds": refresh_seconds,
+            }
+        )
 
     return trackers_json
 

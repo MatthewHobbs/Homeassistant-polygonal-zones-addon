@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.4.3"
+version: "0.5.0"
 # Oldest Core this add-on is offered to (ADR 0001 rows 10 to 12). The
 # Supervisor pilot tests this exact Core, and lint.yml's ha-floor job holds it
 # to the global rule: never newer than the .1 of the month before current stable.
@@ -48,6 +48,7 @@ homeassistant_api: true
 options:
   allow_all_ips: false
   overlay_entities: []
+  tracker_refresh_seconds: 60
   zone_colour: purple
   trusted_proxies: ""
   log_level: info
@@ -62,6 +63,9 @@ schema:
   # expose there, and prefer vehicles over people.
   overlay_entities:
     - str?
+  # How often an open editor re-reads those positions. 0 loads them once per
+  # page view; 1-9 are raised to 10, since each poll is one call per entity.
+  tracker_refresh_seconds: int(0,3600)?
   # Accept CSS colour names (letters only) or hex values of 3/4/6/8 hex
   # digits. Tightening this prevents Supervisor from accepting empty
   # strings or rgb()/hsl() function notation that neither the backend nor

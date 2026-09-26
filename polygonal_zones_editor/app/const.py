@@ -32,9 +32,16 @@ SCHEMA_VERSION = 1
 SUPERVISOR_API = "http://supervisor/core/api"
 SUPERVISOR_TOKEN_ENV = "SUPERVISOR_TOKEN"
 
-# Per-request budget for the whole overlay fetch. Home Assistant is on the
-# same host, so this is a stall guard rather than a latency allowance.
+# Budget for the whole overlay fetch, per /trackers.json request: both the
+# per-entity socket timeout and the deadline the gather waits for all of them.
+# Home Assistant is on the same host, so this is a stall guard rather than a
+# latency allowance. Entities that miss it are reported unavailable.
 OVERLAY_TIMEOUT_SECONDS = 5.0
+# Entities are fetched concurrently so the deadline is the whole cost of an
+# outage, not a multiple of it. One pool is shared by every poll, so this caps
+# the Supervisor calls in flight for the whole add-on, however many editors
+# are open; polls queue behind it and report what misses their deadline.
+OVERLAY_FETCH_WORKERS = 8
 
 # Ceiling on how many entities the overlay will fetch, whatever the option
 # says. Each is a separate Supervisor call; an accidental 200-entity list
@@ -46,3 +53,10 @@ MAX_OVERLAY_ENTITIES = 25
 # user can place by hand on a map; full float precision would put ~0.1 mm
 # positions into a LAN-reachable response for no benefit.
 OVERLAY_COORD_DECIMALS = 4
+
+# How often an open editor re-polls /trackers.json; 0 loads positions once per
+# page view. Every poll costs one Supervisor call per entity, so the floor stops
+# a slip like "1" from turning 25 entities into 25 calls a second per open tab.
+DEFAULT_TRACKER_REFRESH_SECONDS = 60
+MIN_TRACKER_REFRESH_SECONDS = 10
+MAX_TRACKER_REFRESH_SECONDS = 3600

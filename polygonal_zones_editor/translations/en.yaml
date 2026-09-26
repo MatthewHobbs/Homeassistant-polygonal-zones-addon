@@ -32,6 +32,13 @@ configuration:
       should be honoured. Leave empty unless you front the addon with
       your own reverse proxy. Wildcards (*, 0.0.0.0/0) and the HA
       ingress IP (172.30.32.2) are refused and logged as errors.
+  tracker_refresh_seconds:
+    name: Tracker refresh interval
+    description: >-
+      Seconds between updates of the tracker positions on the map
+      while the editor is open. 0 loads them once when the page
+      opens. Values from 1 to 9 are treated as 10. Only used when
+      overlay_entities is set.
   log_level:
     name: Log level
     description: >-

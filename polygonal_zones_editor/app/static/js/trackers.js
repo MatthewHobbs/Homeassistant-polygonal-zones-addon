@@ -27,6 +27,9 @@ const PZ_MEASURE_THROTTLE_MS = 150;
 let pz_tracker_layer = null;
 let pz_trackers = [];
 let pz_measure_timer = null;
+let pz_refresh_ms = 0;
+let pz_refresh_timer = null;
+let pz_refresh_in_flight = false;
 
 /* Every ring of a layer, as GeoJSON [lon, lat] arrays, read from the LIVE
  * Leaflet geometry rather than layer.feature — so measurements track the shape
@@ -182,9 +185,57 @@ function pz_schedule_measure() {
     }, PZ_MEASURE_THROTTLE_MS);
 }
 
-function setup_tracker_overlay(mapInstance) {
+function pz_fetch_trackers() {
     return fetch(PZ_TRACKER_ENDPOINT, { headers: { Accept: 'application/json' } })
-        .then((r) => (r.ok ? r.json() : null))
+        .then((r) => (r.ok ? r.json() : null));
+}
+
+/* A tracker the add-on could not read this poll keeps its last position; one
+ * that Home Assistant answered for but without coordinates is dropped, since
+ * that is real data saying there is no position. */
+function pz_apply_trackers(body) {
+    const fresh = Array.isArray(body.trackers) ? body.trackers : [];
+    const unavailable = new Set(Array.isArray(body.unavailable) ? body.unavailable : []);
+    const kept = pz_trackers.filter((t) => unavailable.has(t.entity_id));
+    pz_trackers = fresh.concat(kept);
+    pz_render_markers();
+    pz_render_readout();
+}
+
+/* One poll at a time: the next is scheduled only once this one settles, so a
+ * slow Home Assistant cannot pile requests up. A hidden tab stops polling and
+ * the visibilitychange handler catches it up on return. */
+function pz_refresh_trackers() {
+    clearTimeout(pz_refresh_timer);
+    pz_refresh_timer = null;
+    if (document.hidden || pz_refresh_in_flight) return;
+    pz_refresh_in_flight = true;
+    pz_fetch_trackers()
+        .then((body) => {
+            // A failed or refused poll keeps the last positions on the map
+            // rather than blanking it.
+            if (body && body.configured && !body.error) pz_apply_trackers(body);
+        })
+        .catch((err) => {
+            console.warn('Tracker overlay refresh failed:', err);
+        })
+        .finally(() => {
+            pz_refresh_in_flight = false;
+            if (!document.hidden) pz_refresh_timer = setTimeout(pz_refresh_trackers, pz_refresh_ms);
+        });
+}
+
+function pz_start_tracker_refresh(seconds) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    pz_refresh_ms = seconds * 1000;
+    pz_refresh_timer = setTimeout(pz_refresh_trackers, pz_refresh_ms);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !pz_refresh_timer) pz_refresh_trackers();
+    });
+}
+
+function setup_tracker_overlay(mapInstance) {
+    return pz_fetch_trackers()
         .then((body) => {
             // Not opted in (the default), or the endpoint refused us. Either
             // way the editor behaves exactly as it did before this feature.
@@ -196,15 +247,14 @@ function setup_tracker_overlay(mapInstance) {
                 );
                 return;
             }
-            pz_trackers = Array.isArray(body.trackers) ? body.trackers : [];
-            if (!pz_trackers.length) return;
-
+            // Created even when nothing has a position yet, so a tracker that
+            // reports later still has a layer to be drawn on.
             pz_tracker_layer = L.layerGroup().addTo(mapInstance);
-            pz_render_markers();
-            pz_render_readout();
+            pz_apply_trackers(body);
 
             ['pz:zoneschanged', 'pm:create', 'pm:remove', 'pm:edit', 'pm:update']
                 .forEach((evt) => mapInstance.on(evt, pz_schedule_measure));
+            pz_start_tracker_refresh(body.refresh_seconds);
         })
         .catch((err) => {
             // A missing overlay must never break the editor itself.

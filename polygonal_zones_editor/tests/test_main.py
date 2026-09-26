@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 import urllib.error
 
 import pytest
@@ -1482,6 +1483,78 @@ def test_trackers_json_reports_not_configured_by_default(allow_all_client):
     r = allow_all_client.get("/trackers.json")
     assert r.status_code == 200
     assert r.json() == {"configured": False, "trackers": []}
+    assert r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, 60),
+        (60, 60),
+        (0, 0),
+        (10, 10),
+        (3600, 3600),
+        (1, 10),
+        (9, 10),
+        (86400, 3600),
+    ],
+)
+def test_tracker_refresh_seconds(raw, expected):
+    import main
+
+    options = {} if raw is None else {"tracker_refresh_seconds": raw}
+    assert main.tracker_refresh_seconds(options) == expected
+
+
+def test_tracker_refresh_seconds_explicit_null_uses_default():
+    import main
+
+    assert main.tracker_refresh_seconds({"tracker_refresh_seconds": None}) == 60
+
+
+@pytest.mark.parametrize("bad", [True, False, -5, 30.5, "60", [60]])
+def test_tracker_refresh_seconds_rejects_non_seconds(bad, caplog):
+    """`true` is not one second and "60" is not sixty: both fall back, loudly."""
+    import logging
+
+    import main
+
+    with caplog.at_level(logging.WARNING):
+        assert main.tracker_refresh_seconds({"tracker_refresh_seconds": bad}) == 60
+    assert any("tracker_refresh_seconds" in rec.message for rec in caplog.records)
+
+
+def test_tracker_refresh_seconds_logs_when_clamped(caplog):
+    import logging
+
+    import main
+
+    with caplog.at_level(logging.WARNING):
+        assert main.tracker_refresh_seconds({"tracker_refresh_seconds": 2}) == 10
+    assert any("outside 10-3600" in rec.message for rec in caplog.records)
+
+
+def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypatch):
+    """The editor learns the interval from the same response it polls, and the
+    response must not be cached or every later poll sees the first position."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    monkeypatch.setattr(
+        main, "_fetch_state", lambda eid, _t: _ha_state(eid, 51.9471338, -0.6274617)
+    )
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.car"],
+                "tracker_refresh_seconds": 15,
+            }
+        )
+    )
+    r = client.get("/trackers.json")
+    assert r.json()["refresh_seconds"] == 15
+    assert r.headers["cache-control"] == "no-store"
 
 
 def test_trackers_json_blocks_unauthorized_client(restricted_client):
@@ -1556,6 +1629,114 @@ def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypa
     )
     body = client.get("/trackers.json").json()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    # ...and is named, so a polling editor keeps its last position instead of
+    # reading its absence as "no position now".
+    assert body["unavailable"] == ["device_tracker.broken"]
+
+
+def test_trackers_json_drops_entities_that_report_no_position(app_factory, monkeypatch):
+    """Reachable but without coordinates is a real answer, not an outage."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+
+    def fake_fetch(entity_id, token):
+        if entity_id.endswith("indoors"):
+            return {"entity_id": entity_id, "state": "home", "attributes": {}}
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.indoors", "device_tracker.ok"],
+            }
+        )
+    )
+    body = client.get("/trackers.json").json()
+    assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    assert body["unavailable"] == []
+
+
+def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monkeypatch):
+    """A stalled entity costs one timeout for the whole poll, not one per entity,
+    and is reported unavailable rather than making the fast ones wait."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    monkeypatch.setattr(main, "OVERLAY_TIMEOUT_SECONDS", 0.2)
+
+    def fake_fetch(entity_id, token):
+        if entity_id.endswith("stalled"):
+            time.sleep(1.0)
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = TestClient(
+        app_factory(
+            {
+                "allow_all_ips": True,
+                "overlay_entities": ["device_tracker.stalled", "device_tracker.ok"],
+            }
+        )
+    )
+    started = time.monotonic()
+    body = client.get("/trackers.json").json()
+    assert time.monotonic() - started < 0.8
+    assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
+    assert body["unavailable"] == ["device_tracker.stalled"]
+
+
+def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
+    """25 entities at 50 ms each take ~1.25 s sequentially; the deadline only
+    holds if they overlap. Keeps the response order of the option."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+
+    def fake_fetch(entity_id, token):
+        time.sleep(0.05)
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    entities = [f"device_tracker.t{i:02d}" for i in range(25)]
+    client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
+    started = time.monotonic()
+    body = client.get("/trackers.json").json()
+    assert time.monotonic() - started < 0.6
+    assert [t["entity_id"] for t in body["trackers"]] == entities
+    assert body["unavailable"] == []
+
+
+def test_trackers_json_caps_fetches_in_flight_across_all_polls(app_factory, monkeypatch):
+    """Ten editors polling at once share one pool: the Supervisor never sees
+    more than OVERLAY_FETCH_WORKERS calls in flight, whatever the tab count."""
+    from concurrent.futures import ThreadPoolExecutor as _Clients
+    import threading
+
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    lock = threading.Lock()
+    in_flight = {"now": 0, "peak": 0}
+
+    def fake_fetch(entity_id, token):
+        with lock:
+            in_flight["now"] += 1
+            in_flight["peak"] = max(in_flight["peak"], in_flight["now"])
+        time.sleep(0.05)
+        with lock:
+            in_flight["now"] -= 1
+        return _ha_state(entity_id, 51.9471338, -0.6274617)
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    entities = [f"device_tracker.t{i}" for i in range(8)]
+    client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
+    with _Clients(max_workers=10) as clients:
+        bodies = list(clients.map(lambda _: client.get("/trackers.json").json(), range(10)))
+    assert all(len(b["trackers"]) == 8 and b["unavailable"] == [] for b in bodies)
+    assert in_flight["peak"] <= main.OVERLAY_FETCH_WORKERS
 
 
 def test_fetch_state_returns_none_on_transport_error(monkeypatch):
