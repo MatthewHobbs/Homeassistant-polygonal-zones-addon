@@ -33,7 +33,9 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
 
 - `config.yaml` schema *rejection* (e.g. `zone_colour: match(...)` refusing `""` or `rgb(...)`) — the pilot only round-trips a valid value.
 - `backup: hot` behaviour requires triggering a Supervisor snapshot.
-- Codenotary signature verification (provenance) is only performed by Supervisor on install.
+- Provenance of the published images. `config.yaml` leaves `codenotary` unset (CAS is discontinued); the images carry Sigstore
+  build-provenance attestations, which the Supervisor does not verify on install. Verify them yourself after a release:
+  `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs`.
 - HA OS's actual kernel and AppArmor parser versions, which differ from the devcontainer's (see ADR 0001's 2026-09-26 amendment).
 - Real hardware (RPi, HA Yellow/Green) rather than a GitHub Actions runner.
 
