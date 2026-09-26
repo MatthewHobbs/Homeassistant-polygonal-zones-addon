@@ -103,9 +103,15 @@ wait_for_main_head_change() {
   return 1
 }
 
-# Wait for main's config.yaml version to equal $1.
+# Wait for main's config.yaml version to equal $1. Dry-run never merges, so
+# main's version never moves; polling it here would always time out and fail
+# a preview that would otherwise be clean. Skip the wait, not the intent.
 wait_for_main_version() {
   local expected="$1" seen
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would wait for main's version to reach $expected"
+    return 0
+  fi
   for _ in $(seq 1 15); do
     seen=$(read_version_at_ref main)
     [ "$seen" = "$expected" ] && return 0
