@@ -183,6 +183,9 @@ cmd_up() {
   dc bash -c 'curl -sS --fail --max-time 30 https://version.home-assistant.io/stable.json' \
     >"$WORKDIR/stable.json" || fail "could not fetch stable.json"
   log "stable.json: $(jq -c '{supervisor, homeassistant}' "$WORKDIR/stable.json")"
+  # The parser that compiles the add-on's profile decides which policy
+  # encoding the host kernel enforces, so it is part of the run's identity.
+  log "devcontainer apparmor_parser: $(dc apparmor_parser --version 2>&1 | head -1)"
   seed_core_version
 
   log "Starting Supervisor (channel stable)"
