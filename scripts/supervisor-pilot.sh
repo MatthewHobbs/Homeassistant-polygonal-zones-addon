@@ -106,6 +106,11 @@ poll() {
 # still fails well inside the job timeout.
 pull_image() {
   local image="$1" attempt delay=5
+  # The references are digest-pinned, so a local hit is the exact image and
+  # needs no registry: a run on a warm daemon survives an outage.
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return
+  fi
   for attempt in 1 2 3 4 5; do
     if docker pull --quiet "$image" >/dev/null; then
       return
