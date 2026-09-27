@@ -1603,7 +1603,10 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
         "sensor.not_a_tracker",
     ]
     # Only the opted-in ids were ever asked for, with the add-on's own token.
-    assert [a[0] for a in asked] == ["device_tracker.car", "sensor.not_a_tracker"]
+    # Fetches run concurrently on a shared thread pool (_OVERLAY_POOL), so the
+    # order fake_fetch is actually called in isn't guaranteed to match
+    # submission order — assert the set, not the order.
+    assert {a[0] for a in asked} == {"device_tracker.car", "sensor.not_a_tracker"}
     assert {a[1] for a in asked} == {"stub-token"}
 
 
