@@ -4,10 +4,8 @@ Run by scripts/supervisor-pilot.sh inside the Playwright image, sharing the
 devcontainer's network namespace, so Core is on 127.0.0.1. Logs in to
 Core (onboarding the first user if needed), asks Core for an ingress session
 over the websocket API exactly as the frontend does, then runs build.yml's
-smoke probes and its draw-and-save check against the ingress URL.
-
-The draw-and-save check is duplicated from build.yml's Frontend smoke step,
-which this change must not touch; fold the two together once it can.
+smoke probes and draw_and_save (scripts/draw_and_save.py, shared with
+build.yml's own smoke — ADR 0002 row 8) against the ingress URL.
 
 tracker_refresh() proves the tracker overlay (ADR 0001, issue #47) end to end:
 a real Core service call moves `zone.home`, and the check watches the editor's
@@ -19,12 +17,12 @@ concurrency, hidden tabs); this only has to show the real stack agrees.
 import argparse
 import asyncio
 import json
-import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from draw_and_save import draw_and_save
 from playwright.async_api import async_playwright
 
 # A name that maps to the same Core but is not loopback, so the page is not a
@@ -176,53 +174,6 @@ async def smoke(request, url, expect_colour):
     print(f"OK /config.json reflects the Supervisor-set option ({colour})")
 
 
-async def draw_and_save(page, label, errors):
-    """Copied from build.yml: draw with the Geoman toolbar, save, re-read."""
-
-    def die(msg):
-        fail(f"[{label}] {msg}", errors)
-
-    await page.evaluate("() => map.setView([50.5, 10.5], 10)")
-    before = await page.evaluate(
-        "() => editableLayers.getLayers().map(l => l.feature.properties.id)"
-    )
-    box = await page.locator("#map").bounding_box()
-    points = [(0.15, 0.3), (0.35, 0.3), (0.25, 0.6)]
-    points = [(box["x"] + box["width"] * fx, box["y"] + box["height"] * fy) for fx, fy in points]
-    await page.click(".leaflet-pm-toolbar .leaflet-pm-icon-polygon")
-    for x, y in points + points[:1]:
-        await page.mouse.click(x, y)
-        await page.wait_for_timeout(100)
-    await page.wait_for_timeout(300)
-
-    if [e for e in errors if e.startswith("pageerror")]:
-        die("JS error while creating a zone")
-    after = await page.evaluate(
-        "() => editableLayers.getLayers().map(l => l.feature.properties.id)"
-    )
-    if len(after) != len(before) + 1:
-        die(f"expected {len(before) + 1} zones after drawing one, got {len(after)}")
-    new_ids = [i for i in after if i not in before]
-    if len(new_ids) != 1 or not re.fullmatch(r"[0-9a-f]{32}", new_ids[0] or ""):
-        die(f"new zone's properties.id missing or wrong shape: {new_ids!r}")
-    new_id = new_ids[0]
-    if await page.locator(f'zone-entry[zone-id="{new_id}"]').count() != 1:
-        die(f"no zone-entry rendered for the new zone {new_id}")
-
-    async with page.expect_response(
-        lambda r: r.url.endswith("/save_zones") and r.request.method == "POST"
-    ) as saved:
-        await page.evaluate("() => save_zones()")
-    status = (await saved.value).status
-    if status != 200:
-        die(f"draw->save round-trip returned {status} (expected 200)")
-    persisted = await page.evaluate("async () => (await fetch('./zones.json').then(r => r.json()))")
-    ids = [(f.get("properties") or {}).get("id") for f in persisted.get("features") or []]
-    if new_id not in ids:
-        die(f"new zone {new_id} not in /zones.json after save")
-    print(f"OK [{label}] drew a zone, id {new_id}, saved and persisted")
-
-
 async def tracker_position(page, entity_id):
     """The editor's own view of an overlay entity, straight from its live
     `pz_trackers` array — never re-fetch /trackers.json ourselves, or a poll
@@ -345,13 +296,13 @@ async def main():
         await smoke(context.request, base + args.ingress, args.expect_colour)
 
         secure_page = await open_editor(context, base, args.ingress, errors, True)
-        await draw_and_save(secure_page, "secure origin", errors)
+        await draw_and_save(secure_page, "secure origin", errors, fail)
         if args.tracker_entity:
             await tracker_refresh(
                 secure_page, base, token, args.tracker_entity, args.tracker_refresh_seconds
             )
         page = await open_editor(context, insecure, args.ingress, errors, False)
-        await draw_and_save(page, "non-secure origin", errors)
+        await draw_and_save(page, "non-secure origin", errors, fail)
 
         if errors:
             fail("JS errors while using the editor through ingress", errors)
