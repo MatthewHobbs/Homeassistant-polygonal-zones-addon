@@ -189,6 +189,7 @@ jobs:
           python3 -m playwright install --with-deps chromium >/dev/null
 
           python3 - <<'PY'
+          import asyncio
           import sys
           from playwright.async_api import async_playwright
 
