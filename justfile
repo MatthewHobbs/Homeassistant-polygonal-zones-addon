@@ -29,3 +29,4 @@ lint:
 test: venv
     cd polygonal_zones_editor && ../.venv/bin/python -m pytest -v
     scripts/test-release-merge.sh
+    cd polygonal_zones_editor && node --test tests/test_trackers.js

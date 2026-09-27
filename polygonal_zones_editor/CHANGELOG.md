@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.4 — 2026-09-27
+
+- **Fixed: zones with holes were measured backwards (ADR 0002 row 12).** A
+  hole in a saved zone added to its displayed area instead of subtracting
+  from it, and a tracker sitting in the hole read as inside the zone rather
+  than outside. The editor itself can't draw a hole, so this only reached
+  zones restored or bulk-loaded from a file that had one. Both are now
+  correct: area subtracts each polygon's own holes, and a point counts as
+  inside only when it's in the outer ring and outside every one of that
+  polygon's holes — a `MultiPolygon`'s parts never share holes with each
+  other.
+- **Fixed: a `MultiPolygon` tracker readout could report "outside" for a
+  device that was actually inside one of its parts**, if another part's
+  boundary happened to be nearer — found by adversarial review while row 12
+  above was already open, pre-existing and unrelated to holes specifically.
+  Being inside any one part now always wins, regardless of how close any
+  other part's edge is.
+
 ## 0.5.3 — 2026-09-27
 
 - **Changed: every authorisation failure on `GET /zones.json`, `GET

@@ -7,6 +7,23 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## A closer-but-outside MultiPolygon part could overturn an inside reading (2026-09-27) — FIXED
+
+**Component:** `app/static/js/trackers.js` (`pz_measure_zone`)
+
+Found by adversarial review while row 12's hole fix was already open in the same function, and
+pre-existing: comparing `edgeDistanceM` between candidate parts of a `MultiPolygon` never checked
+whether they agreed on `inside`, so a part the tracker was genuinely outside — but whose boundary
+happened to be nearer than the containing part's own — could overturn an already-correct
+"inside" result. Confirmed by reverting the fix and rerunning
+`tests/test_trackers.js`: a synthetic case (point ~500 m inside one part, ~11 m outside a second,
+unrelated part) failed as `inside: false` against the buggy code, `inside: true` against the fix.
+
+**Fix:** only compare `edgeDistanceM` between two candidates that already agree on `inside`; a
+candidate that is inside always wins over one that isn't, never the other way round.
+
+---
+
 ## `test_trackers_json_returns_only_opted_in_entities` asserts an order the pool doesn't guarantee (2026-09-27) — OPEN, P3, tests only
 
 **Component:** `polygonal_zones_editor/tests/test_main.py`, `app/main.py` (`_OVERLAY_POOL`, `_gather`)
@@ -39,13 +56,19 @@ either returns).
 
 ---
 
-## The editor mismeasures zones with holes (2026-09-27) — OPEN, P3
+## The editor mismeasures zones with holes (2026-09-27) — FIXED
 
-**Component:** `app/static/js/trackers.js` (`pz_layer_rings`, `pz_layer_area_m2`, `pz_measure_zone`)
-
-The validator accepts a Polygon with inner rings (holes). The editor flattens every ring into one list: a zone's area adds its holes instead of subtracting them, and a tracker inside a hole is reported as inside the zone. The editor cannot draw holes, so this reaches only zones restored or saved from elsewhere. Found in review of ADR 0002; read from the code, not run.
-
-**Plan:** ADR 0002 row 12.
+**Fixed** (ADR 0002 row 12): `app/static/js/trackers.js`'s `pz_layer_rings` flattened every ring
+(outer and holes alike) into one list, so a zone's area added its holes instead of subtracting
+them, and a tracker inside a hole read as inside the zone. Replaced with `pz_layer_polygons`,
+which groups each polygon's own outer ring with its own holes (a `MultiPolygon` keeps each part's
+holes scoped to that part, never leaking into another part). Area now subtracts each polygon's
+holes from its outer ring; a point counts as inside only when it is in the outer ring and outside
+every hole. Verified live against a real running container (a donut-shaped zone: correct
+hole-subtracted area, a point in the hole reads outside, a point in the ring reads inside) and
+with `polygonal_zones_editor/tests/test_trackers.js` (`node --test`, wired into `just ci` and
+`test.yml`) — the first automated JS test in this repo, since geometry.js/trackers.js were
+already written to be Node-testable (`module.exports`) but nothing ran them before now.
 
 ---
 

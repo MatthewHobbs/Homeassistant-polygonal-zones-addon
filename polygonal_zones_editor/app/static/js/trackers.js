@@ -18,6 +18,16 @@
  *    all — no panel, no error, no marker.
  */
 
+// In the browser, index.html loads geometry.js before this file as separate
+// <script> tags, so pz_ring_area_m2 & co. are already real globals by the
+// time this runs. Under Node (tests) there is no such tag, so pull them onto
+// globalThis here — never with `let`/`const`, which would shadow the
+// browser's own globals for every reference below instead of only adding a
+// fallback for Node.
+if (typeof module !== 'undefined' && module.exports) {
+    Object.assign(globalThis, require('./geometry.js'));
+}
+
 const PZ_TRACKER_ENDPOINT = './trackers.json';
 
 /* Re-measure at most this often while the user drags a vertex. The maths is
@@ -31,33 +41,60 @@ let pz_refresh_ms = 0;
 let pz_refresh_timer = null;
 let pz_refresh_in_flight = false;
 
-/* Every ring of a layer, as GeoJSON [lon, lat] arrays, read from the LIVE
- * Leaflet geometry rather than layer.feature — so measurements track the shape
- * under the user's cursor, not the shape as last saved. */
-function pz_layer_rings(layer) {
-    if (typeof layer.getLatLngs !== 'function') return [];
-    const rings = [];
-    const walk = (nodes) => {
-        if (!Array.isArray(nodes) || !nodes.length) return;
-        if (nodes[0] instanceof L.LatLng) {
-            const ring = nodes.map((p) => [p.lng, p.lat]);
-            if (ring.length >= 3) {
-                ring.push([ring[0][0], ring[0][1]]); // close it
-                rings.push(ring);
-            }
-            return;
-        }
-        nodes.forEach(walk);
-    };
-    walk(layer.getLatLngs());
-    return rings;
+/* True for a LatLng-shaped node — duck-typed on .lat/.lng rather than
+ * `instanceof L.LatLng`, so this file (like geometry.js) can be exercised
+ * with plain objects under Node, without loading Leaflet. */
+function pz_is_latlng(node) {
+    return !!node && typeof node.lat === 'number' && typeof node.lng === 'number';
 }
 
-/* Total area of a zone in square metres, across all its rings. Lives here
- * rather than in geometry.js because it reads Leaflet layers; geometry.js is
- * kept free of any dependency so it can be exercised without a browser. */
+/* Every polygon of a layer, grouped as {outer, holes} — read from the LIVE
+ * Leaflet geometry rather than layer.feature, so measurements track the
+ * shape under the user's cursor, not the shape as last saved.
+ *
+ * layer.getLatLngs() nests one level deeper per GeoJSON level: a Polygon is
+ * [ring, ring, ...] (first ring outer, the rest holes); a MultiPolygon is
+ * [[ring, ...], [ring, ...], ...], one such group per part. Either way, the
+ * first ring in a group is that group's outer boundary and every ring after
+ * it is a hole *of that same group* — never of any other. Previously every
+ * ring was flattened into one list with no such grouping, so a hole added
+ * to a zone's area instead of subtracting, and a point inside a hole read as
+ * inside the zone (ADR 0002 row 12). */
+function pz_layer_polygons(layer) {
+    if (typeof layer.getLatLngs !== 'function') return [];
+    const latlngs = layer.getLatLngs();
+    if (!Array.isArray(latlngs) || !latlngs.length) return [];
+
+    const toRing = (nodes) => {
+        if (!Array.isArray(nodes) || nodes.length < 3) return null;
+        const ring = nodes.map((p) => [p.lng, p.lat]);
+        ring.push([ring[0][0], ring[0][1]]); // close it
+        return ring;
+    };
+
+    // A Polygon's own top level is a list of rings; a MultiPolygon's is a
+    // list of those lists. Tell them apart by what the first element holds.
+    const groups = pz_is_latlng(latlngs[0]?.[0]) ? [latlngs] : latlngs;
+
+    const polygons = [];
+    for (const group of groups) {
+        if (!Array.isArray(group)) continue;
+        const rings = group.map(toRing).filter(Boolean);
+        if (rings.length) polygons.push({ outer: rings[0], holes: rings.slice(1) });
+    }
+    return polygons;
+}
+
+/* Total area of a zone in square metres: each polygon's outer ring, minus
+ * its own holes, summed across every polygon (a MultiPolygon has more than
+ * one). Lives here rather than in geometry.js because it reads Leaflet
+ * layers; geometry.js is kept free of any dependency so it can be
+ * exercised without a browser. */
 function pz_layer_area_m2(layer) {
-    return pz_layer_rings(layer).reduce((sum, ring) => sum + pz_ring_area_m2(ring), 0);
+    return pz_layer_polygons(layer).reduce((sum, { outer, holes }) => {
+        const holesArea = holes.reduce((s, h) => s + pz_ring_area_m2(h), 0);
+        return sum + Math.max(0, pz_ring_area_m2(outer) - holesArea);
+    }, 0);
 }
 
 function pz_zone_name(layer) {
@@ -66,14 +103,30 @@ function pz_zone_name(layer) {
 }
 
 /* Best (smallest) measurement across a multi-ring zone: a device is "in" a
- * MultiPolygon if it is in any of its parts. */
+ * MultiPolygon if it is in any of its parts, and "in" a part only if it is
+ * inside that part's outer ring and outside every one of that part's holes. */
 function pz_measure_zone(tracker, layer) {
-    const rings = pz_layer_rings(layer);
-    if (!rings.length) return null;
+    const polygons = pz_layer_polygons(layer);
+    if (!polygons.length) return null;
+    const { longitude: lon, latitude: lat, gps_accuracy: accuracyM } = tracker;
     let best = null;
-    for (const ring of rings) {
-        const m = pz_measure(tracker.longitude, tracker.latitude, ring, tracker.gps_accuracy);
-        if (!best || (m.inside && !best.inside) || m.edgeDistanceM < best.edgeDistanceM) {
+    for (const { outer, holes } of polygons) {
+        const insideOuter = pz_point_in_ring(lon, lat, outer);
+        const insideAHole = holes.some((hole) => pz_point_in_ring(lon, lat, hole));
+        const inside = insideOuter && !insideAHole;
+        let edgeDistanceM = pz_distance_to_ring_m(lon, lat, outer);
+        for (const hole of holes) {
+            edgeDistanceM = Math.min(edgeDistanceM, pz_distance_to_ring_m(lon, lat, hole));
+        }
+        const acc = Number.isFinite(accuracyM) && accuracyM > 0 ? accuracyM : 0;
+        const m = { inside, edgeDistanceM, withinAccuracy: inside || edgeDistanceM <= acc };
+        // Pre-existing bug, found by adversarial review while this function
+        // was already open for row 12: comparing edgeDistanceM regardless of
+        // `inside` let a closer-but-outside part overturn an already-inside
+        // result from an earlier part. A device inside part 1 must stay
+        // "inside" even if part 2's boundary happens to be nearer — only
+        // compare distances between two candidates that agree on `inside`.
+        if (!best || (m.inside && !best.inside) || (m.inside === best.inside && m.edgeDistanceM < best.edgeDistanceM)) {
             best = m;
         }
     }
@@ -263,5 +316,5 @@ function setup_tracker_overlay(mapInstance) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { pz_layer_rings, pz_layer_area_m2, pz_measure_zone, pz_format_metres };
+    module.exports = { pz_layer_polygons, pz_layer_area_m2, pz_measure_zone, pz_format_metres };
 }
