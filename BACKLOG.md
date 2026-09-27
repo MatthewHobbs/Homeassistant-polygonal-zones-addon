@@ -196,7 +196,7 @@ clearance readout) and can be lifted from rather than rewritten.
 
 ## `zones.json` 401 body names the wrong credential (2026-09-05) — OPEN, P3
 
-**Plan:** ADR 0002 row 3: every rejected read gets the same status, body and headers; the precise reason goes to the log.
+**Plan:** ADR 0002 row 3: every authorisation failure on `/zones.json`, `/trackers.json` and `/save_zones` gets the same status, body and headers; the precise reason goes to the log.
 
 **Component:** `app/main.py`
 

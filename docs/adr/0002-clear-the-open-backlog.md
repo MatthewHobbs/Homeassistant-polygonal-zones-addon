@@ -10,9 +10,9 @@
 
 | # | Step | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Say too that with a token set the tracker overlay works only through ingress, because the editor's own request carries no token. The gate is already pinned by `test_zones_json_requires_token_when_set_and_lan_request`. Changelog and version bump | this repo | Open | |
+| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Say too that with a token set the whole editor works only through ingress: it loads zones, saves them and polls trackers without a token, so a direct LAN visit can do none of them. The gate is already pinned by `test_zones_json_requires_token_when_set_and_lan_request`. Changelog and version bump | this repo | Open | |
 | 2 | The integration sends `X-Save-Token` when reading zones. This ADR carries no authority into that repo | Homeassistant-polygonal-zones | Blocked | needs work opened in that repo, under its own approval |
-| 3 | Every rejected `/zones.json` read gets the same status, body and headers, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only | this repo | Open | |
+| 3 | Every authorisation failure on `/zones.json`, `/trackers.json` and `/save_zones` gets the same status, body and headers, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only. A test covers all three endpoints with a token set and with none | this repo | Open | |
 | 4 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
 | 5 | A scheduled, non-required check that runs the attestation step against a throwaway artefact, on the Supervisor pilot's pattern | this repo | Blocked | waits for ADR 0001 row 5, so the two nightly jobs do not change at once |
 | 6 | Fix `release-merge.sh --dry-run` on a version bump | this repo | Done | #61, 2026-09-26 |
@@ -64,7 +64,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 | Record measure-only as a rule (chosen) | No cross-repo work. Fixtures become necessary only if the editor ever states a match |
 | Shared fixtures anyway | Both repos test the geometry primitives against one set. Work in two repos for a risk the design already avoids |
 
-RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked for a distinct message per reason that also hid whether a token is configured, which cannot both hold. Row 3 keeps the second.
+RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked for a distinct message per reason that also hid whether a token is configured, which cannot both hold. Row 3 keeps the second, across all three endpoints, since each one's status would otherwise reveal the same thing.
 
 ## Consequences
 
@@ -82,7 +82,8 @@ RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked fo
 - **Releases on v4:** `release.yml` at each tag from v0.4.0 to v0.5.0 pins `attest-build-provenance` v4.2.2, introduced by #30 on 2026-09-05.
 - **Dry run:** #61 skips `wait_for_main_version` under `--dry-run`, and was checked against `--dry-run 60`.
 - **Holes:** `_validate_polygon_coordinates` accepts any number of rings per Polygon. `pz_layer_rings` in `trackers.js` flattens every ring, `pz_layer_area_m2` adds their areas, and `pz_measure_zone` reports inside if the point is in any ring. Read from the code, not run.
-- **Tracker overlay:** `trackers.js` fetches `/trackers.json` with only an `Accept` header, so with a token set a direct LAN visit gets 401.
+- **Editor requests:** `map.js` fetches `/zones.json` and posts `/save_zones`, and `trackers.js` fetches `/trackers.json`. None sends `X-Save-Token`, so with a token set a direct LAN visit is refused on all three.
+- **Status as a signal:** all three endpoints answer 401 when a token is set and 403 when none is, whatever the body says.
 - **Not established:** that the integration will take row 2; any automated check of #61's fix (row 7).
 
 ## References
