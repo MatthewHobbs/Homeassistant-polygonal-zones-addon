@@ -7,6 +7,38 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## `test_trackers_json_returns_only_opted_in_entities` asserts an order the pool doesn't guarantee (2026-09-27) — OPEN, P3, tests only
+
+**Component:** `polygonal_zones_editor/tests/test_main.py`, `app/main.py` (`_OVERLAY_POOL`, `_gather`)
+
+Found while running the full suite locally (macOS/arm64, Python 3.12) ahead of an unrelated PR
+(ADR 0002 row 1) — **not caused by that PR**: reproduces identically on `main` at `3913984` with
+no changes checked out. Fails deterministically (3/3) in a full `pytest` run, passes reliably
+(5/5) run in isolation with `-k`.
+
+The test asserts the **order `_fetch_state` was called** in (`asked`), reflecting which of
+`_OVERLAY_POOL`'s worker threads happened to pick up which submitted future first.
+`concurrent.futures.ThreadPoolExecutor` does not guarantee call order matches submission order,
+only that both futures eventually run; `_OVERLAY_POOL` is a module-level pool shared across the
+whole pytest process (by design — see its comment in `main.py`), so which worker is already
+"warm" and grabs a task first depends on scheduling noise from whatever ran immediately before
+in the same process. In isolation the pool's threads start fresh and happen to pick up in
+submission order; under the full suite's load they don't reliably.
+
+**What's established:** the race exists and is reproducible on this platform, on unmodified
+`main`. **What's not established:** why it doesn't (or hasn't yet) reproduced on the remote
+Linux CI runners — `gh run list` shows `pytest` green on `main` at this commit. That could be
+timing luck, a scheduler difference, or something else; no cause is claimed here beyond what was
+directly observed.
+
+**Fix, not done here (out of scope for the PR that found it):** stop asserting call order for
+concurrently-dispatched work — assert the *set* of entities asked for (already covered by a
+separate assertion two lines below in the same test), or synchronise the fakes so order is
+actually deterministic (e.g. a fake that blocks until both entities have been requested before
+either returns).
+
+---
+
 ## The editor mismeasures zones with holes (2026-09-27) — OPEN, P3
 
 **Component:** `app/static/js/trackers.js` (`pz_layer_rings`, `pz_layer_area_m2`, `pz_measure_zone`)
@@ -100,9 +132,11 @@ covers partial-release recovery; this is about not needing it.
 
 ---
 
-## `save_token` gates reads as well as writes, contrary to its own description (2026-09-05) — OPEN, P1
+## `save_token` gates reads as well as writes, contrary to its own description (2026-09-05) — FIXED 2026-09-27, P1
 
-**Plan:** ADR 0002 rows 1 and 2. This is not a bug: 0.2.27 gated reads on purpose to protect zone geometry, and only the description lagged. The gate stays and the description is corrected. The integration learns to send `X-Save-Token`. Until then, reading over the LAN needs `save_token` empty, which also leaves saves open to the LAN under `allow_all_ips`. The **Fix** below, scoping the check to saves, was considered and rejected.
+**Plan:** ADR 0002 row 1 done, row 2 merged upstream but not yet released. This was not a bug: 0.2.27 gated reads on purpose to protect zone geometry, and only the description lagged. The gate stays; the description is corrected in `translations/en.yaml` and `DOCS.md` (row 1). The integration's own `zone_source_token` option, bound to the add-on's origin, merged in that repo's PR #95 (2026-09-27) but not yet in a tagged release — until one ships, the integration can only read a token-protected add-on with `save_token` left empty. The **Fix** below, scoping the check to saves, was considered and rejected.
+
+Confirmed under the Supervisor pilot (2026-09-27, `cmd_probe` in `scripts/supervisor-pilot.sh`): a same-host integration reaching the add-on does **not** go through ingress — ingress is a browser-session proxy a background component cannot use. Core can reach the add-on directly over the internal Supervisor network by its slug-derived hostname, with no LAN port and no ingress, but that request arrives from the Supervisor's internal gateway address, not the ingress sidecar, so it is blocked like any other non-ingress client unless `allow_all_ips` is on. See the new finding below.
 
 **Component:** `app/main.py` (`IPAllowMiddleware` / auth layer) + `config.yaml` option description
 
@@ -137,6 +171,28 @@ to supply the credential before it is switched on by anyone.
 
 **Tests:** a case asserting `GET /zones.json` succeeds with a token configured and no header sent,
 and one asserting `POST /save_zones` still 401s in the same state.
+
+---
+
+## No dedicated trust for Core's own traffic on the internal Supervisor network (2026-09-27) — DECIDED: leave as is
+
+**Component:** `app/const.py` (`ALLOWED_IPS`), `app/main.py` (`IPAllowMiddleware`)
+
+Found while confirming ADR 0002 row 1 under the Supervisor pilot: Core reaches the add-on
+directly over the internal `hassio` Docker network (by the add-on's slug-derived hostname, no
+LAN port, no ingress) — but the request arrives from the Supervisor's bridge gateway address
+(`172.30.32.1` in the pilot), not the ingress sidecar (`172.30.32.2`), so `ALLOWED_IPS`
+does not recognise it. Today that path is indistinguishable from any other non-ingress client:
+it needs `allow_all_ips: true` (or a token) exactly like a real LAN client would, even though
+the traffic never left the host.
+
+**Decided (owner, 2026-09-27):** leave it as is. `allow_all_ips` stays the only opt-in for
+same-host integration traffic, exactly as ADR 0002 row 1 documents; no new internal-trust
+option. That gateway address is a Supervisor implementation detail, not a stable public
+contract, and trusting it would need its own scrutiny (does it ever change per install? per
+Supervisor version? is it spoofable by another add-on on the same bridge?) for a gain
+`save_token` already covers, since a configured token authorizes without `allow_all_ips` at
+all. Not revisited unless something changes that trade-off.
 
 ---
 
