@@ -17,14 +17,15 @@ configuration:
       Home Assistant ingress sidecar. Enable this if the companion
       integration runs in a different container, or if you want to
       back up / restore zones over curl. Pair with save_token (below)
-      to keep POST /save_zones protected.
+      to keep reads and writes protected.
   save_token:
     name: Save token
     description: >-
-      When set, POST /save_zones requires the header
-      X-Save-Token:<value> on any non-ingress request. The addon's
-      own Save button keeps working because it goes through ingress.
-      Leave empty to disable. Never logged.
+      When set, GET /zones.json, GET /trackers.json and POST
+      /save_zones all require the header X-Save-Token:<value> on any
+      non-ingress request — reads are covered too, not just writes.
+      The addon's own UI keeps working unauthenticated because it
+      goes through ingress. Leave empty to disable. Never logged.
   trusted_proxies:
     name: Trusted proxies
     description: >-

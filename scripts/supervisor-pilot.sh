@@ -411,6 +411,34 @@ cmd_probe() {
     fail "web service runs as uid=${uid:-?}(${user:-?}) under the Supervisor, expected uid=1001(app)"
   log "OK web service runs as uid=$uid($user) under the Supervisor"
 
+  # Reachability from Core over the internal hassio network (ADR 0002 row 1):
+  # established 2026-09-27 that Core runs with --network host, not on the
+  # hassio bridge, so it reaches the add-on's slug-derived hostname alias
+  # over routing, not Docker DNS from network membership — but the request
+  # arrives from the hassio bridge gateway (172.30.32.1), not the ingress
+  # sidecar (172.30.32.2). So this path exists and needs no LAN port or
+  # ingress, but is not automatically trusted: it is blocked exactly like
+  # any other non-ingress client under this run's default options
+  # (allow_all_ips off, no save_token). DOCS.md must not claim this path is
+  # "through ingress" or usable without allow_all_ips/save_token.
+  local addon_host="${SLUG//_/-}"
+  dc docker exec homeassistant python3 -c "
+import urllib.request
+r = urllib.request.urlopen('http://${addon_host}:8000/healthz', timeout=5)
+assert r.status == 200, r.status
+" || fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
+  log "OK Core reaches the add-on via internal hostname $addon_host (no ingress, no LAN port)"
+
+  dc docker exec homeassistant python3 -c "
+import urllib.request, urllib.error
+try:
+    urllib.request.urlopen('http://${addon_host}:8000/zones.json', timeout=5)
+    raise SystemExit('expected 403, got 200')
+except urllib.error.HTTPError as e:
+    assert e.code == 403, e.code
+" || fail "internal-hostname access to /zones.json was not blocked as expected (allow_all_ips off, no token)"
+  log "OK internal-hostname reads are blocked like any non-ingress client without allow_all_ips/save_token"
+
   local base
   base="$(core_url)" || fail "Core is not answering on 8123 or 80"
   log "Probing through Core ingress at $base$ingress"

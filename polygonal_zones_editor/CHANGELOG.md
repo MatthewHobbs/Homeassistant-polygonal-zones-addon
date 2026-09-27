@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.1 — 2026-09-27
+
+- **Fixed: `save_token`'s description understated what it protects (ADR 0002
+  row 1).** The Supervisor options page said it guarded `POST /save_zones`
+  only; it has covered `GET /zones.json` and `GET /trackers.json` too since
+  0.2.27, on purpose, to protect zone geometry. `DOCS.md` and the options
+  description now say so plainly, along with the trade: with a token set,
+  only ingress works unauthenticated (loading zones, saving them and polling
+  trackers); without one, `allow_all_ips` opens all three to the LAN.
+- **Docs: corrected how the companion integration actually reaches the
+  add-on.** `DOCS.md` said a same-host integration goes through ingress and
+  needs no `allow_all_ips`. Confirmed under the Supervisor pilot that this
+  was wrong — ingress is a browser-session proxy the integration's background
+  HTTP fetch cannot use, same host or not. `allow_all_ips` is needed either
+  way. The integration can now also send `X-Save-Token` on reads via its own
+  `zone_source_token` option — see **Securing reads and writes** in `DOCS.md`.
+- **Internal:** the Supervisor pilot now asserts Core can reach the add-on
+  over the internal Supervisor network (no ingress, no LAN port), and that
+  the request is blocked there like any other non-ingress client unless
+  `allow_all_ips` or `save_token` is set — the check behind the two fixes
+  above, so they can't drift silently again.
+
 ## 0.5.0 — 2026-09-26
 
 - **Added: tracker positions on the map now refresh while the editor is open
