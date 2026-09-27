@@ -24,7 +24,7 @@ candidate that is inside always wins over one that isn't, never the other way ro
 
 ---
 
-## `test_trackers_json_returns_only_opted_in_entities` asserts an order the pool doesn't guarantee (2026-09-27) — OPEN, P3, tests only
+## `test_trackers_json_returns_only_opted_in_entities` asserts an order the pool doesn't guarantee (2026-09-27) — FIXED by #65
 
 **Component:** `polygonal_zones_editor/tests/test_main.py`, `app/main.py` (`_OVERLAY_POOL`, `_gather`)
 
@@ -48,11 +48,11 @@ Linux CI runners — `gh run list` shows `pytest` green on `main` at this commit
 timing luck, a scheduler difference, or something else; no cause is claimed here beyond what was
 directly observed.
 
-**Fix, not done here (out of scope for the PR that found it):** stop asserting call order for
-concurrently-dispatched work — assert the *set* of entities asked for (already covered by a
-separate assertion two lines below in the same test), or synchronise the fakes so order is
-actually deterministic (e.g. a fake that blocks until both entities have been requested before
-either returns).
+**Fixed in #65:** stopped asserting call order; asserts `Counter` of entities asked for instead
+(a plain set was tried first and rejected — it would have hidden a duplicate-fetch regression
+too, caught by adversarial review on that same PR). The response's own ordering is unaffected —
+it's a separate, code-guaranteed property (dict insertion order in `_gather`), not what was
+racy.
 
 ---
 
@@ -110,7 +110,7 @@ and tag steps already do. Cover it with a check that fails on today's script.
 
 ## The release path's action bumps are unverified by any PR check (2026-09-05) — OPEN, P2
 
-**Plan:** ADR 0002 rows 4 and 5. Row 4 is done: the 0.5.0 attestations, made with v4.2.2, verify on both arches. The scheduled check (row 5) waits for ADR 0001 row 5.
+**Plan:** ADR 0002 rows 4 and 5. Row 4 is done: the 0.5.0 attestations, made with v4.2.2, verify on both arches — reconfirmed on the 0.5.4 release (2026-09-27), both arches, `gh attestation verify` against the real published images. That release went straight to tagging rather than a `workflow_dispatch` pre-flight first, as this entry's "before the next release" line asks for; it worked, so the coverage gap didn't bite this time, but the gap itself is unchanged. The scheduled check (row 5) still waits for ADR 0001 row 5.
 
 **Component:** `.github/workflows/release.yml`
 
