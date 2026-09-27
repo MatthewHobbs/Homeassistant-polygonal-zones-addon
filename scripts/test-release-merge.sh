@@ -44,7 +44,8 @@ check() {
 # the dry-run guard was bypassed, rather than silently succeeding or hanging
 # on a real network call in CI. Deliberately unused in the passing case
 # below — that it's never called is exactly what's being proven.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329 # "unreachable"/"never invoked": same
+# false positive, different codes across shellcheck versions.
 read_version_at_ref() {
   echo "read_version_at_ref called with ref=$1 — the dry-run guard did not return early" >&2
   return 1
