@@ -245,9 +245,15 @@ clearance readout) and can be lifted from rather than rewritten.
 
 ---
 
-## `zones.json` 401 body names the wrong credential (2026-09-05) — OPEN, P3
+## `zones.json` 401 body names the wrong credential (2026-09-05) — FIXED
 
-**Plan:** ADR 0002 row 3: every authorisation failure on `/zones.json`, `/trackers.json` and `/save_zones` gets the same status, body and headers; the precise reason goes to the log.
+**Fixed** (ADR 0002 row 3): every authorisation failure on `/zones.json`, `/trackers.json` and
+`/save_zones` now gets the identical `403` / `{"error": "not authorised"}` / `Cache-Control:
+no-store` response, whatever the reason — a rejected read no longer names a *save* token, or any
+token at all. The precise reason (`not_allowed` / `token_missing` / `token_wrong`) goes to the
+add-on log only, via `_AUTH_REJECTION_LOG_REASON` in `app/main.py`. Pinned by
+`test_uniform_auth_rejection_across_all_three_endpoints`, covering all three endpoints with a
+token set and with none, per the row's own ask.
 
 **Component:** `app/main.py`
 

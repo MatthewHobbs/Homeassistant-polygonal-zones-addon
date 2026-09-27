@@ -105,10 +105,10 @@ def _current_zones_etag() -> str | None:
 def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     """Decide whether a /save_zones request is allowed.
 
-    Returns ``(allowed, reason)``. ``reason`` is ``"invalid_token"`` when a
-    token is configured but the request did not present a valid one (so the
-    handler can return 401 instead of 403), or ``"not_allowed"`` for a
-    plain block.
+    Returns ``(allowed, reason)``. ``reason`` is one of ``"token_missing"``,
+    ``"token_wrong"`` or ``"not_allowed"`` — for logging only (ADR 0002 row
+    3): every caller collapses these to one identical response, so a client
+    cannot infer from the response alone whether a token is even configured.
 
     Order:
       1. Ingress (172.30.32.2) is always allowed — the HA UI uses it.
@@ -127,7 +127,7 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
         provided = request.headers.get("x-save-token", "").strip()
         if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
             return True, None
-        return False, "invalid_token"
+        return False, "token_missing" if not provided else "token_wrong"
 
     if allow_all_ips(options):
         return True, None
@@ -156,12 +156,32 @@ def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
         provided = request.headers.get("x-save-token", "").strip()
         if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
             return True, None
-        return False, "invalid_token"
+        return False, "token_missing" if not provided else "token_wrong"
 
     if allow_all_ips(options):
         return True, None
 
     return False, "not_allowed"
+
+
+# ADR 0002 row 3: every authorisation failure on /zones.json, /trackers.json
+# and /save_zones gets this one status, body and headers, whatever the
+# reason — so a client cannot tell from the response alone whether a token
+# is even configured, let alone which of "IP not allowed", "token missing"
+# or "token wrong" applies. Callers log the precise reason themselves.
+def _auth_rejection_response() -> JSONResponse:
+    return JSONResponse(
+        {"error": "not authorised"},
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+_AUTH_REJECTION_LOG_REASON = {
+    "token_missing": "missing X-Save-Token",
+    "token_wrong": "wrong X-Save-Token",
+    "not_allowed": "not ingress, no token configured, allow_all_ips off",
+}
 
 
 class IPAllowMiddleware(BaseHTTPMiddleware):
@@ -450,21 +470,12 @@ def save_zones_generator(options: dict):
         ok, reason = authorise_save(options, request)
         if not ok:
             _record_save_failure(client_host)
-            if reason == "invalid_token":
-                _LOGGER.warning(
-                    "Rejected save from %s: missing or invalid X-Save-Token",
-                    client_host,
-                )
-                return JSONResponse(
-                    {"error": "missing or invalid X-Save-Token"},
-                    status_code=401,
-                )
             _LOGGER.warning(
-                "Blocked request from %s on %s",
+                "Rejected /save_zones from %s: %s",
                 client_host,
-                request.url.path,
+                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
             )
-            return PlainTextResponse("not allowed", status_code=403)
+            return _auth_rejection_response()
 
         content_length = request.headers.get("content-length")
         if (
@@ -706,8 +717,12 @@ def trackers_json_generator(options: dict):
         ok, reason = authorise_read(options, request)
         if not ok:
             _record_save_failure(client_host)
-            status = 401 if reason == "invalid_token" else 403
-            return _uncached({"error": "not authorised"}, status_code=status)
+            _LOGGER.warning(
+                "Rejected /trackers.json read from %s: %s",
+                client_host,
+                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
+            )
+            return _auth_rejection_response()
 
         entities = overlay_entities(options)
         if not entities:
@@ -782,20 +797,12 @@ def zones_json_generator(options: dict):
         ok, reason = authorise_read(options, request)
         if not ok:
             _record_save_failure(client_host)
-            if reason == "invalid_token":
-                _LOGGER.warning(
-                    "Rejected /zones.json read from %s: missing or invalid X-Save-Token",
-                    client_host,
-                )
-                return JSONResponse(
-                    {"error": "missing or invalid X-Save-Token"},
-                    status_code=401,
-                )
             _LOGGER.warning(
-                "Blocked /zones.json read from %s (not ingress, no token configured, allow_all_ips off)",
+                "Rejected /zones.json read from %s: %s",
                 client_host,
+                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
             )
-            return PlainTextResponse("not allowed", status_code=403)
+            return _auth_rejection_response()
 
         # Pass the file bytes through verbatim — atomic_write_json guarantees
         # the file is always valid JSON, so re-parsing and re-serialising via

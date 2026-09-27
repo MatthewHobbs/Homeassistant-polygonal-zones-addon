@@ -81,7 +81,7 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
 
 Only relevant if you enable the LAN port (`Configuration → Network → set a host port for 8000/tcp`).
 
-- [ ] With `save_token: "abc"` set, LAN `curl -X POST .../save_zones` **without** the header → `401`.
+- [ ] With `save_token: "abc"` set, LAN `curl -X POST .../save_zones` **without** the header → `403` (uniform rejection, ADR 0002 row 3).
 - [ ] Same with header `X-Save-Token: abc` → `200`.
 - [ ] Trailing whitespace: `X-Save-Token: abc ` → `200` (strip-symmetric behaviour).
 - [ ] 10 failed attempts in 60 seconds → `429 Too Many Requests` on the 11th. Wait 60s and try again with the correct token — succeeds.

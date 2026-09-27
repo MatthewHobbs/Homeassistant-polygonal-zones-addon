@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.3 — 2026-09-27
+
+- **Changed: every authorisation failure on `GET /zones.json`, `GET
+  /trackers.json` and `POST /save_zones` now looks identical from the
+  outside** — `403` and `{"error": "not authorised"}`, whatever the actual
+  reason (wrong IP, missing token, wrong token), on all three routes (ADR
+  0002 row 3). Previously a `401` on a route meant a token was configured
+  and simply not presented correctly, and a rejected read even named the
+  wrong credential ("missing or invalid X-Save-Token" on a GET, when the
+  header protects saves too). That distinction was itself a leak: it told
+  an unauthenticated client whether `save_token` was even set. The precise
+  reason is still recorded, but only in the add-on's own log, never in the
+  response. If you scripted against the old `401`/`403` split, check for
+  `403` and the response body instead.
+
 ## 0.5.2 — 2026-09-27
 
 - **Added: rectangle drawing (ADR 0002 row 11).** Switched off in #36 during the
