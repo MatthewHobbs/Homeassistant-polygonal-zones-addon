@@ -39,13 +39,19 @@ either returns).
 
 ---
 
-## The editor mismeasures zones with holes (2026-09-27) — OPEN, P3
+## The editor mismeasures zones with holes (2026-09-27) — FIXED
 
-**Component:** `app/static/js/trackers.js` (`pz_layer_rings`, `pz_layer_area_m2`, `pz_measure_zone`)
-
-The validator accepts a Polygon with inner rings (holes). The editor flattens every ring into one list: a zone's area adds its holes instead of subtracting them, and a tracker inside a hole is reported as inside the zone. The editor cannot draw holes, so this reaches only zones restored or saved from elsewhere. Found in review of ADR 0002; read from the code, not run.
-
-**Plan:** ADR 0002 row 12.
+**Fixed** (ADR 0002 row 12): `app/static/js/trackers.js`'s `pz_layer_rings` flattened every ring
+(outer and holes alike) into one list, so a zone's area added its holes instead of subtracting
+them, and a tracker inside a hole read as inside the zone. Replaced with `pz_layer_polygons`,
+which groups each polygon's own outer ring with its own holes (a `MultiPolygon` keeps each part's
+holes scoped to that part, never leaking into another part). Area now subtracts each polygon's
+holes from its outer ring; a point counts as inside only when it is in the outer ring and outside
+every hole. Verified live against a real running container (a donut-shaped zone: correct
+hole-subtracted area, a point in the hole reads outside, a point in the ring reads inside) and
+with `polygonal_zones_editor/tests/test_trackers.js` (`node --test`, wired into `just ci` and
+`test.yml`) — the first automated JS test in this repo, since geometry.js/trackers.js were
+already written to be Node-testable (`module.exports`) but nothing ran them before now.
 
 ---
 
