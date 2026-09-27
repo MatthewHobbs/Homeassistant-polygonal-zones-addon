@@ -206,7 +206,7 @@ def test_zones_json_no_wildcard_cors(allow_all_client):
 def test_zones_json_blocks_unauthorized_client(restricted_client):
     response = restricted_client.get("/zones.json")
     assert response.status_code == 403
-    assert response.text == "not allowed"
+    assert response.json() == {"error": "not authorised"}
 
 
 def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
@@ -738,7 +738,7 @@ def test_save_zones_blocks_unauthorized_client(restricted_client, tmp_zones_file
     response = restricted_client.post("/save_zones", json={"evil": True})
 
     assert response.status_code == 403
-    assert response.text == "not allowed"
+    assert response.json() == {"error": "not authorised"}
     assert tmp_zones_file.read_text() == original
 
 
@@ -750,12 +750,12 @@ def test_save_token_required_when_set_and_lan_request(app_factory, tmp_zones_fil
 
     # No header.
     r = client.post("/save_zones", json=_valid_payload())
-    assert r.status_code == 401
-    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+    assert r.status_code == 403
+    assert r.json() == {"error": "not authorised"}
 
     # Wrong token.
     r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "wrong"})
-    assert r.status_code == 401
+    assert r.status_code == 403
 
     # Correct token.
     r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "s3cret"})
@@ -786,11 +786,12 @@ def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
     r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "s3cret"})
     assert r.status_code == 200
 
-    # Without token, even though allow_all_ips is off, the response is 401
-    # (token-required) rather than 403 — server is signalling that auth is
-    # available, just not provided.
+    # Without a token, the response is the same uniform rejection every
+    # other auth failure gets (ADR 0002 row 3) — it must not signal that a
+    # token even exists, let alone that one is merely missing.
     r = client.post("/save_zones", json=_valid_payload())
-    assert r.status_code == 401
+    assert r.status_code == 403
+    assert r.json() == {"error": "not authorised"}
 
 
 def test_zones_json_requires_token_when_set_and_lan_request(app_factory, tmp_zones_file):
@@ -804,12 +805,12 @@ def test_zones_json_requires_token_when_set_and_lan_request(app_factory, tmp_zon
 
     # No header.
     r = client.get("/zones.json")
-    assert r.status_code == 401
-    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+    assert r.status_code == 403
+    assert r.json() == {"error": "not authorised"}
 
     # Wrong token.
     r = client.get("/zones.json", headers={"X-Save-Token": "wrong"})
-    assert r.status_code == 401
+    assert r.status_code == 403
 
     # Correct token.
     r = client.get("/zones.json", headers={"X-Save-Token": "s3cret"})
@@ -841,11 +842,11 @@ def test_zones_json_rate_limit_shared_with_save_failures(app_factory, tmp_zones_
     # Five bad POSTs.
     for _ in range(5):
         r = client.post("/save_zones", json=_valid_payload())
-        assert r.status_code == 401
+        assert r.status_code == 403
     # Five bad GETs — total failures now at the limit.
     for _ in range(5):
         r = client.get("/zones.json")
-        assert r.status_code == 401
+        assert r.status_code == 403
 
     # Next GET is rate-limited — and so is the next POST, because the
     # counter is shared.
@@ -853,6 +854,50 @@ def test_zones_json_rate_limit_shared_with_save_failures(app_factory, tmp_zones_
     assert r.status_code == 429
     r = client.post("/save_zones", json=_valid_payload())
     assert r.status_code == 429
+
+
+def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zones_file):
+    """ADR 0002 row 3: every authorisation failure on /zones.json,
+    /trackers.json and /save_zones gets the same status, body and headers,
+    whatever the reason (IP not allowed, token missing, token wrong) and
+    whichever endpoint — so a client can't infer from the response alone
+    whether a token is even configured. Covers all three endpoints, with a
+    token set and with none, as the row itself asks for."""
+    expected_status = 403
+    expected_body = {"error": "not authorised"}
+    expected_cache_control = "no-store"
+
+    def requests_for(client):
+        yield "GET /zones.json", lambda **kw: client.get("/zones.json", **kw)
+        yield "GET /trackers.json", lambda **kw: client.get("/trackers.json", **kw)
+        yield (
+            "POST /save_zones",
+            lambda **kw: client.post("/save_zones", json=_valid_payload(), **kw),
+        )
+
+    # No token configured, no allow_all_ips: "not_allowed".
+    client = TestClient(app_factory({"allow_all_ips": False}))
+    for name, do in requests_for(client):
+        r = do()
+        assert r.status_code == expected_status, name
+        assert r.json() == expected_body, name
+        assert r.headers.get("cache-control") == expected_cache_control, name
+
+    # Token configured, none presented: "token_missing".
+    client = TestClient(app_factory({"allow_all_ips": True, "save_token": "sekrit"}))
+    for name, do in requests_for(client):
+        r = do()
+        assert r.status_code == expected_status, name
+        assert r.json() == expected_body, name
+        assert r.headers.get("cache-control") == expected_cache_control, name
+
+    # Token configured, wrong one presented: "token_wrong".
+    client = TestClient(app_factory({"allow_all_ips": True, "save_token": "sekrit"}))
+    for name, do in requests_for(client):
+        r = do(headers={"X-Save-Token": "wrong"})
+        assert r.status_code == expected_status, name
+        assert r.json() == expected_body, name
+        assert r.headers.get("cache-control") == expected_cache_control, name
 
 
 def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
@@ -1079,13 +1124,13 @@ def test_healthz_returns_503_when_zones_missing(restricted_client, tmp_zones_fil
 
 def test_save_zones_rate_limits_after_10_failures(app_factory, tmp_zones_file):
     """When save_token is set, repeated unauthorised attempts eventually
-    return 429 instead of 401 — defends against LAN token-brute-force."""
+    return 429 instead of 403 — defends against LAN token-brute-force."""
     app = app_factory({"save_token": "sekrit"})
     client = TestClient(app)
 
     for attempt in range(10):
         r = client.post("/save_zones", json=_valid_payload())
-        assert r.status_code == 401, f"attempt {attempt} unexpectedly {r.status_code}"
+        assert r.status_code == 403, f"attempt {attempt} unexpectedly {r.status_code}"
 
     r = client.post("/save_zones", json=_valid_payload())
     assert r.status_code == 429
@@ -1156,21 +1201,20 @@ def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_facto
     assert r.status_code == 200
 
 
-def test_zones_json_returns_401_when_save_token_set_and_no_header(
+def test_zones_json_uniform_rejection_when_save_token_set_and_no_header(
     app_factory,
     tmp_zones_file,
 ):
-    """With save_token set and allow_all_ips off, a non-ingress GET with
-    no X-Save-Token header returns 401 (token required) rather than 403
-    (coarse block). This mirrors the /save_zones behaviour so a user
-    who sets save_token without also flipping allow_all_ips gets a
-    useful "auth is available, provide it" signal rather than a
-    flat forbidden."""
+    """With save_token set and allow_all_ips off, a non-ingress GET with no
+    X-Save-Token header gets the same uniform rejection as every other auth
+    failure (ADR 0002 row 3) — not a distinct "token required" signal, which
+    would let a client infer a token is configured without ever presenting
+    one. This mirrors the /save_zones behaviour."""
     app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
     client = TestClient(app)
     r = client.get("/zones.json")
-    assert r.status_code == 401
-    assert r.json() == {"error": "missing or invalid X-Save-Token"}
+    assert r.status_code == 403
+    assert r.json() == {"error": "not authorised"}
 
 
 def test_zones_json_token_unlocks_lan_without_allow_all_ips(
@@ -1559,9 +1603,11 @@ def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypat
 
 
 def test_trackers_json_blocks_unauthorized_client(restricted_client):
-    """Positions are at least as sensitive as the zones file — same gate."""
+    """Positions are at least as sensitive as the zones file — same gate,
+    same uniform rejection (ADR 0002 row 3)."""
     r = restricted_client.get("/trackers.json")
-    assert r.status_code in (401, 403)
+    assert r.status_code == 403
+    assert r.json() == {"error": "not authorised"}
 
 
 def test_trackers_json_without_supervisor_token(app_factory, monkeypatch):

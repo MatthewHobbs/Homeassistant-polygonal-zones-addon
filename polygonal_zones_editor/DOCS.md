@@ -91,7 +91,7 @@ When `save_token` is set, the add-on requires the header `X-Save-Token: <value>`
 
 The companion integration can supply this header itself as of [PR #95](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/pull/95) (merged 2026-09-27, not yet in a tagged release) — see its own `zone_source_token` option, bound to this add-on's own origin and never sent elsewhere or across a redirect. Until a release containing it is out, a token-protected add-on is reachable from the integration only with `save_token` left empty.
 
-The token takes precedence over `allow_all_ips`: once it's set, LAN reads and writes need the header even with `allow_all_ips: true`. So if you set a token and then a LAN `curl` of `/zones.json` returns `401`, that's expected — add the header (see below).
+The token takes precedence over `allow_all_ips`: once it's set, LAN reads and writes need the header even with `allow_all_ips: true`. Every rejection — wrong IP, missing token, wrong token — looks identical from the outside: `403` and `{"error": "not authorised"}`, on all three routes (ADR 0002 row 3, deliberately: the response alone must not reveal whether a token is even configured). So if a LAN `curl` of `/zones.json` returns that once you've set a token, add the header (see below) — the precise reason is in the add-on's own log, not the response.
 
 Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the add-on — there is no migration needed.
 
