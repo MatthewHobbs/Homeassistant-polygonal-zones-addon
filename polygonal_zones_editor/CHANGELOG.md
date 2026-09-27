@@ -13,9 +13,12 @@
   add-on.** `DOCS.md` said a same-host integration goes through ingress and
   needs no `allow_all_ips`. Confirmed under the Supervisor pilot that this
   was wrong — ingress is a browser-session proxy the integration's background
-  HTTP fetch cannot use, same host or not. `allow_all_ips` is needed either
-  way. The integration can now also send `X-Save-Token` on reads via its own
-  `zone_source_token` option — see **Securing reads and writes** in `DOCS.md`.
+  HTTP fetch cannot use, same host or not. A configured `save_token`
+  authorizes the fetch on its own, with `allow_all_ips` left `false`; without
+  one, `allow_all_ips` is what the integration needs instead. The integration
+  gained its own `zone_source_token` option to supply that header — merged
+  upstream in [PR #95](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/pull/95),
+  not yet in a tagged release — see **Securing reads and writes** in `DOCS.md`.
 - **Internal:** the Supervisor pilot now asserts Core can reach the add-on
   over the internal Supervisor network (no ingress, no LAN port), and that
   the request is blocked there like any other non-ingress client unless

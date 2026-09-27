@@ -62,7 +62,7 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `zone_colour`     | string   | `purple`  | Colour used to render zones on the map (any CSS colour name or `#rrggbb`).                                                |
 | `theme`           | list     | `auto`    | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override.                                          |
 | `allow_all_ips`   | bool     | `false`   | When `true`, accept HTTP requests from any IP, not just the Home Assistant ingress sidecar. See **LAN access** below.     |
-| `save_token`      | password | *(empty)* | When set, both `GET /zones.json` (reads) and `POST /save_zones` (writes) require `X-Save-Token: <value>` for any non-ingress request. See **Securing /save_zones**. |
+| `save_token`      | password | *(empty)* | When set, `GET /zones.json`, `GET /trackers.json` (reads) and `POST /save_zones` (writes) all require `X-Save-Token: <value>` for any non-ingress request, and authorize that request regardless of `allow_all_ips`. See **Securing reads and writes**. |
 | `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the add-on with your own reverse proxy. |
 | `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
 
@@ -70,28 +70,26 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 
 The add-on's web interface runs on port 8000 inside the container. The **recommended** way to reach it is ingress (the "Open Web UI" button — routed through Home Assistant), which always works with no extra configuration.
 
-Direct LAN access on `http://<your-ha-host>:8000/` is **disabled by default** (`8000/tcp: null` in the add-on manifest). To enable it, go to **Settings → Add-ons → Polygonal Zones → Network**, assign a host port, and restart the add-on. You need this for `curl`-based backups, or for the companion integration to fetch `zone_urls` at all — including when it runs alongside the add-on on the same Supervisor host. See **LAN access (`allow_all_ips`)** below.
+Direct LAN access on `http://<your-ha-host>:8000/` is **disabled by default** (`8000/tcp: null` in the add-on manifest). To enable it, go to **Settings → Add-ons → Polygonal Zones → Network**, assign a host port, and restart the add-on. This is the supported way for the companion integration to fetch `zone_urls`, and for `curl`-based backups. See **LAN access (`allow_all_ips`)** below.
 
 ### LAN access (`allow_all_ips`)
 
 By default, only the HA ingress IP (`172.30.32.2`) can talk to the add-on. With `allow_all_ips: true`, any client on your network can:
 
-- `GET /zones.json` — read the zone geometry.
+- `GET /zones.json`, `GET /trackers.json` — read zone geometry and live tracker positions.
 - `POST /save_zones` — overwrite the zones.
 
-**Ingress is for browsing the add-on's own UI, not for the integration's data fetch.** The "Open Web UI" button — and only that — goes through ingress, which is Home Assistant's browser-session proxy and needs a logged-in user; a background component like the integration cannot use it to poll a URL. The integration instead fetches `zone_urls` directly over HTTP.
+**Ingress is for browsing the add-on's own UI, not for the integration's data fetch.** The "Open Web UI" button — and only that — goes through ingress, which is Home Assistant's browser-session proxy and needs a logged-in user; a background component like the integration cannot use it to poll a URL. The integration instead fetches `zone_urls` directly over HTTP, so it needs `allow_all_ips: true` to reach the LAN URL described below, the same as any other non-ingress client.
 
-This still holds even when the integration runs inside Core on the **same Supervisor host**: tested under the Supervisor pilot (2026-09-27), Core *can* reach the add-on directly over the internal Supervisor network, by the add-on's hostname alias (its slug with underscores as dashes, e.g. `polygonal-zones`), with no LAN port mapped and no ingress involved. But that request arrives from the Supervisor's internal gateway address, not the ingress sidecar, so it is **not** automatically trusted — it is blocked exactly like any other non-ingress client unless `allow_all_ips` is on (there is currently no separate way to trust only Core's own traffic).
+**`save_token` is a way to authorize without `allow_all_ips`, not an addition to it.** A configured token is checked *before* `allow_all_ips` on `/zones.json`, `/trackers.json` and `/save_zones` (see **Securing reads and writes**): present the correct header and the request is authorized regardless of `allow_all_ips`; present none or a wrong one and it is rejected regardless of `allow_all_ips` too. `allow_all_ips` only matters for these three routes when no token is set. It still gates everything else — the add-on's own static UI and `/config.json` — which have no token option, so browsing the raw (non-ingress) UI over LAN always needs `allow_all_ips`, with or without a token.
 
-So in practice, whether the integration and add-on share a host or not, the integration needs `allow_all_ips: true` to reach `zone_urls` at all, and `save_token` (below) to do so without leaving that URL open to the rest of your LAN too.
-
-Set `allow_all_ips: true` whenever the companion integration is configured to fetch from this add-on over HTTP — same host or not — or when you want to back up / restore zones via `curl` on your LAN. Pair it with `save_token` (below) to protect both reads and writes.
+*Aside, found while confirming this (2026-09-27, under the Supervisor pilot): even when the integration runs inside Core on the same Supervisor host, it does not reach the add-on through ingress or through some other implicitly-trusted path — Core can reach the add-on's internal Docker-network hostname alias directly, but that request is not distinguished from a plain LAN client and is gated the same way described above. This isn't a supported `zone_urls` configuration (the integration's URL validation targets the LAN URL below, not the internal hostname) — noted here only so "same host" isn't assumed to need less configuration than it does.*
 
 ### Securing reads and writes (`save_token`)
 
-When `save_token` is set, the add-on requires the header `X-Save-Token: <value>` on any non-ingress request — this covers **both** `GET /zones.json` and `GET /trackers.json` (reads) **and** `POST /save_zones` (writes), not just writes. The add-on's own UI keeps working unauthenticated because it goes through ingress.
+When `save_token` is set, the add-on requires the header `X-Save-Token: <value>` on any non-ingress request to `GET /zones.json`, `GET /trackers.json` or `POST /save_zones` — reads are covered too, not just writes — and, per **LAN access** above, that header alone authorizes the request even with `allow_all_ips: false`. The add-on's own UI keeps working unauthenticated because it goes through ingress.
 
-The companion integration can supply this header itself — see its own `zone_source_token` option (added alongside `zone_urls`) — bound to this add-on's own origin and never sent elsewhere or across a redirect. Check the integration's changelog for the release that adds it if `zone_source_token` isn't available in your installed version yet; until then, a token-protected add-on is reachable from the integration only with `save_token` left empty.
+The companion integration can supply this header itself as of [PR #95](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/pull/95) (merged 2026-09-27, not yet in a tagged release) — see its own `zone_source_token` option, bound to this add-on's own origin and never sent elsewhere or across a redirect. Until a release containing it is out, a token-protected add-on is reachable from the integration only with `save_token` left empty.
 
 The token takes precedence over `allow_all_ips`: once it's set, LAN reads and writes need the header even with `allow_all_ips: true`. So if you set a token and then a LAN `curl` of `/zones.json` returns `401`, that's expected — add the header (see below).
 
@@ -233,7 +231,7 @@ The add-on serves `/zones.json` from local disk; the companion integration reads
 
 **Recommended (happy path) — LAN URL with `allow_private_urls: true`.** As of companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0), the integration has an opt-in boolean option `allow_private_urls` under its advanced-settings section. Turn it on, point `zone_urls` at the add-on's LAN URL, and you're done:
 
-- In this add-on: set `allow_all_ips: true` (and ideally `save_token: <value>`, plus the integration's `zone_source_token` set to the same value, so the whole LAN path — reads and writes — requires the header).
+- In this add-on: set `allow_all_ips: true` so the LAN URL is reachable at all, and ideally `save_token: <value>` too — once the integration has `zone_source_token` set to the same value (PR #95, not yet in a release), the token authorizes reads on its own regardless of `allow_all_ips`, but you still need `allow_all_ips: true` for as long as your installed integration version can't send it.
 - In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`.
 
 The integration includes an SSRF (Server-Side Request Forgery) defence that prevents it from fetching URLs pointing at private network addresses — loopback, link-local (cloud-metadata), multicast, and reserved ranges are still blocked. `allow_private_urls` unlocks only RFC-1918 space (private home-network addresses such as `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`), which is the only space you need for a typical home-network install.

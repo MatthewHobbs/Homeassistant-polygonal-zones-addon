@@ -429,15 +429,20 @@ assert r.status == 200, r.status
 " || fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
   log "OK Core reaches the add-on via internal hostname $addon_host (no ingress, no LAN port)"
 
-  dc docker exec homeassistant python3 -c "
+  # /zones.json and /trackers.json share the same authorise_read gate, but
+  # each is asserted here directly rather than trusted by inference: DOCS.md
+  # makes the same claim for both.
+  for path in zones.json trackers.json; do
+    dc docker exec homeassistant python3 -c "
 import urllib.request, urllib.error
 try:
-    urllib.request.urlopen('http://${addon_host}:8000/zones.json', timeout=5)
+    urllib.request.urlopen('http://${addon_host}:8000/${path}', timeout=5)
     raise SystemExit('expected 403, got 200')
 except urllib.error.HTTPError as e:
     assert e.code == 403, e.code
-" || fail "internal-hostname access to /zones.json was not blocked as expected (allow_all_ips off, no token)"
-  log "OK internal-hostname reads are blocked like any non-ingress client without allow_all_ips/save_token"
+" || fail "internal-hostname access to /${path} was not blocked as expected (allow_all_ips off, no token)"
+  done
+  log "OK internal-hostname reads (/zones.json, /trackers.json) are blocked like any non-ingress client without allow_all_ips/save_token"
 
   local base
   base="$(core_url)" || fail "Core is not answering on 8123 or 80"
