@@ -1,56 +1,53 @@
 # ADR 0002: Clear the open backlog
 
 - **Status:** Accepted (2026-09-27)
-- **Context:** six findings were open in `BACKLOG.md`, one of them P1. I proposed how to clear them in RFC 0010 (see References) and chose its recommendation on each item that needed a decision.
+- **Context:** six findings were open in `BACKLOG.md`, one of them P1. I proposed how to clear them in RFC 0010 (see References). Two of its premises turned out to be wrong, so on two items I decided against its recommendation.
 - **North star:** the add-on does what its options say, the companion integration can read zones under every configuration the add-on recommends, and no finding in `BACKLOG.md` is left open without a plan row here.
 
 ## Decision
 
-`save_token` stops gating reads of `/zones.json`, while `/trackers.json` keeps it. The three mechanical fixes go ahead without further decision. The zone overlay waits until the integration and I agree one set of containment fixtures.
+`save_token` keeps protecting reads of `/zones.json`, and its description is corrected to say so. The integration learns to send the token. The zone editor stays measure-only. The mechanical fixes go ahead.
 
 | # | Step | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Scope the `/zones.json` read gate. A read is allowed through ingress, when `allow_all_ips` is on, or with a valid `X-Save-Token`. The token is accepted there but no longer required. `/trackers.json` keeps today's gate, so a set token still protects live positions. Tests, with a token set, `allow_all_ips` on and no header: `GET /zones.json` returns 200, which fails on today's `main`; and `GET /trackers.json` still returns 401, which fails if the change leaks into the shared gate. Update the option description, `DOCS.md` (including "Before you add people", which says both endpoints share one set of rules) and the changelog, with a version bump | this repo | Open | |
-| 2 | A rejected `/zones.json` read returns one generic message that names no credential, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only. May ship in row 1's PR | this repo | Open | |
-| 3 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
-| 4 | A scheduled, non-required check that runs the attestation step against a throwaway artefact, on the Supervisor pilot's pattern | this repo | Blocked | waits for ADR 0001 row 5, so the two nightly jobs do not change at once |
-| 5 | Fix `release-merge.sh --dry-run` on a version bump | this repo | Done | #61, 2026-09-26 |
-| 6 | One `draw_and_save` shared by `build.yml`'s standalone smoke and the Supervisor pilot. The pilot keeps its ingress-specific parts | this repo | Open | |
-| 7 | Agree one containment fixture set with the companion integration, which both repos test their own code against in CI. No overlay build work starts before it is agreed. This ADR carries no authority into the integration repo | me, with Homeassistant-polygonal-zones | Open | |
-| 8 | Point each open `BACKLOG.md` entry at its row here | this repo | Done | this PR |
-| 9 | A regression check for row 5 that fails when the dry run waits for `main`, as the finding asked. #61 was checked by hand only | this repo | Open | |
+| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say that until the integration can send the token (row 2), an integration reading over the LAN needs `save_token` left empty. Add a test that pins the gate: a token set, `allow_all_ips` on, no header, `GET /zones.json` returns 401. It fails if anyone relaxes the gate again. Changelog and version bump | this repo | Open | |
+| 2 | The integration sends `X-Save-Token` when reading zones. This ADR carries no authority into that repo | Homeassistant-polygonal-zones | Blocked | needs work opened in that repo, under its own approval |
+| 3 | Every rejected `/zones.json` read gets the same status, body and headers, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only | this repo | Open | |
+| 4 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
+| 5 | A scheduled, non-required check that runs the attestation step against a throwaway artefact, on the Supervisor pilot's pattern | this repo | Blocked | waits for ADR 0001 row 5, so the two nightly jobs do not change at once |
+| 6 | Fix `release-merge.sh --dry-run` on a version bump | this repo | Done | #61, 2026-09-26 |
+| 7 | A regression check for row 6 that fails when the dry run waits for `main`, as the finding asked. #61 was checked by hand only | this repo | Open | |
+| 8 | One `draw_and_save` shared by `build.yml`'s standalone smoke and the Supervisor pilot. The pilot keeps its ingress-specific parts | this repo | Open | |
+| 9 | The editor stays measure-only: it shows inside, distance to the edge and area, and never states which zone the integration would match. Shared containment fixtures with the integration are needed only if that ever changes | this repo | Done | this ADR; the rule is already stated in `app/static/js/geometry.js` |
+| 10 | Point each open `BACKLOG.md` entry at its row here, and close the zone overlay entry as shipped in 0.4.0 | this repo | Done | this PR |
 
 Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row carries Evidence.
 
 ## Context
 
-`save_token` is described as guarding `POST /save_zones`. Since 0.2.27 it also gates `GET /zones.json`: that release added a read gate that mirrors the save gate, so a token could unlock LAN reads with `allow_all_ips` off. The mirror also made a set token mandatory for reads when `allow_all_ips` is on. The integration can only be given a bare URL, so the configuration the add-on recommends when its port is exposed stops the integration reading zones.
+**`save_token` and reads.** The finding said the token gates `GET /zones.json` contrary to its description, and treated that as a bug. RFC 0010 followed it. It is not a bug. Release 0.2.27 gated reads on purpose: its changelog says zone geometry, meaning my home, workplace and school runs, had been less protected than writes. Only the description was never updated. I first chose the RFC's option A, to stop gating reads. On learning of 0.2.27 I chose B the same day. The finding's real harm is that the integration can only be given a bare URL, so it cannot read zones once a token is set. The cure belongs in the integration, not in weaker protection here. Under option A I had also limited the change to `/zones.json`, because `/trackers.json` shares the read gate and serves live positions. Under B that question does not arise.
 
-RFC 0010 did not notice that `/trackers.json` uses the same read gate. It returns the live positions of the people named in `overlay_entities`. Relaxing the shared gate would have made those positions readable by anyone on the LAN whenever `allow_all_ips` is on, token or not. I decided that separately on 2026-09-27: only `/zones.json` changes.
+**The zone overlay.** The finding and the RFC described the overlay as unbuilt. It shipped in 0.4.0, on the day the finding was written: `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. `geometry.js` measures and deliberately does not reimplement the integration's matching rules, so the second source of truth the RFC worried about was designed out. I chose to record that as a rule rather than build shared fixtures.
 
-The provenance finding said v4 was unproven until a release. By the time I decided, every release since 0.4.0 had used v4, five in all. So I checked the latest one rather than dispatching a release by hand.
+**Provenance.** The finding said v4 was unproven until a release. Every release since 0.4.0 had used it, so I checked the latest one rather than dispatching a release by hand.
 
 ## Alternatives
 
-Copied from RFC 0010 on 2026-09-27. This copy is the record; the doc can still be edited.
-
-**`save_token` scope (RFC item 1).**
+**`save_token` and reads.** RFC 0010's options, copied on 2026-09-27; this copy is the record and the doc can still be edited. Then the options I weighed once I knew about 0.2.27.
 
 | Option | Cost | Risk |
 | --- | --- | --- |
-| A. Scope the token check to `POST /save_zones` only, matching the documented intent (chosen, as refined in the next table) | Low: one conditional, two tests | Low: `GET /zones.json` is still covered by the IP allowlist and by the port being unmapped by default |
-| B. Leave the check as-is; fix only the description and give the integration a way to send a header | Medium: needs a change in the integration repo too, cross-repo dependency | Leaves the recommended add-on configuration broken until the integration ships that change |
+| A. Scope the token check to `POST /save_zones` only, matching the documented intent | Low: one conditional, two tests | Low: `GET /zones.json` is still covered by the IP allowlist and by the port being unmapped by default |
+| B. Leave the check as-is; fix only the description and give the integration a way to send a header (chosen) | Medium: needs a change in the integration repo too, cross-repo dependency | Leaves the recommended add-on configuration broken until the integration ships that change |
 | C. Add a separate, separately-documented read protection option distinct from `save_token` | Medium: new option, new docs, more tests | Medium: solves a threat model nobody has asked for yet, and adds surface for something already confusing |
 
-**How far A reaches.** Not in the RFC; decided on 2026-09-27.
-
-| Option | Effect |
+| Option, knowing 0.2.27 | Effect |
 | --- | --- |
-| `/zones.json` only, token still accepted (chosen) | Fixes the integration. `/trackers.json` keeps requiring a set token, so live positions keep their protection. Zone shapes become readable on the LAN under `allow_all_ips`, as option A said |
-| Both endpoints | `/trackers.json` also opens to the LAN under `allow_all_ips`, token or not |
-| `/zones.json` only, token reads dropped | As the chosen option, but a token no longer unlocks `/zones.json` with `allow_all_ips` off, removing the 0.2.27 path |
+| Keep the gate, fix the description (chosen) | Keeps 0.2.27's protection. The integration needs a change before it can read with a token set |
+| Relax `/zones.json` anyway | Fixes the integration today, and undoes 0.2.27: zone shapes readable on the LAN under `allow_all_ips`, token or not |
+| Also accept the token as a query parameter | No integration change, but the token travels in URLs and can land in logs |
 
-**Provenance coverage (RFC item 2).** I chose A now and B after ADR 0001 row 5.
+**Provenance coverage.** From RFC 0010; I chose A now and B after ADR 0001 row 5.
 
 | Option | Cost | Risk |
 | --- | --- | --- |
@@ -58,34 +55,34 @@ Copied from RFC 0010 on 2026-09-27. This copy is the record; the doc can still b
 | B. Add a scheduled, non-required workflow that runs the attestation step against a throwaway artifact, on the pattern already used by the Supervisor pilot (ADR 0001) | Medium: needs a disposable image and its cleanup from GHCR | Low: cannot block a merge or a release, since it never gates either |
 | C. Restructure `release.yml` so attestation also runs as a reusable job from `build.yml`'s PR path in a dry-run mode | Highest: reshapes the workflow | Medium: attestation on a dry, untagged artifact may not behave like it does for a real tagged release, so a pass there could be false confidence |
 
-**Containment maths for the zone overlay (RFC item 5).**
+**Containment maths.** RFC 0010 offered three options for an overlay it thought unbuilt: shared test fixtures, calling the integration at runtime, or the integration depending on the editor's code. I chose none, because the shipped editor is measure-only (row 9).
 
-| Option | Cost | Risk |
-| --- | --- | --- |
-| A. Extract the containment rule into a shared set of test fixtures both repos assert against in CI, each keeping its own implementation (chosen) | Medium: fixtures to write and keep current in both repos | The two copies can still drift between releases if one repo's fixture run is skipped or its copy edited without the other |
-| B. Have the editor call the integration's containment logic at runtime instead of reimplementing it | Higher: a new runtime dependency from the add-on on the integration, which does not exist today | Couples two independently versioned, independently released components; the integration is not known to expose a stable interface for this |
-| C. Ship the editor's geometry module as the sole implementation and have the integration depend on it instead | Similar to B, inverted | Same coupling problem in the other direction, and the add-on is Docker-shipped, not something the integration can just import |
+| Option, knowing the overlay shipped | Effect |
+| --- | --- |
+| Record measure-only as a rule (chosen) | No cross-repo work. Fixtures become necessary only if the editor ever states a match |
+| Shared fixtures anyway | Both repos test the geometry primitives against one set. Work in two repos for a risk the design already avoids |
 
-RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked for a distinct message per reason that also hid whether a token is configured, which cannot both hold. Row 2 keeps the second: the client gets one message and the log gets the reason.
+RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked for a distinct message per reason that also hid whether a token is configured, which cannot both hold. Row 3 keeps the second.
 
 ## Consequences
 
-**Accepted:** with `allow_all_ips` on, anyone on the LAN can read `/zones.json` whether or not a token is set. That is a privacy trade-off: the shapes show where my places are, down to rooms. It is the exposure the add-on already has with no token set, and it is what the integration needs. Nobody's live position is in it. The scheduled provenance check waits for the pilot's promotion, so a change to the attestation action between releases is still first exercised by a release.
+**Accepted:** the integration cannot read zones with a token set until row 2 lands in its repo. Until then, anyone who runs it over the LAN leaves `save_token` empty, and row 1 makes the docs say so. The scheduled provenance check waits for the pilot's promotion, so a change to the attestation action between releases is still first exercised by a release.
 
 **Watch:**
-- `/zones.json` and `/trackers.json` will no longer share one read gate. A later change to either must not quietly re-merge them, or live positions lose the token.
-- The overlay depends on the integration agreeing the fixtures. If it will not, this comes back here as a deviation.
+- Row 2 has no owner in that repo yet. If it stalls, the documented workaround becomes permanent by default.
+- The editor's measure-only rule is a comment and this row. A change that makes the editor state a match needs shared fixtures first.
 
 ## Verification (2026-09-27)
 
-- **Read gate:** `authorise_read` in `app/main.py` serves both `/zones.json` and `/trackers.json`, and was added in 0.2.27 (09f2ebd). With a token set it returns `invalid_token` before it looks at `allow_all_ips`. That is the P1 finding, read from the code, not yet run.
-- **Provenance:** `gh attestation verify` on `ghcr.io/matthewhobbs/{amd64,aarch64}-addon-polygonal_zones:0.5.0` with `--owner MatthewHobbs` exited 0 for both. Each attestation is SLSA provenance v1, signed by `release.yml` at `refs/tags/v0.5.0`, from commit dc56d79, which is the tag's commit. `release.yml` pins `attest-build-provenance` v4.2.2. A check that could fail: the same amd64 image verified against `--repo MatthewHobbs/Homeassistant-polygonal-zones` exited 1 with no attestation found.
-- **Dry run:** #61 skips `wait_for_main_version` under `--dry-run`, and was checked against `--dry-run 60`.
+- **Read gate:** `authorise_read` in `app/main.py` serves `/zones.json` and `/trackers.json`, and was added in 0.2.27 (09f2ebd). With a token set it returns `invalid_token` before it looks at `allow_all_ips`. The 0.2.27 changelog entry states the gate was deliberate. The option description in `translations/en.yaml` mentions only `POST /save_zones`.
+- **Overlay:** `app/static/js/geometry.js` has area, point-in-ring, edge distance and a `pz_measure` whose comment says it makes no claim about what the integration would match. `vendor/leaflet-geoman` is present. The 0.4.0 changelog lists the area readout, the Geoman swap, the tracker overlay and `overlay_entities`. Not checked: whether edit handles are scoped to the selected zone, which the finding also asked for.
+- **Provenance:** `gh attestation verify` on `ghcr.io/matthewhobbs/{amd64,aarch64}-addon-polygonal_zones:0.5.0` with `--owner MatthewHobbs` exited 0 for both. Each attestation is SLSA provenance v1, signed by `release.yml` at `refs/tags/v0.5.0`, from commit dc56d79, which is the tag's commit. A check that could fail: the same amd64 image verified against `--repo MatthewHobbs/Homeassistant-polygonal-zones` exited 1 with no attestation found.
 - **Releases on v4:** `release.yml` at each tag from v0.4.0 to v0.5.0 pins `attest-build-provenance` v4.2.2, introduced by #30 on 2026-09-05.
-- **Not established:** that the integration will adopt shared fixtures; row 1's behaviour, until its tests run; any automated check of #61's fix (row 9).
+- **Dry run:** #61 skips `wait_for_main_version` under `--dry-run`, and was checked against `--dry-run 60`.
+- **Not established:** that the integration will take row 2; any automated check of #61's fix (row 7).
 
 ## References
 
 - RFC 0010: https://claude.ai/artifact/6VLwW8jjU2m6NWTeKJWYcn
-- `BACKLOG.md` in this repo
+- `BACKLOG.md` and `polygonal_zones_editor/CHANGELOG.md` (0.2.27, 0.4.0) in this repo
 - ADR 0001, row 5
