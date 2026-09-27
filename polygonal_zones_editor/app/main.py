@@ -473,7 +473,7 @@ def save_zones_generator(options: dict):
             _LOGGER.warning(
                 "Rejected /save_zones from %s: %s",
                 client_host,
-                _AUTH_REJECTION_LOG_REASON[reason],
+                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
             )
             return _auth_rejection_response()
 
@@ -720,7 +720,7 @@ def trackers_json_generator(options: dict):
             _LOGGER.warning(
                 "Rejected /trackers.json read from %s: %s",
                 client_host,
-                _AUTH_REJECTION_LOG_REASON[reason],
+                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
             )
             return _auth_rejection_response()
 
@@ -800,7 +800,7 @@ def zones_json_generator(options: dict):
             _LOGGER.warning(
                 "Rejected /zones.json read from %s: %s",
                 client_host,
-                _AUTH_REJECTION_LOG_REASON[reason],
+                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
             )
             return _auth_rejection_response()
 
