@@ -7,6 +7,23 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## A closer-but-outside MultiPolygon part could overturn an inside reading (2026-09-27) — FIXED
+
+**Component:** `app/static/js/trackers.js` (`pz_measure_zone`)
+
+Found by adversarial review while row 12's hole fix was already open in the same function, and
+pre-existing: comparing `edgeDistanceM` between candidate parts of a `MultiPolygon` never checked
+whether they agreed on `inside`, so a part the tracker was genuinely outside — but whose boundary
+happened to be nearer than the containing part's own — could overturn an already-correct
+"inside" result. Confirmed by reverting the fix and rerunning
+`tests/test_trackers.js`: a synthetic case (point ~500 m inside one part, ~11 m outside a second,
+unrelated part) failed as `inside: false` against the buggy code, `inside: true` against the fix.
+
+**Fix:** only compare `edgeDistanceM` between two candidates that already agree on `inside`; a
+candidate that is inside always wins over one that isn't, never the other way round.
+
+---
+
 ## `test_trackers_json_returns_only_opted_in_entities` asserts an order the pool doesn't guarantee (2026-09-27) — OPEN, P3, tests only
 
 **Component:** `polygonal_zones_editor/tests/test_main.py`, `app/main.py` (`_OVERLAY_POOL`, `_gather`)

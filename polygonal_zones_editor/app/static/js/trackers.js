@@ -120,7 +120,13 @@ function pz_measure_zone(tracker, layer) {
         }
         const acc = Number.isFinite(accuracyM) && accuracyM > 0 ? accuracyM : 0;
         const m = { inside, edgeDistanceM, withinAccuracy: inside || edgeDistanceM <= acc };
-        if (!best || (m.inside && !best.inside) || m.edgeDistanceM < best.edgeDistanceM) {
+        // Pre-existing bug, found by adversarial review while this function
+        // was already open for row 12: comparing edgeDistanceM regardless of
+        // `inside` let a closer-but-outside part overturn an already-inside
+        // result from an earlier part. A device inside part 1 must stay
+        // "inside" even if part 2's boundary happens to be nearer — only
+        // compare distances between two candidates that agree on `inside`.
+        if (!best || (m.inside && !best.inside) || (m.inside === best.inside && m.edgeDistanceM < best.edgeDistanceM)) {
             best = m;
         }
     }

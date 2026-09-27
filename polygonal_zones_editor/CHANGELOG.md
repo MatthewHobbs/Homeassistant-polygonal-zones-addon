@@ -11,6 +11,12 @@
   inside only when it's in the outer ring and outside every one of that
   polygon's holes — a `MultiPolygon`'s parts never share holes with each
   other.
+- **Fixed: a `MultiPolygon` tracker readout could report "outside" for a
+  device that was actually inside one of its parts**, if another part's
+  boundary happened to be nearer — found by adversarial review while row 12
+  above was already open, pre-existing and unrelated to holes specifically.
+  Being inside any one part now always wins, regardless of how close any
+  other part's edge is.
 
 ## 0.5.3 — 2026-09-27
 

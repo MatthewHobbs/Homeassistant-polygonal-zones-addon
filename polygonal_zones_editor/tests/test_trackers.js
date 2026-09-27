@@ -107,3 +107,22 @@ test('MultiPolygon: a hole in one part never subtracts from, or leaks into, anot
         'MultiPolygon area is the sum of each part, each already hole-adjusted'
     );
 });
+
+test('MultiPolygon: a point inside one part stays inside even when another part is nearer', () => {
+    // Found by adversarial review, not by hand: comparing edgeDistanceM
+    // regardless of `inside` let a closer-but-outside second part overturn
+    // an already-inside result from the first. The point below sits deep
+    // inside part 1 (OUTER, ~500m from its own edges) but just ~11m outside
+    // part 2's edge — under the bug, part 2's smaller edgeDistanceM won the
+    // comparison and overturned the correct "inside" result from part 1.
+    const part2 = [
+        [0.0045, 0.0045],
+        [0.02, 0.0045],
+        [0.02, 0.02],
+        [0.0045, 0.02],
+    ];
+    const layer = fakeMultiPolygonLayer([[OUTER], [part2]]);
+    const tracker = { longitude: 0.0044, latitude: 0.0044, gps_accuracy: 0 };
+    const m = pz_measure_zone(tracker, layer);
+    assert.equal(m.inside, true, 'inside part 1 must not be overturned by a nearer part 2 edge');
+});
