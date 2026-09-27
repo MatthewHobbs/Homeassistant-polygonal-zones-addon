@@ -9,6 +9,8 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ## The draw-and-save browser check exists twice (2026-09-25) — OPEN, P3
 
+**Plan:** ADR 0002 row 6.
+
 **Component:** `.github/workflows/build.yml`, `scripts/supervisor_probe.py`
 
 The Supervisor pilot (ADR 0001) needed build.yml's draw-and-save check through Core's ingress,
@@ -22,7 +24,9 @@ login, the ingress session, the option check) where they are.
 
 ---
 
-## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — OPEN, P3
+## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — RESOLVED
+
+**Resolved 2026-09-26 by #61:** `wait_for_main_version` is skipped under `--dry-run`. ADR 0002 row 5.
 
 **Component:** `scripts/release-merge.sh`
 
@@ -45,6 +49,8 @@ and tag steps already do. Cover it with a check that fails on today's script.
 ---
 
 ## The release path's action bumps are unverified by any PR check (2026-09-05) — OPEN, P2
+
+**Plan:** ADR 0002 rows 3 and 4. Row 3 is done: the 0.5.0 attestations, made with v4.2.2, verify on both arches. The scheduled check (row 4) waits for ADR 0001 row 5.
 
 **Component:** `.github/workflows/release.yml`
 
@@ -86,6 +92,8 @@ covers partial-release recovery; this is about not needing it.
 
 ## `save_token` gates reads as well as writes, contrary to its own description (2026-09-05) — OPEN, P1
 
+**Plan:** ADR 0002 row 1. Only `/zones.json` changes; `/trackers.json` shares the read gate today and keeps the token.
+
 **Component:** `app/main.py` (`IPAllowMiddleware` / auth layer) + `config.yaml` option description
 
 The Supervisor option describes `save_token` as protecting one route:
@@ -123,6 +131,8 @@ and one asserting `POST /save_zones` still 401s in the same state.
 ---
 
 ## The zone editor cannot show why a zone is wrong (2026-09-05) — OPEN, P2 (feature)
+
+**Plan:** ADR 0002 row 7. No build work until the integration and I agree shared containment fixtures.
 
 **Component:** `app/static/` frontend + a new read-only backend route
 
@@ -175,6 +185,8 @@ clearance readout) and can be lifted from rather than rewritten.
 ---
 
 ## `zones.json` 401 body names the wrong credential (2026-09-05) — OPEN, P3
+
+**Plan:** ADR 0002 row 2.
 
 **Component:** `app/main.py`
 
