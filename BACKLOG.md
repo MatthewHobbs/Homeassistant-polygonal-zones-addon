@@ -24,9 +24,9 @@ login, the ingress session, the option check) where they are.
 
 ---
 
-## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — RESOLVED
+## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — FIXED, test OPEN, P3
 
-**Resolved 2026-09-26 by #61:** `wait_for_main_version` is skipped under `--dry-run`. ADR 0002 row 5.
+**Fixed 2026-09-26 by #61:** `wait_for_main_version` is skipped under `--dry-run`, checked by hand. The regression check asked for below does not exist yet: ADR 0002 row 9.
 
 **Component:** `scripts/release-merge.sh`
 
@@ -186,7 +186,7 @@ clearance readout) and can be lifted from rather than rewritten.
 
 ## `zones.json` 401 body names the wrong credential (2026-09-05) — OPEN, P3
 
-**Plan:** ADR 0002 row 2.
+**Plan:** ADR 0002 row 2: one generic message to the client, the precise reason in the log.
 
 **Component:** `app/main.py`
 
