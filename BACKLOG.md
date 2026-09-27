@@ -49,20 +49,15 @@ The validator accepts a Polygon with inner rings (holes). The editor flattens ev
 
 ---
 
-## The draw-and-save browser check exists twice (2026-09-25) — OPEN, P3
+## The draw-and-save browser check exists twice (2026-09-25) — FIXED
 
-**Plan:** ADR 0002 row 8.
-
-**Component:** `.github/workflows/build.yml`, `scripts/supervisor_probe.py`
-
-The Supervisor pilot (ADR 0001) needed build.yml's draw-and-save check through Core's ingress,
-and build.yml could not be edited in the same change, so `supervisor_probe.py` carries a copy of
-`draw_and_save`. Two copies of a regression guard drift: a fix to one, such as the #46
-non-secure-origin leg, has to be made twice or is silently missing from the other.
-
-**Fix:** move build.yml's Playwright heredoc into `scripts/` and have both the standalone smoke
-and the pilot import the one `draw_and_save`. Keep the pilot's ingress-specific parts (Core
-login, the ingress session, the option check) where they are.
+**Fixed** (ADR 0002 row 8): `scripts/draw_and_save.py` now holds the one `draw_and_save` (plus
+`draw_rectangle_and_save`, added alongside it in row 11 rather than left to duplicate too).
+`.github/workflows/build.yml`'s Playwright step and `scripts/supervisor_probe.py` both import it;
+the pilot's ingress-specific parts (Core login, the ingress session, the option check) stayed in
+`supervisor_probe.py`, and `scripts/supervisor-pilot.sh` mounts the new file alongside `probe.py`
+so the import resolves inside the container. Verified live against a real running add-on, not
+just read from the diff.
 
 ---
 

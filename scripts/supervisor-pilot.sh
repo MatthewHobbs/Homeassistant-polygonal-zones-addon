@@ -452,6 +452,7 @@ except urllib.error.HTTPError as e:
   # here and in CI alike, with no published ports.
   docker run --rm --network "container:$NAME" \
     -v "$REPO_ROOT/scripts/supervisor_probe.py:/probe/probe.py:ro" \
+    -v "$REPO_ROOT/scripts/draw_and_save.py:/probe/draw_and_save.py:ro" \
     -v "$REPO_ROOT/scripts/supervisor-probe-requirements.txt:/probe/requirements.txt:ro" \
     "$PLAYWRIGHT_IMAGE" \
     bash -c 'pip install --quiet --no-cache-dir --break-system-packages --require-hashes \
