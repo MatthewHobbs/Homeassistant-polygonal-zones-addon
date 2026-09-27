@@ -7,7 +7,19 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## The editor mismeasures zones with holes (2026-09-27) — OPEN, P3
+
+**Component:** `app/static/js/trackers.js` (`pz_layer_rings`, `pz_layer_area_m2`, `pz_measure_zone`)
+
+The validator accepts a Polygon with inner rings (holes). The editor flattens every ring into one list: a zone's area adds its holes instead of subtracting them, and a tracker inside a hole is reported as inside the zone. The editor cannot draw holes, so this reaches only zones restored or saved from elsewhere. Found in review of ADR 0002; read from the code, not run.
+
+**Plan:** ADR 0002 row 12.
+
+---
+
 ## The draw-and-save browser check exists twice (2026-09-25) — OPEN, P3
+
+**Plan:** ADR 0002 row 8.
 
 **Component:** `.github/workflows/build.yml`, `scripts/supervisor_probe.py`
 
@@ -22,7 +34,9 @@ login, the ingress session, the option check) where they are.
 
 ---
 
-## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — OPEN, P3
+## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — FIXED, test OPEN, P3
+
+**Fixed 2026-09-26 by #61:** `wait_for_main_version` is skipped under `--dry-run`, checked by hand. The regression check asked for below does not exist yet: ADR 0002 row 7.
 
 **Component:** `scripts/release-merge.sh`
 
@@ -45,6 +59,8 @@ and tag steps already do. Cover it with a check that fails on today's script.
 ---
 
 ## The release path's action bumps are unverified by any PR check (2026-09-05) — OPEN, P2
+
+**Plan:** ADR 0002 rows 4 and 5. Row 4 is done: the 0.5.0 attestations, made with v4.2.2, verify on both arches. The scheduled check (row 5) waits for ADR 0001 row 5.
 
 **Component:** `.github/workflows/release.yml`
 
@@ -86,6 +102,8 @@ covers partial-release recovery; this is about not needing it.
 
 ## `save_token` gates reads as well as writes, contrary to its own description (2026-09-05) — OPEN, P1
 
+**Plan:** ADR 0002 rows 1 and 2. This is not a bug: 0.2.27 gated reads on purpose to protect zone geometry, and only the description lagged. The gate stays and the description is corrected. The integration learns to send `X-Save-Token`. Until then, reading over the LAN needs `save_token` empty, which also leaves saves open to the LAN under `allow_all_ips`. The **Fix** below, scoping the check to saves, was considered and rejected.
+
 **Component:** `app/main.py` (`IPAllowMiddleware` / auth layer) + `config.yaml` option description
 
 The Supervisor option describes `save_token` as protecting one route:
@@ -122,7 +140,9 @@ and one asserting `POST /save_zones` still 401s in the same state.
 
 ---
 
-## The zone editor cannot show why a zone is wrong (2026-09-05) — OPEN, P2 (feature)
+## The zone editor cannot show why a zone is wrong (2026-09-05) — MOSTLY SHIPPED in 0.4.0, rest OPEN, P3
+
+**Shipped in 0.4.0:** `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. The editor is measure-only by rule and never states a match, so shared containment fixtures are not needed unless that changes: ADR 0002 row 9. **Still open:** rectangle drawing, switched off in #36 with no reason given; edit handles scoped to the selected zone, midpoint insertion and right-click deletion, all unchecked: ADR 0002 row 11.
 
 **Component:** `app/static/` frontend + a new read-only backend route
 
@@ -175,6 +195,8 @@ clearance readout) and can be lifted from rather than rewritten.
 ---
 
 ## `zones.json` 401 body names the wrong credential (2026-09-05) — OPEN, P3
+
+**Plan:** ADR 0002 row 3: every authorisation failure on `/zones.json`, `/trackers.json` and `/save_zones` gets the same status, body and headers; the precise reason goes to the log.
 
 **Component:** `app/main.py`
 
