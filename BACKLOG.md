@@ -174,7 +174,7 @@ and one asserting `POST /save_zones` still 401s in the same state.
 
 ---
 
-## No dedicated trust for Core's own traffic on the internal Supervisor network (2026-09-27) — OPEN, P3 (design question, not decided)
+## No dedicated trust for Core's own traffic on the internal Supervisor network (2026-09-27) — DECIDED: leave as is
 
 **Component:** `app/const.py` (`ALLOWED_IPS`), `app/main.py` (`IPAllowMiddleware`)
 
@@ -186,15 +186,13 @@ does not recognise it. Today that path is indistinguishable from any other non-i
 it needs `allow_all_ips: true` (or a token) exactly like a real LAN client would, even though
 the traffic never left the host.
 
-**Not a bug, and not to be silently fixed:** whether the add-on should special-case Core's own
-gateway address as a fourth trust tier (narrower than `allow_all_ips`, wider than ingress-only)
-is a design call with a real trade-off — that gateway address is a Supervisor implementation
-detail, not a stable public contract, and trusting it would need its own scrutiny (does it ever
-change per install? per Supervisor version? is it spoofable by another add-on on the same
-bridge?). Options, for whoever picks this up: (1) leave it as is — `allow_all_ips` remains the
-only opt-in for same-host integration traffic, which is what ADR 0002 row 1 documents; (2) add
-an explicit, documented internal-trust option; (3) something else. Present options, do not pick
-one silently.
+**Decided (owner, 2026-09-27):** leave it as is. `allow_all_ips` stays the only opt-in for
+same-host integration traffic, exactly as ADR 0002 row 1 documents; no new internal-trust
+option. That gateway address is a Supervisor implementation detail, not a stable public
+contract, and trusting it would need its own scrutiny (does it ever change per install? per
+Supervisor version? is it spoofable by another add-on on the same bridge?) for a gain
+`save_token` already covers, since a configured token authorizes without `allow_all_ips` at
+all. Not revisited unless something changes that trade-off.
 
 ---
 
