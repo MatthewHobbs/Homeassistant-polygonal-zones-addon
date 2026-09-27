@@ -14,6 +14,7 @@ on:
       - .github/workflows/supervisor.yml
       - scripts/supervisor-pilot.sh
       - scripts/supervisor_probe.py
+      - scripts/draw_and_save.py
       - scripts/supervisor-probe-requirements.txt
       # The floor leg's Core version comes from these two.
       - scripts/ha-floor-check.sh
