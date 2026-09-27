@@ -61,9 +61,9 @@ just read from the diff.
 
 ---
 
-## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — FIXED, test OPEN, P3
+## `release-merge.sh --dry-run` always fails on a version-bump PR (2026-09-25) — FIXED
 
-**Fixed 2026-09-26 by #61:** `wait_for_main_version` is skipped under `--dry-run`, checked by hand. The regression check asked for below does not exist yet: ADR 0002 row 7.
+**Fixed 2026-09-26 by #61:** `wait_for_main_version` is skipped under `--dry-run`. **Regression check added** (ADR 0002 row 7): `scripts/test-release-merge.sh`, run by `just ci` and `test.yml`.
 
 **Component:** `scripts/release-merge.sh`
 

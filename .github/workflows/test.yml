@@ -40,3 +40,5 @@ jobs:
       - name: Run pytest
         working-directory: polygonal_zones_editor
         run: pytest -v
+      - name: Run release-merge.sh regression checks
+        run: scripts/test-release-merge.sh
