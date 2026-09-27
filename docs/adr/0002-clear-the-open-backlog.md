@@ -10,7 +10,7 @@
 
 | # | Step | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Scope the `/zones.json` read gate. A read is allowed through ingress, when `allow_all_ips` is on, or with a valid `X-Save-Token`. The token is accepted there but no longer required. `/trackers.json` keeps today's gate, so a set token still protects live positions. Tests include one that fails on today's `main`: a token set, `allow_all_ips` on, no header, `GET /zones.json` returns 200. Update the option description, `DOCS.md` (including "Before you add people", which says both endpoints share one set of rules) and the changelog, with a version bump | this repo | Open | |
+| 1 | Scope the `/zones.json` read gate. A read is allowed through ingress, when `allow_all_ips` is on, or with a valid `X-Save-Token`. The token is accepted there but no longer required. `/trackers.json` keeps today's gate, so a set token still protects live positions. Tests, with a token set, `allow_all_ips` on and no header: `GET /zones.json` returns 200, which fails on today's `main`; and `GET /trackers.json` still returns 401, which fails if the change leaks into the shared gate. Update the option description, `DOCS.md` (including "Before you add people", which says both endpoints share one set of rules) and the changelog, with a version bump | this repo | Open | |
 | 2 | A rejected `/zones.json` read returns one generic message that names no credential, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only. May ship in row 1's PR | this repo | Open | |
 | 3 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
 | 4 | A scheduled, non-required check that runs the attestation step against a throwaway artefact, on the Supervisor pilot's pattern | this repo | Blocked | waits for ADR 0001 row 5, so the two nightly jobs do not change at once |
@@ -46,7 +46,7 @@ Copied from RFC 0010 on 2026-09-27. This copy is the record; the doc can still b
 
 | Option | Effect |
 | --- | --- |
-| `/zones.json` only, token still accepted (chosen) | Fixes the integration. `/trackers.json` keeps requiring a set token. No privacy change |
+| `/zones.json` only, token still accepted (chosen) | Fixes the integration. `/trackers.json` keeps requiring a set token, so live positions keep their protection. Zone shapes become readable on the LAN under `allow_all_ips`, as option A said |
 | Both endpoints | `/trackers.json` also opens to the LAN under `allow_all_ips`, token or not |
 | `/zones.json` only, token reads dropped | As the chosen option, but a token no longer unlocks `/zones.json` with `allow_all_ips` off, removing the 0.2.27 path |
 
@@ -70,7 +70,7 @@ RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked fo
 
 ## Consequences
 
-**Accepted:** with `allow_all_ips` on, anyone on the LAN can read `/zones.json` whether or not a token is set. Zones are shapes I drew, not anyone's position. The scheduled provenance check waits for the pilot's promotion, so a change to the attestation action between releases is still first exercised by a release.
+**Accepted:** with `allow_all_ips` on, anyone on the LAN can read `/zones.json` whether or not a token is set. That is a privacy trade-off: the shapes show where my places are, down to rooms. It is the exposure the add-on already has with no token set, and it is what the integration needs. Nobody's live position is in it. The scheduled provenance check waits for the pilot's promotion, so a change to the attestation action between releases is still first exercised by a release.
 
 **Watch:**
 - `/zones.json` and `/trackers.json` will no longer share one read gate. A later change to either must not quietly re-merge them, or live positions lose the token.
