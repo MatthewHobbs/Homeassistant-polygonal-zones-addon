@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.2 — 2026-09-27
+
+- **Added: rectangle drawing (ADR 0002 row 11).** Switched off in #36 during the
+  Leaflet-Draw → Geoman swap as collateral from disabling every non-polygon
+  draw mode in one pass, not a deliberate call against it. A rectangle draws
+  as an `L.Rectangle`, which extends `L.Polygon` in Leaflet, so it saves as a
+  plain `Polygon` — verified end to end (drawn, saved, read back) against a
+  real running add-on, indistinguishable from one drawn point-by-point. Its
+  toolbar button is labelled for screen readers the same way the draw and
+  delete buttons already are.
+- **Verified, not changed:** edit handles scoped to the selected zone,
+  midpoint vertex insertion and right-click vertex deletion were already
+  working — Geoman's own defaults, never exercised by anyone before. Checked
+  live against a running add-on rather than assumed from reading the code.
+
 ## 0.5.1 — 2026-09-27
 
 - **Fixed: `save_token`'s description understated what it protects (ADR 0002

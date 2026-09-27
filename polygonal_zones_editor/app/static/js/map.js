@@ -317,6 +317,9 @@ function generate_map(zones_url) {
 function setup_editing(map, editableLayers) {
     // Geoman replaces Leaflet-Draw here. Only the controls this editor needs
     // are enabled: zones are polygons, so every other shape is off.
+    // drawRectangle stays on: a rectangle is drawn as an L.Rectangle, which
+    // extends L.Polygon, so toGeoJSON() below emits a plain Polygon
+    // indistinguishable from one drawn point-by-point (ADR 0002 row 11).
     map.pm.setGlobalOptions({
         allowSelfIntersection: false,
         snappable: true,
@@ -343,7 +346,7 @@ function setup_editing(map, editableLayers) {
         drawCircle: false,
         drawCircleMarker: false,
         drawPolyline: false,
-        drawRectangle: false,
+        drawRectangle: true,
         drawText: false,
     });
 
@@ -363,6 +366,7 @@ function setup_editing(map, editableLayers) {
     // makes them announce as the controls they actually are.
     const PM_CONTROL_LABELS = {
         'leaflet-pm-icon-polygon': 'Draw a zone',
+        'leaflet-pm-icon-rectangle': 'Draw a rectangular zone',
         'leaflet-pm-icon-delete': 'Delete a zone',
     };
     Promise.resolve().then(() => {

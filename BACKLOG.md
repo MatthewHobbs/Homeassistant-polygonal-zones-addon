@@ -196,9 +196,9 @@ all. Not revisited unless something changes that trade-off.
 
 ---
 
-## The zone editor cannot show why a zone is wrong (2026-09-05) — MOSTLY SHIPPED in 0.4.0, rest OPEN, P3
+## The zone editor cannot show why a zone is wrong (2026-09-05) — SHIPPED
 
-**Shipped in 0.4.0:** `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. The editor is measure-only by rule and never states a match, so shared containment fixtures are not needed unless that changes: ADR 0002 row 9. **Still open:** rectangle drawing, switched off in #36 with no reason given; edit handles scoped to the selected zone, midpoint insertion and right-click deletion, all unchecked: ADR 0002 row 11.
+**Shipped in 0.4.0:** `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. The editor is measure-only by rule and never states a match, so shared containment fixtures are not needed unless that changes: ADR 0002 row 9. **Shipped in 0.5.2** (ADR 0002 row 11): rectangle drawing, turned on and verified end to end; edit handles scoped to the selected zone, midpoint insertion and right-click vertex deletion were already working as Geoman's own defaults, verified live rather than assumed.
 
 **Component:** `app/static/` frontend + a new read-only backend route
 
