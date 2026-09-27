@@ -10,7 +10,7 @@
 
 | # | Step | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Add a test that pins the gate: a token set, `allow_all_ips` on, no header, `GET /zones.json` returns 401. It fails if anyone relaxes the gate again. Changelog and version bump | this repo | Open | |
+| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Say too that with a token set the tracker overlay works only through ingress, because the editor's own request carries no token. The gate is already pinned by `test_zones_json_requires_token_when_set_and_lan_request`. Changelog and version bump | this repo | Open | |
 | 2 | The integration sends `X-Save-Token` when reading zones. This ADR carries no authority into that repo | Homeassistant-polygonal-zones | Blocked | needs work opened in that repo, under its own approval |
 | 3 | Every rejected `/zones.json` read gets the same status, body and headers, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only | this repo | Open | |
 | 4 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
@@ -21,6 +21,7 @@
 | 9 | The editor stays measure-only: it shows inside, distance to the edge and area, and never states which zone the integration would match. Shared containment fixtures with the integration are needed only if that ever changes | this repo | Done | this ADR; the rule is already stated in `app/static/js/geometry.js` |
 | 10 | Point each open `BACKLOG.md` entry at its row here | this repo | Done | this PR |
 | 11 | Check the rest of the editor scope agreed on 2026-09-05, and ship or drop each part with a reason: rectangle drawing, switched off in #36 with no reason given; edit handles scoped to the selected zone; midpoint vertex insertion; right-click vertex deletion | this repo | Open | |
+| 12 | Measure zones with holes correctly: area subtracts inner rings, and a point counts as inside only when it is in an outer ring and not in one of its holes. Include a test with a hole that fails today. The validator accepts holes, though the editor cannot draw them | this repo | Open | |
 
 Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row carries Evidence.
 
@@ -80,6 +81,8 @@ RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked fo
 - **Provenance:** `gh attestation verify` on `ghcr.io/matthewhobbs/{amd64,aarch64}-addon-polygonal_zones:0.5.0` with `--owner MatthewHobbs` exited 0 for both. Each attestation is SLSA provenance v1, signed by `release.yml` at `refs/tags/v0.5.0`, from commit dc56d79, which is the tag's commit. A check that could fail: the same amd64 image verified against `--repo MatthewHobbs/Homeassistant-polygonal-zones` exited 1 with no attestation found.
 - **Releases on v4:** `release.yml` at each tag from v0.4.0 to v0.5.0 pins `attest-build-provenance` v4.2.2, introduced by #30 on 2026-09-05.
 - **Dry run:** #61 skips `wait_for_main_version` under `--dry-run`, and was checked against `--dry-run 60`.
+- **Holes:** `_validate_polygon_coordinates` accepts any number of rings per Polygon. `pz_layer_rings` in `trackers.js` flattens every ring, `pz_layer_area_m2` adds their areas, and `pz_measure_zone` reports inside if the point is in any ring. Read from the code, not run.
+- **Tracker overlay:** `trackers.js` fetches `/trackers.json` with only an `Accept` header, so with a token set a direct LAN visit gets 401.
 - **Not established:** that the integration will take row 2; any automated check of #61's fix (row 7).
 
 ## References

@@ -7,6 +7,16 @@ repo's `BACKLOG.md` and cross-referenced here where the two interact.
 
 ---
 
+## The editor mismeasures zones with holes (2026-09-27) — OPEN, P3
+
+**Component:** `app/static/js/trackers.js` (`pz_layer_rings`, `pz_layer_area_m2`, `pz_measure_zone`)
+
+The validator accepts a Polygon with inner rings (holes). The editor flattens every ring into one list: a zone's area adds its holes instead of subtracting them, and a tracker inside a hole is reported as inside the zone. The editor cannot draw holes, so this reaches only zones restored or saved from elsewhere. Found in review of ADR 0002; read from the code, not run.
+
+**Plan:** ADR 0002 row 12.
+
+---
+
 ## The draw-and-save browser check exists twice (2026-09-25) — OPEN, P3
 
 **Plan:** ADR 0002 row 8.
