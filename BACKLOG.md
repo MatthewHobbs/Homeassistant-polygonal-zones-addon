@@ -92,7 +92,7 @@ covers partial-release recovery; this is about not needing it.
 
 ## `save_token` gates reads as well as writes, contrary to its own description (2026-09-05) — OPEN, P1
 
-**Plan:** ADR 0002 rows 1 and 2. This is not a bug: 0.2.27 gated reads on purpose to protect zone geometry, and only the description lagged. The gate stays and the description is corrected. The integration learns to send `X-Save-Token`; until then an integration reading over the LAN needs `save_token` left empty. The **Fix** below, scoping the check to saves, was considered and rejected.
+**Plan:** ADR 0002 rows 1 and 2. This is not a bug: 0.2.27 gated reads on purpose to protect zone geometry, and only the description lagged. The gate stays and the description is corrected. The integration learns to send `X-Save-Token`. Until then, reading over the LAN needs `save_token` empty, which also leaves saves open to the LAN under `allow_all_ips`. The **Fix** below, scoping the check to saves, was considered and rejected.
 
 **Component:** `app/main.py` (`IPAllowMiddleware` / auth layer) + `config.yaml` option description
 
@@ -130,9 +130,9 @@ and one asserting `POST /save_zones` still 401s in the same state.
 
 ---
 
-## The zone editor cannot show why a zone is wrong (2026-09-05) — SHIPPED in 0.4.0
+## The zone editor cannot show why a zone is wrong (2026-09-05) — MOSTLY SHIPPED in 0.4.0, rest OPEN, P3
 
-**Shipped in 0.4.0:** `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. The editor is measure-only by rule and never states a match, so shared containment fixtures are not needed unless that changes: ADR 0002 row 9. Not checked: edit handles scoped to the selected zone.
+**Shipped in 0.4.0:** `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. The editor is measure-only by rule and never states a match, so shared containment fixtures are not needed unless that changes: ADR 0002 row 9. **Still open:** rectangle drawing, switched off in #36 with no reason given; edit handles scoped to the selected zone, midpoint insertion and right-click deletion, all unchecked: ADR 0002 row 11.
 
 **Component:** `app/static/` frontend + a new read-only backend route
 

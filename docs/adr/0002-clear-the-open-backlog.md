@@ -10,7 +10,7 @@
 
 | # | Step | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say that until the integration can send the token (row 2), an integration reading over the LAN needs `save_token` left empty. Add a test that pins the gate: a token set, `allow_all_ips` on, no header, `GET /zones.json` returns 401. It fails if anyone relaxes the gate again. Changelog and version bump | this repo | Open | |
+| 1 | Correct `save_token`'s description, and `DOCS.md`, to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Add a test that pins the gate: a token set, `allow_all_ips` on, no header, `GET /zones.json` returns 401. It fails if anyone relaxes the gate again. Changelog and version bump | this repo | Open | |
 | 2 | The integration sends `X-Save-Token` when reading zones. This ADR carries no authority into that repo | Homeassistant-polygonal-zones | Blocked | needs work opened in that repo, under its own approval |
 | 3 | Every rejected `/zones.json` read gets the same status, body and headers, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only | this repo | Open | |
 | 4 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
@@ -19,7 +19,8 @@
 | 7 | A regression check for row 6 that fails when the dry run waits for `main`, as the finding asked. #61 was checked by hand only | this repo | Open | |
 | 8 | One `draw_and_save` shared by `build.yml`'s standalone smoke and the Supervisor pilot. The pilot keeps its ingress-specific parts | this repo | Open | |
 | 9 | The editor stays measure-only: it shows inside, distance to the edge and area, and never states which zone the integration would match. Shared containment fixtures with the integration are needed only if that ever changes | this repo | Done | this ADR; the rule is already stated in `app/static/js/geometry.js` |
-| 10 | Point each open `BACKLOG.md` entry at its row here, and close the zone overlay entry as shipped in 0.4.0 | this repo | Done | this PR |
+| 10 | Point each open `BACKLOG.md` entry at its row here | this repo | Done | this PR |
+| 11 | Check the rest of the editor scope agreed on 2026-09-05, and ship or drop each part with a reason: rectangle drawing, switched off in #36 with no reason given; edit handles scoped to the selected zone; midpoint vertex insertion; right-click vertex deletion | this repo | Open | |
 
 Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row carries Evidence.
 
@@ -27,7 +28,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 
 **`save_token` and reads.** The finding said the token gates `GET /zones.json` contrary to its description, and treated that as a bug. RFC 0010 followed it. It is not a bug. Release 0.2.27 gated reads on purpose: its changelog says zone geometry, meaning my home, workplace and school runs, had been less protected than writes. Only the description was never updated. I first chose the RFC's option A, to stop gating reads. On learning of 0.2.27 I chose B the same day. The finding's real harm is that the integration can only be given a bare URL, so it cannot read zones once a token is set. The cure belongs in the integration, not in weaker protection here. Under option A I had also limited the change to `/zones.json`, because `/trackers.json` shares the read gate and serves live positions. Under B that question does not arise.
 
-**The zone overlay.** The finding and the RFC described the overlay as unbuilt. It shipped in 0.4.0, on the day the finding was written: `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. `geometry.js` measures and deliberately does not reimplement the integration's matching rules, so the second source of truth the RFC worried about was designed out. I chose to record that as a rule rather than build shared fixtures.
+**The zone overlay.** The finding and the RFC described the overlay as unbuilt. Most of it shipped in 0.4.0, on the day the finding was written: `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. Rectangle drawing did not: #36 switched it off. Row 11 covers what is left. `geometry.js` measures and deliberately does not reimplement the integration's matching rules, so the second source of truth the RFC worried about was designed out. I chose to record that as a rule rather than build shared fixtures.
 
 **Provenance.** The finding said v4 was unproven until a release. Every release since 0.4.0 had used it, so I checked the latest one rather than dispatching a release by hand.
 
@@ -66,16 +67,16 @@ RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked fo
 
 ## Consequences
 
-**Accepted:** the integration cannot read zones with a token set until row 2 lands in its repo. Until then, anyone who runs it over the LAN leaves `save_token` empty, and row 1 makes the docs say so. The scheduled provenance check waits for the pilot's promotion, so a change to the attestation action between releases is still first exercised by a release.
+**Accepted:** until row 2 lands in the integration's repo, someone running it over the LAN chooses between the integration reading zones and saves being protected. That is the position today; this ADR does not change it, and row 1 makes the docs say so. The scheduled provenance check waits for the pilot's promotion, so a change to the attestation action between releases is still first exercised by a release.
 
 **Watch:**
-- Row 2 has no owner in that repo yet. If it stalls, the documented workaround becomes permanent by default.
+- Row 2 has no owner in that repo yet. If it stalls, open saves become the norm for anyone using the integration over the LAN. If that looks likely, a separate read credential (RFC option C) is the fallback, and it comes back here.
 - The editor's measure-only rule is a comment and this row. A change that makes the editor state a match needs shared fixtures first.
 
 ## Verification (2026-09-27)
 
 - **Read gate:** `authorise_read` in `app/main.py` serves `/zones.json` and `/trackers.json`, and was added in 0.2.27 (09f2ebd). With a token set it returns `invalid_token` before it looks at `allow_all_ips`. The 0.2.27 changelog entry states the gate was deliberate. The option description in `translations/en.yaml` mentions only `POST /save_zones`.
-- **Overlay:** `app/static/js/geometry.js` has area, point-in-ring, edge distance and a `pz_measure` whose comment says it makes no claim about what the integration would match. `vendor/leaflet-geoman` is present. The 0.4.0 changelog lists the area readout, the Geoman swap, the tracker overlay and `overlay_entities`. Not checked: whether edit handles are scoped to the selected zone, which the finding also asked for.
+- **Overlay:** `app/static/js/geometry.js` has area, point-in-ring, edge distance and a `pz_measure` whose comment says it makes no claim about what the integration would match. `vendor/leaflet-geoman` is present. The 0.4.0 changelog lists the area readout, the Geoman swap, the tracker overlay and `overlay_entities`. `map.js` sets `drawRectangle: false`, added in #36 (3d15e37) with no reason given. Not checked: edit-handle scoping, midpoint insertion and right-click deletion.
 - **Provenance:** `gh attestation verify` on `ghcr.io/matthewhobbs/{amd64,aarch64}-addon-polygonal_zones:0.5.0` with `--owner MatthewHobbs` exited 0 for both. Each attestation is SLSA provenance v1, signed by `release.yml` at `refs/tags/v0.5.0`, from commit dc56d79, which is the tag's commit. A check that could fail: the same amd64 image verified against `--repo MatthewHobbs/Homeassistant-polygonal-zones` exited 1 with no attestation found.
 - **Releases on v4:** `release.yml` at each tag from v0.4.0 to v0.5.0 pins `attest-build-provenance` v4.2.2, introduced by #30 on 2026-09-05.
 - **Dry run:** #61 skips `wait_for_main_version` under `--dry-run`, and was checked against `--dry-run 60`.
