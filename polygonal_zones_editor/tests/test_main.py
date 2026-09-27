@@ -1,3 +1,4 @@
+from collections import Counter
 import json
 import sys
 import time
@@ -1602,8 +1603,12 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
         "device_tracker.car",
         "sensor.not_a_tracker",
     ]
-    # Only the opted-in ids were ever asked for, with the add-on's own token.
-    assert [a[0] for a in asked] == ["device_tracker.car", "sensor.not_a_tracker"]
+    # Only the opted-in ids were ever asked for, exactly once each, with the
+    # add-on's own token. Fetches run concurrently on a shared thread pool
+    # (_OVERLAY_POOL), so the order fake_fetch is actually called in isn't
+    # guaranteed to match submission order — assert counts, not order (a
+    # plain set would also hide a duplicate-fetch regression).
+    assert Counter(a[0] for a in asked) == Counter(["device_tracker.car", "sensor.not_a_tracker"])
     assert {a[1] for a in asked} == {"stub-token"}
 
 
