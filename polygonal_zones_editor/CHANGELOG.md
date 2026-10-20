@@ -312,7 +312,7 @@ Editor UX overhaul, a base-image platform bump (Python 3.11 → 3.12), and the n
 
 ### Fixed
 
-- **`schema_version` is now written under `polygonal_zones.schema_version`** (nested foreign member), not as a top-level key. The 0.2.33 entry described the intent as a top-level `schema_version`; the code was subsequently corrected so the location matches the companion integration's reader and `docs/ZONES_FORMAT.md`. Any file written by 0.2.33 with a top-level key is accepted on the next save (`_validate_feature_collection` treats the top-level location as a legacy fallback) and re-written with the correct nested location. The serialised format is:
+- **`schema_version` is now written under `polygonal_zones.schema_version`** (nested foreign member), not as a top-level key. The 0.2.33 entry described the intent as a top-level `schema_version`; the code was subsequently corrected so the location matches the companion integration's reader. Any file written by 0.2.33 with a top-level key is accepted on the next save (`_validate_feature_collection` treats the top-level location as a legacy fallback) and re-written with the correct nested location. The serialised format is:
 
   ```json
   {
@@ -502,7 +502,7 @@ Installation and correctness — a batch of owned P0 fixes from this week's revi
 
 ### Tracked upstream
 
-- Issue [#111](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/issues/111) — the integration-side RFC-1918 opt-in. Until it ships upstream, the reverse-proxy workaround is the official path. Not a code change in this release; mentioned so the full "v1 correctness" story has a tracked home.
+- The integration-side RFC-1918 opt-in. Until it ships upstream, the reverse-proxy workaround is the official path. Not a code change in this release; mentioned so the full "v1 correctness" story has a tracked home.
 
 ## 0.2.26 — 2026-04-19
 

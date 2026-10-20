@@ -12,7 +12,7 @@ Operational procedures for the release pipeline. For routine releases, use `scri
    - **version** — resolves the version from the tag, verifies it is `X.Y.Z`, matches the tag and `config.yaml`, and has a `CHANGELOG.md` entry.
    - **tests** — reusable call to `test.yml` (pytest + 100% line coverage gate).
    - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter` + shellcheck on `scripts/` and `rootfs/`).
-   - **build** — reusable call to `build.yml` — multi-arch docker build + per-arch boot-smoke + Playwright smoke (`scripts/ui_smoke.py`: draw→save round-trip, a11y aria-labels, tile-picker assertions). Added in PR #108 so a tag can't publish an image that hasn't booted cleanly at least once. Its arch matrix is also the one **publish** uses.
+   - **build** — reusable call to `build.yml` — multi-arch docker build + per-arch boot-smoke + Playwright smoke (`scripts/ui_smoke.py`: draw→save round-trip, a11y aria-labels, tile-picker assertions). It stops a tag publishing an image that has never booted. Its arch matrix is also the one **publish** uses.
    - **publish** — per arch: refuses to push if `<version>` is already on GHCR from a different commit (see **Publish refuses: version already published from another commit**), then builds and pushes `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`, labelled `org.opencontainers.image.revision=<commit>`, and attaches a Sigstore build-provenance attestation (keyless, via GitHub OIDC — no secret required).
    - **release** — extracts the CHANGELOG section for the version and creates/updates the GitHub Release.
    - **notify-failure** — opens a GitHub issue if any upstream job of a real (tag, not dry-run) release failed.

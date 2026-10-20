@@ -83,13 +83,9 @@ jobs:
         run: scripts/ha-floor-check.sh
 
   shellcheck:
-    # Lint the release helper and the s6 init / service scripts with shellcheck.
-    # The release-merge.sh script gates every version bump, and the rootfs
-    # scripts drive container boot / teardown — a shell syntax regression in
-    # either is the class of bug that bit #101 (the `$VAR→` crash under
-    # set -u) and the AppArmor hotfix sequence (0.2.16–0.2.22). `bash -n`
-    # catches parse errors but not word-splitting / quoting mistakes;
-    # shellcheck does.
+    # release-merge.sh gates every version bump and the rootfs scripts drive
+    # container boot; `bash -n` misses the quoting and word-splitting mistakes
+    # shellcheck catches.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
