@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,14 +78,15 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify CHANGELOG entry exists
-        # Run here, not in the downstream `release` job, so a missing entry
-        # blocks the build before any image is pushed to ghcr.io. The same
-        # awk extraction runs again in the `release` job to produce the
-        # notes file.
+      - name: Extract the CHANGELOG entry
+        # Here, not in the `release` job, so a missing entry stops the run
+        # before any image is pushed; `release` uses this output.
+        id: notes
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          set -euo pipefail
+          # The trailing space or end of line stops "0.2.1" matching "0.2.10".
           NOTES=$(awk -v v="## $VERSION" '
             $0 ~ "^"v" " || $0 == v {found=1; next}
             found && /^## / {exit}
@@ -94,6 +96,8 @@ jobs:
             echo "::error::No CHANGELOG entry found for version $VERSION in polygonal_zones_editor/CHANGELOG.md"
             exit 1
           fi
+          delim="notes_$(openssl rand -hex 16)"
+          printf 'notes<<%s\n%s\n%s\n' "$delim" "$NOTES" "$delim" >> "$GITHUB_OUTPUT"
 
   tests:
     name: Tests
@@ -221,39 +225,23 @@ jobs:
     permissions:
       contents: write       # create the GitHub Release
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Extract changelog section
-        id: changelog
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          # Pick everything between "## VERSION" (with a literal space after to
-          # avoid prefix collision like "0.2.1" matching "0.2.10") and the next "## " line.
-          awk -v v="## $VERSION" '
-            $0 ~ "^"v" " || $0 == v {found=1; next}
-            found && /^## / {exit}
-            found {print}
-          ' polygonal_zones_editor/CHANGELOG.md > /tmp/release-notes.md
-          if [ ! -s /tmp/release-notes.md ]; then
-            echo "::error::No CHANGELOG entry found for version $VERSION"
-            exit 1
-          fi
-
       - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout here, so gh has no git remote to find the repo from.
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
+          NOTES: ${{ needs.version.outputs.notes }}
         run: |
+          set -euo pipefail
           TAG="v$VERSION"
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/release-notes.md"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --notes-file /tmp/release-notes.md --title "$TAG"
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --title "$TAG"
           else
             gh release create "$TAG" \
               --title "$TAG" \
-              --notes-file /tmp/release-notes.md
+              --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
 
   notify-failure:
