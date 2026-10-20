@@ -1,8 +1,8 @@
-# polygonal-zones-addon governance recipes (the cross-repo `just` convention).
+# polygonal-zones-addon local recipes.
 #
 # `just ci` mirrors the static gates in .github/workflows/{lint,test}.yml, including the
 # same dependency install. NOT covered locally, and remaining remote-only gates: the HA
-# add-on linter, the multi-arch build, the amd64 smoke boot and the Playwright UI tests,
+# add-on linter, the multi-arch build, the per-arch smoke boot and the Playwright UI tests,
 # and lint.yml's ha-floor job, which reads version.home-assistant.io and so is
 # network-dependent: `just ha-floor` runs it on demand, `just ci` never does.
 

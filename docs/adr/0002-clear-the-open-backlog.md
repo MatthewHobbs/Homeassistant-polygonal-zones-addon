@@ -1,8 +1,8 @@
-# ADR 0002: Clear the open backlog
+# ADR 0002: Close the open findings
 
 - **Status:** Accepted (2026-09-27)
-- **Context:** six findings were open in `BACKLOG.md`, one of them P1. I proposed how to clear them in RFC 0010 (see References). Two of its premises turned out to be wrong, so on two items I decided against its recommendation.
-- **North star:** the add-on does what its options say, the companion integration can read zones under every configuration the add-on recommends, and no finding in `BACKLOG.md` is left open without a plan row here.
+- **Context:** six findings were open in the findings list, one of them P1. I proposed how to close them in the proposal (see References). Two of its premises turned out to be wrong, so on two items I decided against its recommendation.
+- **North star:** the add-on does what its options say, the companion integration can read zones under every configuration the add-on recommends, and no finding in the findings list is left open without a plan row here.
 
 ## Decision
 
@@ -10,7 +10,7 @@
 
 | # | Step | Owner | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | Correct `save_token`'s description in the add-on's options to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. `DOCS.md` already says it covers `/zones.json`; add `/trackers.json`. Establish under the Supervisor pilot how an integration on the same host actually reaches the add-on, since `DOCS.md` says it goes through ingress and that has not been tested, and correct the docs if it does not. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Say too that with a token set the whole editor works only through ingress: it loads zones, saves them and polls trackers without a token, so a direct LAN visit can do none of them. The gate is already pinned by `test_zones_json_requires_token_when_set_and_lan_request`. Changelog and version bump | this repo | Done | `translations/en.yaml`, `DOCS.md`, `CHANGELOG.md` in 0.5.1; the ingress claim was wrong and is corrected — confirmed under the pilot (`cmd_probe`, `scripts/supervisor-pilot.sh`) that a same-host integration does not reach the add-on through ingress, and that Core's own internal-network path is not automatically trusted (`BACKLOG.md`, new finding) |
+| 1 | Correct `save_token`'s description in the add-on's options to say the token guards `GET /zones.json` and `GET /trackers.json` as well as `POST /save_zones`. `DOCS.md` already says it covers `/zones.json`; add `/trackers.json`. Establish under the Supervisor pilot how an integration on the same host actually reaches the add-on, since `DOCS.md` says it goes through ingress and that has not been tested, and correct the docs if it does not. Say plainly that until the integration can send the token (row 2), it can read over the LAN only with `save_token` empty, and that an empty token also leaves `POST /save_zones` open to the LAN under `allow_all_ips`. State the trade; do not recommend it. Say too that with a token set the whole editor works only through ingress: it loads zones, saves them and polls trackers without a token, so a direct LAN visit can do none of them. The gate is already pinned by `test_zones_json_requires_token_when_set_and_lan_request`. Changelog and version bump | this repo | Done | `translations/en.yaml`, `DOCS.md`, `CHANGELOG.md` in 0.5.1; the ingress claim was wrong and is corrected — confirmed under the pilot (`cmd_probe`, `scripts/supervisor-pilot.sh`) that a same-host integration does not reach the add-on through ingress, and that Core's own internal-network path is not automatically trusted (the findings list, new finding) |
 | 2 | The integration sends `X-Save-Token` when reading zones. The token can also save, so it is stored against the one add-on origin it belongs to and never sent to another, including across a redirect. This ADR carries no authority into that repo | Homeassistant-polygonal-zones | Blocked | done in that repo's own PR #95 (`zone_source_token`, bound to the add-on's origin, never sent across a redirect), merged 2026-09-27; still Blocked here because it is not yet in a tagged integration release — re-check at the next one |
 | 3 | Every authorisation failure on `/zones.json`, `/trackers.json` and `/save_zones` gets the same status, body and headers, so a client cannot tell whether a token is configured. The precise reason (IP not allowed, token missing, token wrong) goes to the add-on log only. A test covers all three endpoints with a token set and with none | this repo | Done | `app/main.py`: `_auth_rejection_response()` returns `403` / `{"error": "not authorised"}` / `Cache-Control: no-store` for every reason, on all three routes; `authorise_save`/`authorise_read` now return `token_missing`/`token_wrong`/`not_allowed` for logging only via `_AUTH_REJECTION_LOG_REASON`. This reverses the pre-existing 401-vs-403 distinction (`test_save_token_works_without_allow_all_ips` and others used to call it a deliberate "auth is available, provide it" signal) — that signal is exactly the leak this row exists to close, so it's gone, not preserved. Pinned by `test_uniform_auth_rejection_across_all_three_endpoints` |
 | 4 | Verify that releases built with `actions/attest-build-provenance` v4 produce attestations that verify | this repo | Done | 0.5.0 on both arches, see Verification |
@@ -19,7 +19,7 @@
 | 7 | A regression check for row 6 that fails when the dry run waits for `main`, as the finding asked. #61 was checked by hand only | this repo | Done | `scripts/test-release-merge.sh`, run by `just ci` and `test.yml`; extracts `wait_for_main_version` from the file text (no sourcing guard on `release-merge.sh`) and proves it under `--dry-run` with a `read_version_at_ref` stub that fails loudly if ever called. Confirmed it actually catches the regression: re-ran it against a copy of the function with the dry-run guard removed, and it failed as expected |
 | 8 | One `draw_and_save` shared by `build.yml`'s standalone smoke and the Supervisor pilot. The pilot keeps its ingress-specific parts | this repo | Done | `scripts/draw_and_save.py`, imported by both `build.yml` and `supervisor_probe.py`; `supervisor-pilot.sh` mounts it alongside `probe.py`. Verified live: ran both `draw_and_save` and `draw_rectangle_and_save` through the import path against a real running container from the repo root (matching `build.yml`) and from a `/probe`-shaped directory (matching the pilot) |
 | 9 | The editor stays measure-only: it shows inside, distance to the edge and area, and never states which zone the integration would match. Shared containment fixtures with the integration are needed only if that ever changes | this repo | Done | this ADR; the rule is already stated in `app/static/js/geometry.js` |
-| 10 | Point each open `BACKLOG.md` entry at its row here | this repo | Done | this PR |
+| 10 | Point each open entry in the findings list at its row here | this repo | Done | done in the PR that accepted this ADR; the list is no longer kept in this repository |
 | 11 | Check the rest of the editor scope agreed on 2026-09-05, and ship or drop each part with a reason: rectangle drawing, switched off in #36 with no reason given; edit handles scoped to the selected zone; midpoint vertex insertion; right-click vertex deletion | this repo | Done | `map.js` (0.5.2). Rectangle drawing: shipped — #36's `drawRectangle: false` was collateral from disabling every non-polygon mode in one config object, not a deliberate call; `L.Rectangle` extends `L.Polygon` in Leaflet, verified end to end (drawn, saved, read back as a plain `Polygon`) against a real running container. The remaining three were already shipped by Geoman's own defaults and never verified: checked live (draw a zone, click Edit, screenshot shows scoped handles and midpoint markers; right-click a vertex removes it) rather than assumed from reading the code |
 | 12 | Measure zones with holes correctly: area subtracts inner rings, and a point counts as inside only when it is in an outer ring and not in one of its holes. Include a test with a hole that fails today. The validator accepts holes, though the editor cannot draw them | this repo | Done | `trackers.js`: `pz_layer_rings` (flattened every ring) replaced by `pz_layer_polygons` (groups each polygon's outer ring with its own holes). `tests/test_trackers.js` (new, `node --test`, wired into `just ci`/`test.yml`) fails against the old code — confirmed by reverting the fix locally and rerunning it — and passes against the new. Also verified live: a donut zone's area is correctly hole-subtracted (98.91 ha vs. the outer square's ~100 ha) and a point in the hole reads `inside: false` against the real running container, not just the test |
 
@@ -27,7 +27,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 
 ## Context
 
-**`save_token` and reads.** The finding said the token gates `GET /zones.json` contrary to its description, and treated that as a bug. RFC 0010 followed it. It is not a bug. Release 0.2.27 gated reads on purpose: its changelog says zone geometry, meaning my home, workplace and school runs, had been less protected than writes. Only the description was never updated. I first chose the RFC's option A, to stop gating reads. On learning of 0.2.27 I chose B the same day. The finding's real harm is that the integration can only be given a bare URL, so it cannot read zones once a token is set. The cure belongs in the integration, not in weaker protection here. Under option A I had also limited the change to `/zones.json`, because `/trackers.json` shares the read gate and serves live positions. Under B that question does not arise.
+**`save_token` and reads.** The finding said the token gates `GET /zones.json` contrary to its description, and treated that as a bug. The proposal followed it. It is not a bug. Release 0.2.27 gated reads on purpose: its changelog says zone geometry, meaning my home, workplace and school runs, had been less protected than writes. Only the description was never updated. I first chose the RFC's option A, to stop gating reads. On learning of 0.2.27 I chose B the same day. The finding's real harm is that the integration can only be given a bare URL, so it cannot read zones once a token is set. The cure belongs in the integration, not in weaker protection here. Under option A I had also limited the change to `/zones.json`, because `/trackers.json` shares the read gate and serves live positions. Under B that question does not arise.
 
 **The zone overlay.** The finding and the RFC described the overlay as unbuilt. Most of it shipped in 0.4.0, on the day the finding was written: `geometry.js`, the tracker overlay, zone areas, Leaflet-Geoman and `/trackers.json`. Rectangle drawing did not: #36 switched it off. Row 11 covers what is left. `geometry.js` measures and deliberately does not reimplement the integration's matching rules, so the second source of truth the RFC worried about was designed out. I chose to record that as a rule rather than build shared fixtures.
 
@@ -35,7 +35,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 
 ## Alternatives
 
-**`save_token` and reads.** RFC 0010's options, copied on 2026-09-27; this copy is the record and the doc can still be edited. Then the options I weighed once I knew about 0.2.27.
+**`save_token` and reads.** The proposal's options, copied on 2026-09-27; this copy is the record and the doc can still be edited. Then the options I weighed once I knew about 0.2.27.
 
 | Option | Cost | Risk |
 | --- | --- | --- |
@@ -49,7 +49,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 | Relax `/zones.json` anyway | Fixes the integration today, and undoes 0.2.27: zone shapes readable on the LAN under `allow_all_ips`, token or not |
 | Also accept the token as a query parameter | No integration change, but the token travels in URLs and can land in logs |
 
-**Provenance coverage.** From RFC 0010; I chose A now and B after ADR 0001 row 5.
+**Provenance coverage.** From the proposal; I chose A now and B after ADR 0001 row 5.
 
 | Option | Cost | Risk |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 | B. Add a scheduled, non-required workflow that runs the attestation step against a throwaway artifact, on the pattern already used by the Supervisor pilot (ADR 0001) | Medium: needs a disposable image and its cleanup from GHCR | Low: cannot block a merge or a release, since it never gates either |
 | C. Restructure `release.yml` so attestation also runs as a reusable job from `build.yml`'s PR path in a dry-run mode | Highest: reshapes the workflow | Medium: attestation on a dry, untagged artifact may not behave like it does for a real tagged release, so a pass there could be false confidence |
 
-**Containment maths.** RFC 0010 offered three options for an overlay it thought unbuilt: shared test fixtures, calling the integration at runtime, or the integration depending on the editor's code. I chose none, because the shipped editor is measure-only (row 9).
+**Containment maths.** The proposal offered three options for an overlay it thought unbuilt: shared test fixtures, calling the integration at runtime, or the integration depending on the editor's code. I chose none, because the shipped editor is measure-only (row 9).
 
 | Option, knowing the overlay shipped | Effect |
 | --- | --- |
@@ -89,6 +89,6 @@ RFC items 3, 4 and 6 had one fix each and no options. Item 6 as written asked fo
 
 ## References
 
-- RFC 0010: https://claude.ai/artifact/6VLwW8jjU2m6NWTeKJWYcn
-- `BACKLOG.md` and `polygonal_zones_editor/CHANGELOG.md` (0.2.27, 0.4.0) in this repo
+- The proposal (RFC; not published)
+- `polygonal_zones_editor/CHANGELOG.md` (0.2.27, 0.4.0) in this repo
 - ADR 0001, row 5

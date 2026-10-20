@@ -16,7 +16,7 @@
 #   5  tag creation failed
 #   6  release workflow failed
 #
-# stdout uses STATUS:<TOKEN> lines so wrappers (e.g. the Claude Code skill)
+# stdout uses STATUS:<TOKEN> lines so a wrapper
 # can summarise progress without screen-scraping freeform text.
 
 set -euo pipefail
