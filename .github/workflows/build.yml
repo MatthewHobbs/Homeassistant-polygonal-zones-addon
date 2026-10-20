@@ -145,8 +145,10 @@ jobs:
           # /save_zones round-trip with a mix of Polygon and MultiPolygon
           # features. The MultiPolygon exercises the frontend's shape-count
           # indicator and the save path's toGeoJSON-based export (the
-          # previous hand-rolled export destroyed MultiPolygon rings).
-          curl -fsS -X POST -H 'Content-Type: application/json' \
+          # previous hand-rolled export destroyed MultiPolygon rings). Each
+          # command stands alone so `set -e` sees its status: in `a | b && c`
+          # a failing pipeline is ignored and the step goes on green.
+          SAVED=$(curl -fsS -X POST -H 'Content-Type: application/json' \
             --data '{"type":"FeatureCollection","features":[
               {"type":"Feature","properties":{"name":"smoke"},
                "geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}},
@@ -156,7 +158,9 @@ jobs:
                  [[[4,4],[5,4],[5,5],[4,4]]]
                ]}}
             ]}' \
-            http://127.0.0.1:8000/save_zones | grep -q '"status":"ok"' && echo "OK /save_zones round-trip"
+            http://127.0.0.1:8000/save_zones)
+          python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d.get("status") == "ok", d' "$SAVED"
+          echo "OK /save_zones round-trip"
 
           # The web service must run as the Dockerfile's `app` user, uid 1001.
           # Regression guard for #14. Rejecting only uid 0 would pass a drop to
