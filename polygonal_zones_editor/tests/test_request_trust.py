@@ -374,17 +374,23 @@ def test_forged_ingress_failures_cannot_rate_limit_real_ingress(boot, path):
     assert ingress.get(path).status_code == 200
 
 
-def test_rotating_forwarded_clients_share_the_proxy_peer_budget(boot):
-    options = {"trusted_proxies": PROXY_RANGE, "save_token": TOKEN}
-    client = _served_client(boot, options, HOST_IN_PROXY_RANGE)
-    codes = [
-        client.get(
-            "/zones.json",
-            headers={"X-Forwarded-For": f"192.0.2.{i}", "X-Save-Token": "wrong"},
-        ).status_code
-        for i in range(1, 40)
-    ]
-    assert 429 in codes
+def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
+    import main
+
+    main._save_failures.clear()
+    app, _ = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
+    client = TestClient(app, client=HOST_IN_PROXY_RANGE)
+    monkeypatch.setattr(main, "_SAVE_FAILURE_MAX_KEYS", 5)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+    for i in range(1, 30):
+        client.get("/zones.json", headers={"X-Forwarded-For": f"192.0.2.{i}"})
+    assert len(main._save_failures) == 29
+    clock[0] += 61
+    client.get("/zones.json", headers={"X-Forwarded-For": "192.0.2.200"})
+    # The 29 expired clients are gone; only the newest failure remains.
+    assert list(main._save_failures) == ["192.0.2.200"]
+    main._save_failures.clear()
 
 
 def test_real_ingress_with_forwarded_header_is_still_ingress(boot):
@@ -402,10 +408,19 @@ def test_host_bit_cidr_is_applied_as_its_network(boot, caplog):
     assert "from 192.0.2.1" in caplog.text
 
 
-def test_cross_site_reads_spend_no_failure_budget(boot):
+def test_cross_site_reads_never_test_a_token_or_spend_budget(boot):
     options = {"save_token": TOKEN, "allow_all_ips": True}
     client = _served_client(boot, options, ("192.168.7.7", 5000))
+    cross = {"Sec-Fetch-Site": "cross-site"}
     for path in ("/zones.json", "/trackers.json"):
         for _ in range(15):
-            assert client.get(path, headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+            assert client.get(path, headers={**cross, "X-Save-Token": "guess"}).status_code == 403
+        # Even the right token is refused when a browser marks it cross-site.
+        assert client.get(path, headers={**cross, "X-Save-Token": TOKEN}).status_code == 403
     assert client.get("/zones.json", headers={"X-Save-Token": TOKEN}).status_code == 200
+
+
+def test_host_bit_cidr_normalisation_is_logged(boot, caplog):
+    with caplog.at_level(logging.WARNING):
+        boot({"trusted_proxies": "192.168.1.5/24"})
+    assert "host bits set" in caplog.text

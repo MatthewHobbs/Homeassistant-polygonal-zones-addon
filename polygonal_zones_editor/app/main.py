@@ -66,21 +66,20 @@ AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trac
 # Rate limit on authorisation failures across the three gated routes.
 # Protects against brute-forcing save_token when the port is exposed on LAN.
 # Only failures count. A request whose TCP peer is ingress is never limited,
-# so failures recorded against a forwarded "172.30.32.2" cannot lock the HA UI
-# out. A proxied request is charged to both the forwarded client and the
-# proxy's own address, so rotating X-Forwarded-For values from one host
-# still exhausts that host's budget.
+# so failures recorded against a forwarded "172.30.32.2" cannot lock the HA
+# UI out. Behind a trusted proxy the budget is per forwarded client.
 _SAVE_FAILURE_LIMIT = 10
 _SAVE_FAILURE_WINDOW_SECONDS = 60
+# Above this many tracked clients, expired entries are swept on each failure,
+# so forwarded addresses that are never seen again don't accumulate.
+_SAVE_FAILURE_MAX_KEYS = 1024
 _save_failures: dict[str, deque] = defaultdict(deque)
 
 
-def _failure_keys(request: Request) -> tuple[str, ...]:
-    client = request.client.host if request.client and request.client.host else "unknown"
-    peer = request.scope.get(TRANSPORT_PEER_SCOPE_KEY)
-    if peer and peer != client:
-        return (client, f"peer:{peer}")
-    return (client,)
+def _failure_key(request: Request) -> str:
+    host = request.client.host if request.client and request.client.host else "unknown"
+    # A forwarded "host" is whatever the header said; cap what we store.
+    return host[:64]
 
 
 def _prune(key: str, cutoff: float) -> int:
@@ -90,24 +89,26 @@ def _prune(key: str, cutoff: float) -> int:
     while failures and failures[0] < cutoff:
         failures.popleft()
     if not failures:
-        # Drop empty buckets so one entry per address ever seen can't pile up.
         del _save_failures[key]
         return 0
     return len(failures)
 
 
 def _rate_limit_exceeded(request: Request) -> bool:
-    """Whether this request's client or proxy has used its failure budget."""
+    """Whether this request's client has used its failure budget."""
     if allowed_ip(request):
         return False
     cutoff = time.time() - _SAVE_FAILURE_WINDOW_SECONDS
-    return any(_prune(key, cutoff) >= _SAVE_FAILURE_LIMIT for key in _failure_keys(request))
+    return _prune(_failure_key(request), cutoff) >= _SAVE_FAILURE_LIMIT
 
 
 def _record_save_failure(request: Request) -> None:
     now = time.time()
-    for key in _failure_keys(request):
-        _save_failures[key].append(now)
+    if len(_save_failures) > _SAVE_FAILURE_MAX_KEYS:
+        cutoff = now - _SAVE_FAILURE_WINDOW_SECONDS
+        for key in list(_save_failures):
+            _prune(key, cutoff)
+    _save_failures[_failure_key(request)].append(now)
 
 
 def _etag_for_bytes(body: bytes) -> str:
@@ -781,12 +782,17 @@ def trackers_json_generator(options: dict):
         client_host = request.client.host or "unknown"
         if _rate_limit_exceeded(request):
             return _uncached({"error": "too many failed attempts"}, status_code=429)
+        if _browser_cross_origin(request):
+            # Refused before the token is looked at, and not counted: a page
+            # can make the visitor's browser send this, so it must neither
+            # test a token nor spend the visitor's failure budget.
+            _LOGGER.warning(
+                "Rejected /trackers.json read from %s: not a same-origin request", client_host
+            )
+            return _auth_rejection_response()
         ok, reason = authorise_read(options, request)
         if not ok:
-            # A page can make the browser fetch this (an <img>, say); don't
-            # let that spend the visitor's own failure budget.
-            if not _browser_cross_origin(request):
-                _record_save_failure(request)
+            _record_save_failure(request)
             _LOGGER.warning(
                 "Rejected /trackers.json read from %s: %s",
                 client_host,
@@ -864,12 +870,15 @@ def zones_json_generator(options: dict):
                 {"error": "too many failed attempts"},
                 status_code=429,
             )
+        if _browser_cross_origin(request):
+            # As for /trackers.json: refused before the token, never counted.
+            _LOGGER.warning(
+                "Rejected /zones.json read from %s: not a same-origin request", client_host
+            )
+            return _auth_rejection_response()
         ok, reason = authorise_read(options, request)
         if not ok:
-            # A page can make the browser fetch this (an <img>, say); don't
-            # let that spend the visitor's own failure budget.
-            if not _browser_cross_origin(request):
-                _record_save_failure(request)
+            _record_save_failure(request)
             _LOGGER.warning(
                 "Rejected /zones.json read from %s: %s",
                 client_host,
@@ -1072,7 +1081,13 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
             )
             continue
         # uvicorn parses CIDRs strictly, so a host-bit entry such as
-        # 192.168.1.5/24 would silently trust nothing; hand it the network.
+        # 192.168.1.5/24 would silently trust nothing; hand it the network,
+        # and say so, since that trusts the whole range.
+        if "/" in entry and str(net) != entry:
+            _LOGGER.warning(
+                "A trusted_proxies entry has host bits set and is applied as "
+                "its whole network. List each proxy's own IP instead."
+            )
         safe.append(str(net) if "/" in entry else entry)
     return safe
 

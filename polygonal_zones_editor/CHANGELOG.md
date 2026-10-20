@@ -19,12 +19,13 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
   unaffected. If you have a script that posts zones with a different
   content type (or none), add `-H 'Content-Type: application/json'`.
 - **Security: the failed-attempt limit can no longer be turned against the
-  Home Assistant UI**, and a client behind a trusted proxy can no longer
-  dodge it by varying its forwarded address: failures count against the
-  proxy too. A `trusted_proxies` range written with host bits set (such as
-  `192.168.1.5/24`) is now applied as its network instead of silently
-  trusting nothing. Reads a browser fetches on another site's behalf no
-  longer use up your failed-attempt budget.
+  Home Assistant UI**, and its record of past failures no longer grows
+  without bound. A `trusted_proxies` range written with host bits set (such
+  as `192.168.1.5/24`) is now applied as its network, with a warning in the
+  log, instead of silently trusting nothing. `GET /zones.json` and
+  `GET /trackers.json` refuse requests a browser marks as not coming from
+  the editor's own page, as saves do, without using up your failed-attempt
+  budget.
 - **Security: a tracker's name is shown on the map as plain text.** Its
   hover label is now built the same way as zone popups, so a friendly name
   containing markup is displayed as written rather than interpreted.
