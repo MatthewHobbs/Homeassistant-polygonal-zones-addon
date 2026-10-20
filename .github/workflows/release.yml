@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+  # A change to the release path runs every gate as a dry run before it
+  # merges. The publish and release jobs themselves still first run on a tag.
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/build.yml
+      - .github/workflows/test.yml
+      - .github/workflows/lint.yml
+      - scripts/check-published-revision.sh
   workflow_dispatch:
     inputs:
       version:
@@ -28,10 +38,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, so a tag's commit can be checked against main.
+          fetch-depth: 0
 
       - name: Resolve version
         id: ver
@@ -40,11 +53,11 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
+          case "$EVENT_NAME" in
+            workflow_dispatch) VERSION="$INPUT_VERSION" ;;
+            pull_request) VERSION=$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml) ;;
+            *) VERSION="${GITHUB_REF#refs/tags/v}" ;;
+          esac
           # It becomes an image tag and a release name, so hold it to X.Y.Z,
           # and print it only once it is known to be just that.
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -58,6 +71,12 @@ jobs:
             echo "::error::version '$VERSION' does not match the ref $GITHUB_REF"
             exit 1
           fi
+          # A tag must point at a commit main contains: images built from a
+          # commit that never landed would ship code nobody merged.
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF is not on main"
+            exit 1
+          fi
           # Sanity-check: must match the version in config.yaml so we don't
           # publish images that disagree with what the Supervisor expects.
           CONFIG_VERSION=$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml)
@@ -67,14 +86,15 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify CHANGELOG entry exists
-        # Run here, not in the downstream `release` job, so a missing entry
-        # blocks the build before any image is pushed to ghcr.io. The same
-        # awk extraction runs again in the `release` job to produce the
-        # notes file.
+      - name: Extract the CHANGELOG entry
+        # Here, not in the `release` job, so a missing entry stops the run
+        # before any image is pushed; `release` uses this output.
+        id: notes
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          set -euo pipefail
+          # The trailing space or end of line stops "0.2.1" matching "0.2.10".
           NOTES=$(awk -v v="## $VERSION" '
             $0 ~ "^"v" " || $0 == v {found=1; next}
             found && /^## / {exit}
@@ -84,6 +104,8 @@ jobs:
             echo "::error::No CHANGELOG entry found for version $VERSION in polygonal_zones_editor/CHANGELOG.md"
             exit 1
           fi
+          delim="notes_$(openssl rand -hex 16)"
+          printf 'notes<<%s\n%s\n%s\n' "$delim" "$NOTES" "$delim" >> "$GITHUB_OUTPUT"
 
   tests:
     name: Tests
@@ -110,9 +132,6 @@ jobs:
     # arch on its native runner, for the tagged SHA. Without this gate, a
     # release can publish from a SHA whose image has never been booted.
     # Publish rebuilds the image, so this proves the SHA, not the pushed bytes.
-    # It catches exactly the class of regression that
-    # bit 0.2.16–0.2.22 (AppArmor profile broke container boot; unit tests
-    # and the HA addon linter passed, so the release gate was green).
     # Its `include` output is the arch matrix publish uses, so the two cannot
     # disagree on which arches exist.
     uses: ./.github/workflows/build.yml
@@ -122,9 +141,9 @@ jobs:
   publish:
     name: Publish (${{ matrix.arch }})
     needs: [version, tests, lint, build]
-    # Only a v* tag publishes, and a dispatch only when dry_run is unticked.
-    # On a push, inputs.dry_run is null, which is not true.
-    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    # Only a v* tag publishes: a tag push, or a dispatch with dry_run
+    # unticked. Any other trigger, pull_request included, is a dry run.
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
     # Native runner per arch, as build.yml uses: no QEMU emulator image in a
     # job that holds packages:write and id-token:write.
     runs-on: ${{ matrix.runner }}
@@ -141,7 +160,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # BuildKit pinned by digest (it runs in the job that holds packages:write);
+      # build.yml uses the same pin, so every PR builds with it. Renovate
+      # rewrites tag, digest and comment together in both files.
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea # v0.33.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -179,11 +203,9 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
           push: true
-          # Supervisor resolves the addon image tag from config.yaml's
-          # `version:` field, not from `:latest`. Pushing :latest only
-          # creates a partial-release hazard (a mid-matrix failure leaves
-          # :latest pointing at mixed versions across arches). Removed.
-          # See docs/RUNBOOK.md for the release-recovery procedure.
+          # The version tag only: Supervisor resolves the image from
+          # config.yaml's `version:`, and a :latest would point at mixed
+          # versions across arches after a mid-matrix failure.
           tags: |
             ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
           # Built from scratch: the gate jobs write the shared build cache and
@@ -191,9 +213,7 @@ jobs:
           no-cache: true
 
       # Sign the pushed image with a Sigstore build-provenance attestation
-      # (keyless, via GitHub OIDC — no secret to manage). Replaces the
-      # discontinued CodeNotary CAS pipeline; CAS's cloud service is dead and
-      # Home Assistant removed the Supervisor `codenotary:` key in 2026.x.
+      # (keyless, via GitHub OIDC — no secret to manage).
       # The attestation is pushed to GHCR alongside the image and is
       # verifiable by anyone with:
       #   gh attestation verify oci://<image>:<version> --owner MatthewHobbs
@@ -207,44 +227,28 @@ jobs:
   release:
     name: Create GitHub Release
     needs: [version, publish]
-    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
     runs-on: ubuntu-latest
     permissions:
       contents: write       # create the GitHub Release
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Extract changelog section
-        id: changelog
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          # Pick everything between "## VERSION" (with a literal space after to
-          # avoid prefix collision like "0.2.1" matching "0.2.10") and the next "## " line.
-          awk -v v="## $VERSION" '
-            $0 ~ "^"v" " || $0 == v {found=1; next}
-            found && /^## / {exit}
-            found {print}
-          ' polygonal_zones_editor/CHANGELOG.md > /tmp/release-notes.md
-          if [ ! -s /tmp/release-notes.md ]; then
-            echo "::error::No CHANGELOG entry found for version $VERSION"
-            exit 1
-          fi
-
       - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout here, so gh has no git remote to find the repo from.
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
+          NOTES: ${{ needs.version.outputs.notes }}
         run: |
+          set -euo pipefail
           TAG="v$VERSION"
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/release-notes.md"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --notes-file /tmp/release-notes.md --title "$TAG"
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --title "$TAG"
           else
             gh release create "$TAG" \
               --title "$TAG" \
-              --notes-file /tmp/release-notes.md
+              --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
 
   notify-failure:
@@ -254,7 +258,7 @@ jobs:
     name: Notify on failure
     # Real releases only: a failed dry run publishes nothing and its run page
     # already shows what broke.
-    if: failure() && startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    if: failure() && startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
     needs: [version, tests, lint, build, publish, release]
     runs-on: ubuntu-latest
     permissions:

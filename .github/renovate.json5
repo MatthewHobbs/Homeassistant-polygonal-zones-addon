@@ -40,9 +40,18 @@
     },
     {
       "customType": "regex",
+      // build.yaml carries the same base tags without digests (the HA linter reads it);
+      // the base-image group below bumps both files in one PR, so the drift check holds.
+      "managerFilePatterns": ["/^polygonal_zones_editor/build\\.yaml$/"],
+      "matchStrings": [
+        "(?<depName>ghcr\\.io/home-assistant/[a-z0-9]+-base):(?<currentValue>[\\d.]+)\\s",
+      ],
+      "datasourceTemplate": "docker",
+    },
+    {
+      "customType": "regex",
       // TEMPIO_REF pins the tempio build stage by immutable commit SHA. No manifest declares
-      // it, so Dependabot cannot see it at all - it sat on an untagged mid-main commit from
-      // 2026-06-30 with no way to notice 2026.07.0 had shipped.
+      // it, so Dependabot cannot see it at all.
       //
       // Tags, not the branch head: a bump should mean an upstream release, not merely the
       // newest commit on main. Versioning is `loose` because tempio uses calendar versions
@@ -59,7 +68,8 @@
     },
     {
       "customType": "regex",
-      // The devcontainer, Playwright and registry images the Supervisor pilot runs, each a
+      // The devcontainer and registry images the Supervisor pilot runs (Playwright is
+      // bumped by hand, see below), each a
       // quoted `name:tag@digest`. The tag is the exact upstream tag (6-apps, v1.63.0-noble),
       // so the lookup can find it; a tag that does not exist upstream fails silently.
       "description": "Keep the Supervisor pilot's digest-pinned images fresh",
@@ -67,6 +77,16 @@
       "matchStrings": [
         "\"(?<depName>(?:ghcr\\.io|mcr\\.microsoft\\.com|docker\\.io)/[a-z0-9._/-]+):(?<currentValue>[A-Za-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})\"",
       ],
+      "datasourceTemplate": "docker",
+    },
+    {
+      "customType": "regex",
+      "description": "Track the digest-pinned BuildKit image release.yml's publish job builds with",
+      "managerFilePatterns": ["/^\\.github/workflows/(release|build)\\.yml$/"],
+      "matchStrings": [
+        "image=(?<depName>moby/buildkit):(?<currentValue>v[\\d.]+)@(?<currentDigest>sha256:[a-f0-9]{64}) # v[\\d.]+",
+      ],
+      "autoReplaceStringTemplate": "image={{{depName}}}:{{{newValue}}}@{{{newDigest}}} # {{{newValue}}}",
       "datasourceTemplate": "docker",
     },
   ],
@@ -83,7 +103,15 @@
       "groupName": "supervisor-pilot-images",
     },
     {
-      "description": "One PR for all GitHub Actions, matching the grouping Dependabot used before this change.",
+      // The image's browsers must match the hash-locked playwright== in
+      // scripts/supervisor-probe-requirements.txt, which no bot can regenerate. Bump both by
+      // hand together, with the command in that file's header.
+      "description": "Playwright image and its client lockfile are bumped together by hand.",
+      "matchPackageNames": ["mcr.microsoft.com/playwright/python"],
+      "enabled": false,
+    },
+    {
+      "description": "One PR for all GitHub Actions.",
       "matchManagers": ["github-actions"],
       "groupName": "actions",
     },

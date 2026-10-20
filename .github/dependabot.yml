@@ -1,5 +1,5 @@
 # Dependabot — Python only. GitHub Actions, the Dockerfile FROM lines, and the digest-pinned
-# base images in .github/base-images.yaml moved to Renovate (.github/renovate.json5), which can
+# base images in .github/base-images.yaml are Renovate's (.github/renovate.json5), which can
 # follow a custom YAML field that Dependabot's docker manager cannot.
 #
 # Python stays here: requirements-lock.txt is a hash-locked `uv pip compile` output installed

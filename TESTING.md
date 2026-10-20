@@ -23,9 +23,9 @@ The smoke step in `build.yml` boots the container on each arch's native runner w
 
 ## Supervisor pilot (nightly / on demand)
 
-`.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). Each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). It installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor — this is what caught the profile's unix-socket-mediation break, fixed in 0.4.2 — on a newer parser and kernel than HA OS ships.
+`.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). On pull requests, on Fridays and on manual runs each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). It installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor — this is what caught the profile's unix-socket-mediation break, fixed in 0.4.2 — on a newer parser and kernel than HA OS ships.
 
-It runs nightly and on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release; ADR 0001 row 5 tracks promoting it once a trial period shows no non-flaky failures.
+The full matrix (both arches, both legs) runs weekly on Friday, on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. The other nights run amd64 against stable Core only. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release; ADR 0001 row 5 tracks promoting it once a trial period shows no non-flaky failures.
 
 ## Manual — live HA OS
 
@@ -35,7 +35,7 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
 - `backup: hot` behaviour requires triggering a Supervisor snapshot.
 - Provenance of the published images. `config.yaml` leaves `codenotary` unset (CAS is discontinued); the images carry Sigstore
   build-provenance attestations, which the Supervisor does not verify on install. Verify them yourself after a release:
-  `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs`.
+  `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs --source-ref refs/tags/v<version> --signer-workflow MatthewHobbs/Homeassistant-polygonal-zones-addon/.github/workflows/release.yml` (the source ref and workflow pin the attestation to the tag's own release run, not a dry run).
 - HA OS's actual kernel and AppArmor parser versions, which differ from the devcontainer's (see ADR 0001's 2026-09-26 amendment).
 - Real hardware (RPi, HA Yellow/Green) rather than a GitHub Actions runner.
 
@@ -73,9 +73,11 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
   - `Content-Security-Policy` present
   - `X-Frame-Options: SAMEORIGIN`
   - `X-Content-Type-Options: nosniff`
-- [ ] AppArmor check: `docker inspect addon_polygonal_zones | grep -i apparmor` → `apparmor=addon_polygonal_zones` (not `docker-default`).
-- [ ] Non-root check: `docker exec addon_polygonal_zones id` → `uid=1001(app)`.
-- [ ] `/data/options.json` perms: `docker exec addon_polygonal_zones ls -l /data/options.json` → `-rw-r----- app app` (0640, not world-readable).
+The container's name carries a repository-specific prefix; find it with `docker ps --filter name=polygonal_zones` and use it as `<container>` below.
+
+- [ ] AppArmor check: `docker inspect <container> | grep -i apparmor` → the add-on's own profile, named after its slug (ending `_polygonal_zones`), not `docker-default`.
+- [ ] Non-root check: `docker exec <container> id` → `uid=1001(app)`.
+- [ ] `/data/options.json` perms: `docker exec <container> ls -l /data/options.json` → `-rw-r----- app app` (0640, not world-readable).
 
 ### Save-token flow
 
@@ -95,7 +97,7 @@ Only relevant if you enable the LAN port (`Configuration → Network → set a h
 
 ### Upgrade path
 
-- [ ] Install an older version (e.g. `0.2.14`). Draw and save some zones.
+- [ ] Restore a partial backup of the add-on taken on an earlier release (**Settings → System → Backups**); a chosen version cannot be installed any other way (see `docs/RUNBOOK.md`). Draw and save some zones.
 - [ ] Upgrade to the branch under test. Confirm existing zones are preserved and the addon starts clean.
 - [ ] Rollback by restoring the add-on's pre-update partial backup (`ha apps update <slug> --backup`, then restore it; the slug ends in `_polygonal_zones`; `ha apps` lists it): confirm zones survive.
 

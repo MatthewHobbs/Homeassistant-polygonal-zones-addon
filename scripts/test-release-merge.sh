@@ -1,74 +1,105 @@
 #!/usr/bin/env bash
-# Regression check for ADR 0002 row 7: #61 fixed wait_for_main_version to
-# skip its poll under --dry-run (a dry run never merges, so main's version
-# never moves, and the old code always timed out and failed a preview that
-# would otherwise be clean). #61 was checked by hand only. This proves it
-# mechanically, and fails again if the guard is ever removed.
+# Checks for scripts/release-merge.sh: a release tags the PR's own merge
+# commit, never main's HEAD, in both the normal and the resume path, and a dry
+# run calls nothing on GitHub.
 #
-# release-merge.sh has no sourcing guard — its whole CLI body runs on load,
-# including exiting immediately with no args — so the functions under test
-# are extracted from the file text instead of sourcing it whole. That keeps
-# this check from touching release-merge.sh's control flow at all.
+# release-merge.sh runs its whole CLI on load, so the functions under test are
+# extracted from the file text and `gh` is stubbed as a function. The stub
+# gives main's HEAD and the merge commit different SHAs, so tagging the wrong
+# one fails here.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$REPO_ROOT/scripts/release-merge.sh"
-# Referenced only from inside wait_for_main_version's body, which is loaded
-# by eval below — invisible to shellcheck's static analysis of this file.
+# Read inside the eval'd function bodies, which shellcheck cannot see.
+# shellcheck disable=SC2034
+REPO="owner/repo"
+# shellcheck disable=SC2034
+EXIT_TAG=5
 # shellcheck disable=SC2034
 EXIT_PREFLIGHT=3
+# shellcheck disable=SC2034
+MAIN_VERSION="1.2.3"
+# shellcheck disable=SC2034
+MERGE_POLL_SECONDS=0
+MERGE_OID="1111111111111111111111111111111111111111"
+MAIN_HEAD="2222222222222222222222222222222222222222"
+CALLS="$(mktemp -d)"
+trap 'rm -rf "$CALLS"' EXIT
 fails=0
 
-# Same extraction for both: every line between the opening brace and the
-# matching top-level closing brace, verbatim.
 extract() { sed -n "/^$1() {/,/^}/p" "$TARGET"; }
+for fn in require_main_base merge_commit_of tag_and_watch resume_merged; do
+  body="$(extract "$fn")"
+  [ -n "$body" ] || { echo "not ok - $fn not found in $TARGET"; exit 1; }
+  eval "$body"
+done
 
-log() { echo "  $*"; }
-fail() { echo "STATUS:FAILED $1" >&2; return "${2:-1}"; }
-eval "$(extract wait_for_main_version)"
+say() { :; }
+log() { :; }
+fail() { echo "STATUS:FAILED $1" >&2; exit "${2:-1}"; }
+watch_for_tag() { echo "$1" >"$CALLS/watched"; }
+read_version_at_ref() { echo "$1" >"$CALLS/version-ref"; echo "${STUB_VERSION-1.2.3}"; }
 
+# shellcheck disable=SC2317,SC2329 # called from the eval'd bodies
+gh() {
+  echo "$*" >>"$CALLS/gh"
+  case "$*" in
+    *"pr view"*) [ -n "${STUB_NO_MERGE:-}" ] || echo "$MERGE_OID" ;;
+    *commits/main*) echo "$MAIN_HEAD" ;;
+    *"-X POST"*)
+      local a
+      for a in "$@"; do
+        case "$a" in sha=*) echo "${a#sha=}" >"$CALLS/tagged" ;; esac
+      done
+      ;;
+    *git/ref/tags/*) [ -n "${STUB_TAG_EXISTS:-}" ] ;;
+    *) echo "unexpected gh call: $*" >&2; return 1 ;;
+  esac
+}
+
+# Runs "$@" in a subshell from a clean call record, then compares its exit
+# status and what it tagged (or "none").
 check() {
-  local name="$1" want_exit="$2"
-  shift 2
-  local got_exit=0
-  "$@" || got_exit=$?
-  if [ "$got_exit" = "$want_exit" ]; then
+  local name="$1" want_exit="$2" want_tagged="$3" got_exit=0 got_tagged
+  shift 3
+  rm -f "$CALLS"/*
+  ("$@") 2>/dev/null || got_exit=$?
+  got_tagged="$(cat "$CALLS/tagged" 2>/dev/null || echo none)"
+  if [ "$got_exit" = "$want_exit" ] && [ "$got_tagged" = "$want_tagged" ]; then
     echo "ok - $name"
   else
-    echo "not ok - $name (exit $got_exit, wanted $want_exit)"
+    echo "not ok - $name (exit $got_exit, tagged $got_tagged; wanted exit $want_exit, tagged $want_tagged)"
     fails=$((fails + 1))
   fi
 }
 
-# read_version_at_ref calls `gh api` for real. Stubbed here so a call proves
-# the dry-run guard was bypassed, rather than silently succeeding or hanging
-# on a real network call in CI. Deliberately unused in the passing case
-# below — that it's never called is exactly what's being proven.
-# shellcheck disable=SC2317,SC2329 # "unreachable"/"never invoked": same
-# false positive, different codes across shellcheck versions.
-read_version_at_ref() {
-  echo "read_version_at_ref called with ref=$1 — the dry-run guard did not return early" >&2
-  return 1
-}
-
-# The regression this row exists for: under --dry-run, must return
-# immediately without ever calling read_version_at_ref, regardless of
-# whether "expected" could ever match (it can't — main's version never
-# moves in a dry run, which is exactly what broke before #61).
-# shellcheck disable=SC2034 # consulted from inside the eval'd function body
-DRY_RUN=1
-check "dry-run returns success without polling main" 0 \
-  wait_for_main_version "9.9.9-unreachable"
-
-# Sanity check on the harness itself, not just the guard: outside dry-run,
-# a version that matches on the first read must still succeed, so a stub
-# that always failed regardless of input couldn't make the check above
-# pass for the wrong reason.
-# shellcheck disable=SC2034 # consulted from inside the eval'd function body
+# shellcheck disable=SC2034 # read inside the eval'd bodies
 DRY_RUN=0
-read_version_at_ref() { echo "1.2.3"; }
-check "non-dry-run still succeeds on an immediate match" 0 \
-  wait_for_main_version "1.2.3"
+check "merge path tags the PR's merge commit" 0 "$MERGE_OID" tag_and_watch 1.2.3 42
+check "resume path tags the PR's merge commit" 0 "$MERGE_OID" resume_merged 42
+if [ "$(cat "$CALLS/version-ref")" = "$MERGE_OID" ]; then
+  echo "ok - resume path reads the version at the merge commit"
+else
+  echo "not ok - resume path read the version at $(cat "$CALLS/version-ref")"
+  fails=$((fails + 1))
+fi
+STUB_TAG_EXISTS=1 check "resume path with the tag present tags nothing" 0 none resume_merged 42
+STUB_NO_MERGE=1 check "an unknown merge commit stops before tagging" 5 none tag_and_watch 1.2.3 42
+STUB_VERSION=1.2.2 check "resume refuses a version that is not main's" 3 none resume_merged 42
+STUB_VERSION="" check "resume refuses an unreadable version" 3 none resume_merged 42
+check "a PR into main passes the base check" 0 none require_main_base main
+check "a PR into another branch is refused" 3 none require_main_base feature
+
+# shellcheck disable=SC2034
+DRY_RUN=1
+check "dry run tags nothing" 0 none tag_and_watch 1.2.3 42
+if [ -e "$CALLS/gh" ]; then
+  echo "not ok - dry run called gh: $(cat "$CALLS/gh")"
+  fails=$((fails + 1))
+else
+  echo "ok - dry run makes no gh call"
+fi
 
 if [ "$fails" -gt 0 ]; then
   echo "FAILED: $fails check(s)" >&2

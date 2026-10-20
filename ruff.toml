@@ -2,7 +2,9 @@
 # (MatthewHobbs/Homeassistant-polygonal-zones) so both halves of the project
 # are held to one standard.
 line-length = 100
-target-version = "py313"
+# The add-on runs on the base image's python3; the lockfile and `just venv`
+# both target 3.12.
+target-version = "py312"
 
 [lint]
 select = [
@@ -27,8 +29,3 @@ force-sort-within-sections = true
 # and would otherwise be sorted in with third-party packages — which reorders
 # every import block in the repo for no benefit.
 known-first-party = ["const", "helpers", "main"]
-
-[lint.per-file-ignores]
-# Tests import the app modules inside functions on purpose: conftest chdirs to
-# app/ first, so a module-level import would resolve before that happens.
-"polygonal_zones_editor/tests/*" = ["PLC0415"]

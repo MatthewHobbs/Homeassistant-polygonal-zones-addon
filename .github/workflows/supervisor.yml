@@ -1,8 +1,8 @@
 name: Supervisor pilot
 
 # ADR 0001: install, configure and use the add-on under a real stable-channel
-# Supervisor and Core, in the official add-on devcontainer, on both arches.
-# Nightly and on demand, and NOT a required check until ADR row 5 promotes it.
+# Supervisor and Core, in the official add-on devcontainer. NOT a required
+# check until ADR row 5 promotes it.
 # All of the logic is in scripts/supervisor-pilot.sh, which runs the same
 # way locally.
 
@@ -28,8 +28,11 @@ on:
         description: Install the add-on with apparmor false (diagnosis only)
         type: boolean
         default: false
+  # Nightly: amd64 against stable Core only. Friday: the full matrix. The pilot
+  # job's matrix tells them apart by the nightly cron string, so keep the two equal.
   schedule:
-    - cron: "37 3 * * *"
+    - cron: "37 3 * * 0-4,6"
+    - cron: "37 3 * * 5"
 
 permissions:
   contents: read
@@ -70,21 +73,16 @@ jobs:
   pilot:
     name: ${{ matrix.arch }} / Core ${{ matrix.core }}
     needs: floor
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, aarch64]
+        arch: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["amd64"]' || '["amd64", "aarch64"]') }}
         # "stable" is whatever stable.json names today; the other leg pins
         # Core to the declared floor under the same stable Supervisor (ADR
         # row 11), resolved by the floor job above.
-        core: ["stable", "${{ needs.floor.outputs.core }}"]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
+        core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["stable"]' || format('["stable", "{0}"]', needs.floor.outputs.core)) }}
     env:
       CORE_VERSION: ${{ matrix.core }}
       PILOT_KEEP: "1"
@@ -94,16 +92,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # On a failed phase, `all` writes diagnostics to $PILOT_WORKDIR/diagnostics.
       - name: Run the add-on under the stable Supervisor
         env:
           PILOT_WORKDIR: ${{ runner.temp }}/pilot
         run: scripts/supervisor-pilot.sh all
-
-      - name: Collect diagnostics
-        if: failure()
-        env:
-          PILOT_WORKDIR: ${{ runner.temp }}/pilot
-        run: scripts/supervisor-pilot.sh diagnostics "$PILOT_WORKDIR/diagnostics"
 
       - name: Upload diagnostics
         if: failure()

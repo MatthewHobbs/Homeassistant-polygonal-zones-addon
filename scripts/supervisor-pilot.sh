@@ -27,7 +27,8 @@
 set -euo pipefail
 
 # Renovate keeps these current (customManagers in .github/renovate.json5),
-# matching the quoted "name:tag@digest"; the tag must exist upstream.
+# matching the quoted "name:tag@digest"; the tag must exist upstream. Not the
+# Playwright image: bump it by hand with supervisor-probe-requirements.txt.
 DEVCONTAINER_IMAGE="ghcr.io/home-assistant/devcontainer:6-apps@sha256:4e2d6efd9ac472c27f5cc522672ea9bbfdf35a897266ff4b1ac1f21ee611a4a9"
 PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright/python:v1.63.0-noble@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0"
 REGISTRY_IMAGE="docker.io/library/registry:3@sha256:852b3e4d378c426dda6b318fe9d9bfe8e92a0eccb9926671ec3d3ea17a196696"
