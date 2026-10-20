@@ -247,6 +247,9 @@ fi
 
 # ───── bump path: merge, tag, watch ────────────────────────────────
 
+# Checked before the merge, so an unreadable version never leaves a merged PR
+# with a junk tag to clean up.
+[[ "$PR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "bad-pr-version: '$PR_VERSION'" $EXIT_PREFLIGHT
 TAG="v$PR_VERSION"
 say PLANNED_RELEASE "${MAIN_VERSION} -> ${PR_VERSION} as $TAG"
 

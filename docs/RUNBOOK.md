@@ -9,7 +9,7 @@ Operational procedures for the release pipeline. For routine releases, use `scri
 1. Merge the version-bump PR.
 2. Tag the merge commit: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. `.github/workflows/release.yml` runs:
-   - **version** — resolves the version from the tag, verifies it is `X.Y.Z`, matches the tag and `config.yaml`, and has a `CHANGELOG.md` entry.
+   - **version** — resolves the version from the tag, verifies it is `X.Y.Z`, matches the tag and `config.yaml`, and has a `CHANGELOG.md` entry; for a tag, it also refuses a commit that is not on `main` (`<ref> is not on main`: tag the merge commit instead).
    - **tests** — reusable call to `test.yml` (pytest + 100% line coverage gate).
    - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter` + shellcheck on `scripts/` and `rootfs/`).
    - **build** — reusable call to `build.yml` — multi-arch docker build + per-arch boot-smoke + Playwright smoke (`scripts/ui_smoke.py`: draw→save round-trip, a11y aria-labels, tile-picker assertions). It stops a tag publishing an image that has never booted. Its arch matrix is also the one **publish** uses.
@@ -90,9 +90,9 @@ Symptom: HA automations no longer fire on zone entry/exit, or a user hitting the
 | 0 | success | nothing |
 | 1 | unexpected failure (an unguarded command failed) | read the output, fix the cause, re-run; a merged PR resumes as for exit 5 |
 | 2 | usage error: missing PR number or unknown flag | re-invoke with a PR number |
-| 3 | pre-flight failed (PR state, checks, mergeability, version mismatch) | fix the cause and re-run |
+| 3 | pre-flight failed (PR state, checks, mergeability, version mismatch, `pr-base-*-not-main`, `bad-pr-version`, `bad-version-at-merge-commit`) | fix the cause and re-run. `resume-not-main-version` is final: a later bump superseded that version, so it is never released |
 | 4 | merge failed (unusual after pre-flight passed) | check the GitHub UI |
-| 5 | tag creation failed, or the merged PR's merge commit could not be read (`merge-commit-unknown`) | re-run: for a merged PR the script resumes by tagging that PR's merge commit with the version it carries, whatever has merged to `main` since |
+| 5 | tag creation failed, or the merged PR's merge commit could not be read (`merge-commit-unknown`) | re-run: for a merged PR the script resumes by tagging that PR's merge commit with the version it carries, as long as that is still `main`'s version (otherwise exit 3, `resume-not-main-version`) |
 | 6 | release workflow failed | the script only watches the run, so re-running it alone reports the same failure. Fix the run first: re-run its failed jobs (**Partial-matrix publish failure** above), or cut a new patch for a test or lint failure; then re-run the script to watch. If the reason is `release-run-not-found` (`release-run-not-found-for-vX.Y.Z`), a plain re-run picks the run up |
 
 Progress goes to stdout as `STATUS:<TOKEN>` lines, ending in `STATUS:SUCCESS …` on success. A failure prints `STATUS:FAILED <reason>` to stderr; usage errors and unexpected failures print no `STATUS:FAILED` line.
@@ -106,7 +106,7 @@ Note: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-
 1. Check the `Attest build provenance` step output in the `publish` job.
 2. Most common cause: the `publish` job's `permissions:` block is missing `id-token: write` / `attestations: write` (the workflow-level default is read-only, so they must be granted on the job), or `steps.build.outputs.digest` is empty (the `docker/build-push-action` step must have `id: build` and `push: true`). The image push itself has already succeeded by this point, so the image is published but unattested.
 3. **Safe regression** if you need to ship while attestation is broken: the image is usable without the attestation (the Supervisor does not gate installs on it). Re-run the failed `publish` job after fixing permissions, or attach the attestation out-of-band with `gh attestation` against the pushed digest.
-4. Verify a published image: `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs --source-ref refs/tags/v<version> --signer-workflow MatthewHobbs/Homeassistant-polygonal-zones-addon/.github/workflows/release.yml` (the source ref and workflow pin the attestation to the tag's own release run, not a dry run).
+4. Verify a published image: `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs --source-ref refs/tags/v<version> --signer-workflow MatthewHobbs/Homeassistant-polygonal-zones-addon/.github/workflows/release.yml` (the source ref and workflow tie the attestation to that tag's release run).
 
 ### Tag pushed before version was bumped in config.yaml
 
