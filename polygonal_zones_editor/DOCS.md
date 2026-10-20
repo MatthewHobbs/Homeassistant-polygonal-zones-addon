@@ -63,7 +63,7 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `theme`           | list     | `auto`    | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override.                                          |
 | `allow_all_ips`   | bool     | `false`   | When `true`, accept HTTP requests from any IP, not just the Home Assistant ingress sidecar. See **LAN access** below.     |
 | `save_token`      | password | *(empty)* | When set, `GET /zones.json`, `GET /trackers.json` (reads) and `POST /save_zones` (writes) all require `X-Save-Token: <value>` for any non-ingress request, and authorize that request regardless of `allow_all_ips`. See **Securing reads and writes**. |
-| `trusted_proxies` | string   | *(empty)* | Comma-separated list of proxy IPs whose `X-Forwarded-For` header should be honoured. Leave empty unless you front the add-on with your own reverse proxy. |
+| `trusted_proxies` | string   | *(empty)* | Comma-separated list of the IP address of each reverse proxy whose `X-Forwarded-For` header should be honoured. List each proxy's own IP rather than a range: every address listed is believed about which client it forwards for, and that is what the add-on's log and failed-attempt limit record. Leave empty unless you front the add-on with your own reverse proxy. |
 | `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
 
 ### Network ports
@@ -120,6 +120,8 @@ curl -X POST -H 'Content-Type: application/json' \
   --data-binary @zones-backup.json \
   http://<ha-host>:8000/save_zones
 ```
+
+A restore must be sent as `Content-Type: application/json`, as above; any other content type is refused with `415`.
 
 Recommended: leave `save_token` set, only enable `allow_all_ips` while you're actively backing up, then disable it again.
 

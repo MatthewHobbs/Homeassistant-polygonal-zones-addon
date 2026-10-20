@@ -210,6 +210,15 @@ function pz_render_readout() {
     panel.appendChild(note);
 }
 
+/* Leaflet renders a string tooltip as HTML; a friendly name comes from Home
+ * Assistant, so hand it over as a text node, as name_popup_element does for
+ * zone popups. */
+function pz_tooltip_element(name) {
+    const el = document.createElement('span');
+    el.textContent = typeof name === 'string' ? name : '';
+    return el;
+}
+
 function pz_render_markers() {
     if (!pz_tracker_layer) return;
     pz_tracker_layer.clearLayers();
@@ -223,7 +232,7 @@ function pz_render_markers() {
             }).addTo(pz_tracker_layer);
         }
         L.circleMarker(latlng, { radius: 6, className: 'tracker-marker' })
-            .bindTooltip(tracker.name, { permanent: false })
+            .bindTooltip(pz_tooltip_element(tracker.name), { permanent: false })
             .addTo(pz_tracker_layer);
     });
 }
@@ -316,5 +325,7 @@ function setup_tracker_overlay(mapInstance) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { pz_layer_polygons, pz_layer_area_m2, pz_measure_zone, pz_format_metres };
+    module.exports = {
+        pz_layer_polygons, pz_layer_area_m2, pz_measure_zone, pz_format_metres, setup_tracker_overlay,
+    };
 }

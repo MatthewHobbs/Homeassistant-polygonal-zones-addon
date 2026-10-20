@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.5.5 — 2026-10-20
+
+Update promptly if you set `trusted_proxies` or `allow_all_ips`.
+
+- **Security: Home Assistant ingress is now recognised only by the address
+  that actually connects to the add-on**, never by a forwarded header, even
+  from a host listed in `trusted_proxies`. `trusted_proxies` still decides
+  which client a proxied request is logged and rate-limited as. List each of
+  your reverse proxies by its own IP rather than by a range: every address
+  you list is believed about which client it forwards for.
+- **Security: `POST /save_zones` now refuses requests a browser marks as
+  not coming from the editor's own page, and bodies that are not
+  `application/json`.**
+  A cross-site request gets the same `403` as any other refusal; a request
+  with any other content type gets `415`. The editor's own Save button and
+  the documented `curl` restore already send `application/json`, so they are
+  unaffected. If you have a script that posts zones with a different
+  content type (or none), add `-H 'Content-Type: application/json'`.
+- **Security: the failed-attempt limit can no longer be turned against the
+  Home Assistant UI**, and its record of past failures no longer grows
+  without bound. A `trusted_proxies` range written with host bits set (such
+  as `192.168.1.5/24`) is now applied as its network, with a warning in the
+  log, instead of silently trusting nothing. `GET /zones.json` and
+  `GET /trackers.json` refuse requests a browser marks as not coming from
+  the editor's own page, as saves do, without using up your failed-attempt
+  budget.
+- **Security: a tracker's name is shown on the map as plain text.** Its
+  hover label is now built the same way as zone popups, so a friendly name
+  containing markup is displayed as written rather than interpreted.
+- **Changed: the startup `Loaded options:` line lists only known, non-secret
+  settings.** `save_token` still shows as `***` (or `not set`), and
+  `overlay_entities` and `trusted_proxies` now show how many entries are
+  configured rather than the entries themselves. Any other key in the
+  options file is no longer logged.
+- **Changed: the startup warning for `allow_all_ips` without a `save_token`
+  now says what is readable as well as what is writable** — `/zones.json`,
+  and `/trackers.json` when `overlay_entities` is set, are open to any
+  client on your network, not only `/save_zones`. Set `save_token` whenever
+  `allow_all_ips` is on.
+
 ## 0.5.4 — 2026-09-27
 
 - **Fixed: zones with holes were measured backwards (ADR 0002 row 12).** A

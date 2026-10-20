@@ -38,7 +38,11 @@ def tmp_options_file(tmp_path, monkeypatch):
 
 
 def make_request(host: str | None = "testclient") -> SimpleNamespace:
-    return SimpleNamespace(client=SimpleNamespace(host=host))
+    from const import TRANSPORT_PEER_SCOPE_KEY
+
+    return SimpleNamespace(
+        client=SimpleNamespace(host=host), scope={TRANSPORT_PEER_SCOPE_KEY: host}
+    )
 
 
 @pytest.fixture
