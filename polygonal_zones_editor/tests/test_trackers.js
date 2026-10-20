@@ -106,12 +106,9 @@ test('MultiPolygon: a hole in one part never subtracts from, or leaks into, anot
 });
 
 test('MultiPolygon: a point inside one part stays inside even when another part is nearer', () => {
-    // Regression test: comparing edgeDistanceM regardless of `inside` let a
-    // closer-but-outside second part overturn an already-inside result from
-    // the first. The point below sits deep
-    // inside part 1 (OUTER, ~500m from its own edges) but just ~11m outside
-    // part 2's edge — under the bug, part 2's smaller edgeDistanceM won the
-    // comparison and overturned the correct "inside" result from part 1.
+    // The point sits deep inside part 1 (OUTER, ~500m from its own edges) but
+    // just ~11m outside part 2's edge. Comparing edgeDistanceM regardless of
+    // `inside` would let part 2's smaller distance overturn part 1's "inside".
     const part2 = [
         [0.0045, 0.0045],
         [0.02, 0.0045],
@@ -278,4 +275,36 @@ test('tracker tooltip carries the name as text, not markup', async () => {
     assert.ok(created.includes(content), 'tooltip must be a created DOM node');
     assert.equal(content.textContent, name);
     assert.equal(content.markupAssigned, false);
+});
+
+test('Geoman ignores the tracker dots, so delete mode and snapping skip them', async () => {
+    const { setup_tracker_overlay } = require(
+        path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js')
+    );
+    const options = [];
+    const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    const layer = (_latlng, opts) => {
+        if (opts) options.push(opts);
+        return { addTo() { return this; }, clearLayers() {}, bindTooltip() { return this; } };
+    };
+    globalThis.document = { createElement: () => ({}), querySelector: () => null };
+    globalThis.L = { layerGroup: layer, circle: layer, circleMarker: layer };
+    globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            configured: true,
+            trackers: [{
+                entity_id: 'device_tracker.car', name: 'Car', state: 'home',
+                latitude: 1, longitude: 2, gps_accuracy: 15,
+            }],
+            unavailable: [],
+        }),
+    });
+    try {
+        await setup_tracker_overlay({ on() {} });
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+    assert.equal(options.length, 2, 'an accuracy circle and a dot');
+    assert.ok(options.every((o) => o.pmIgnore === true));
 });

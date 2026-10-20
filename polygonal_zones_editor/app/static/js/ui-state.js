@@ -8,18 +8,21 @@
     const ROOT = document.querySelector('.body');
     let boundMap = null;
 
+    // Applied now, before map.js builds the map: Leaflet measures its
+    // container once, and a sidebar collapsed after that leaves a blank strip.
+    const stored = window.PZStorage ? window.PZStorage.get('pz:sidebar') : null;
+    if (ROOT && (stored === 'open' || stored === 'collapsed')) {
+        ROOT.setAttribute('data-sidebar', stored);
+    }
+
     function getSidebarState() {
         return ROOT ? ROOT.getAttribute('data-sidebar') : null;
     }
 
-    function setSidebarState(state, opts) {
+    function setSidebarState(state) {
         if (!ROOT) return;
-        opts = opts || {};
-        const persist = opts.persist !== false;
         ROOT.setAttribute('data-sidebar', state);
-        if (persist && window.PZStorage) {
-            window.PZStorage.set('pz:sidebar', state);
-        }
+        if (window.PZStorage) window.PZStorage.set('pz:sidebar', state);
         if (!boundMap) return;
 
         // After the CSS grid-column transition settles, ask Leaflet to
@@ -50,13 +53,6 @@
 
     function initSidebarState(map) {
         boundMap = map;
-        if (!ROOT) return;
-        // Honour a persisted value if present; otherwise the HTML default
-        // ("open") stays.
-        const stored = window.PZStorage ? window.PZStorage.get('pz:sidebar') : null;
-        if (stored === 'open' || stored === 'collapsed') {
-            ROOT.setAttribute('data-sidebar', stored);
-        }
     }
 
     window.PZUiState = {getSidebarState, setSidebarState, initSidebarState};

@@ -5,13 +5,10 @@
  * "is this inside?" and "how far from the edge?" — they never rank zones or
  * claim which one the companion integration would report.
  *
- * That restraint is deliberate. An earlier prototype did rank, and disagreed
- * with the integration on live data: it matched a zone at 3.8 m against a 5 m
- * accuracy ring where the integration did not, because the integration
- * tie-breaks on distance-to-exterior and the prototype sorted by area. Two
- * implementations of the same rule drift, and the editor being confidently
- * wrong about a verdict is worse than it offering no verdict at all. A ruler
- * cannot contradict a verdict, because it makes none.
+ * That restraint is deliberate. The integration tie-breaks on
+ * distance-to-exterior; a second copy of that rule here would drift from it,
+ * and the editor being confidently wrong about a verdict is worse than it
+ * offering none. A ruler cannot contradict a verdict, because it makes none.
  *
  * All functions take rings as GeoJSON [lon, lat] pairs and return metres.
  * The projection is a local equirectangular approximation, which at property

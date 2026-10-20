@@ -16,22 +16,31 @@ let zones_load_failed = false;
 // One save at a time: a second click sends the same If-Match and would be
 // refused as a conflict with its own first save.
 let save_in_flight = false;
-// A save that never answers must not block every later click.
-const SAVE_TIMEOUT_MS = 30000;
+// A request that never answers must not block every later click. Timed with
+// AbortController + setTimeout rather than AbortSignal.timeout, which
+// Safari/iOS before 16 lack.
+const REQUEST_TIMEOUT_MS = 30000;
 let save_status_timer = null;
 const NOT_LOADED_TEXT = {
     pending: 'The saved zones are still loading. Try again in a moment.',
     failed: "The saved zones couldn't be loaded, so saving now could overwrite them. Reload the page and try again.",
 };
 
+/* Colour the Save button (cls: 'success', 'error' or null) and say why. */
+function show_save_state(cls, text) {
+    const btn = document.querySelector('.save-btn');
+    const status = document.getElementById('save-status');
+    if (btn) {
+        btn.classList.remove('success', 'error');
+        if (cls) btn.classList.add(cls);
+    }
+    if (status) status.textContent = text;
+}
+
 /* Once saving is possible, drop a not-loaded refusal still on screen. */
 function clear_not_loaded_refusal() {
-    const save_btn = document.querySelector('.save-btn');
-    const save_status = document.getElementById('save-status');
-    if (save_status && Object.values(NOT_LOADED_TEXT).includes(save_status.textContent)) {
-        save_status.textContent = '';
-        if (save_btn) save_btn.classList.remove('error');
-    }
+    const status = document.getElementById('save-status');
+    if (status && Object.values(NOT_LOADED_TEXT).includes(status.textContent)) show_save_state(null, '');
 }
 // isDirty flips to true on any edit the user hasn't flushed to the server
 // (draw, delete, rename, bulk-load). Cleared on a successful save. Drives
@@ -43,9 +52,8 @@ let edit_seq = 0;
 function mark_dirty() { isDirty = true; edit_seq++; update_dirty_indicator(); }
 function mark_clean() { isDirty = false; update_dirty_indicator(); }
 function update_dirty_indicator() {
-    // Visible (non-screen-reader) cue that there are unsaved changes — the
-    // beforeunload prompt only fires on navigation, which the ingress tab-switch
-    // doesn't trigger, so users had no in-page signal.
+    // The beforeunload prompt only fires on navigation, which the ingress
+    // tab-switch doesn't trigger, so the page needs its own cue.
     let dot = document.querySelector('.dirty-dot');
     if (dot) dot.hidden = !isDirty;
 }
@@ -61,10 +69,9 @@ window.addEventListener('beforeunload', (e) => {
     e.returnValue = '';
 });
 
-// Wire the Save button via addEventListener rather than an inline onclick
-// attribute so the CSP's script-src can drop 'unsafe-inline' (#128). The
-// button lives in index.html; this file is loaded at the end of <body>
-// so the DOM is ready at parse time.
+// addEventListener rather than an inline onclick, so the CSP's script-src
+// needs no 'unsafe-inline'. This file loads at the end of <body>, so the
+// button already exists.
 const saveButton = document.querySelector('.save-btn');
 if (saveButton) saveButton.addEventListener('click', save_zones);
 
@@ -85,16 +92,6 @@ fetch('./config.json')
         setup_editing(map, editableLayers);
         window.PZUiState.initSidebarState(map);
     });
-
-// User-facing labels for the basemap picker. Separate from the registry's
-// `label` field (which carries provider names like "OpenStreetMap") so the
-// picker can show friendlier copy without losing the provider identity in
-// the attribution control Leaflet renders on the map itself.
-const BASEMAP_PICKER_LABELS = {
-    'osm': 'Street map',
-    'carto-dark': 'Dark',
-    'esri-imagery': 'Satellite',
-};
 
 // Consecutive tileerror events across the active basemap. Threshold of 5
 // lets a single flaky tile or momentary DNS blip pass without nagging the
@@ -166,7 +163,7 @@ function setup_basemap_picker(layers, onChange) {
         if (!layers[b.id]) return;
         const opt = document.createElement('option');
         opt.value = b.id;
-        opt.textContent = BASEMAP_PICKER_LABELS[b.id] || b.label;
+        opt.textContent = b.label;
         select.appendChild(opt);
     });
 
@@ -180,10 +177,8 @@ function setup_basemap_picker(layers, onChange) {
 
 
 function generate_map(zones_url) {
-    // Build one Leaflet layer instance per registered basemap. The picker
-    // (#31) swaps the active layer by add/remove rather than constructing
-    // fresh layer objects each time — cheaper, and the tile-error watch
-    // below gets attached exactly once per layer.
+    // One layer per basemap, built once, so the picker swaps layers rather
+    // than rebuilding them and each gets exactly one tile-error watch.
     const layers = {};
     window.PZBasemaps.listBasemaps().forEach(b => {
         const layer = window.PZBasemaps.createLayer(b.id);
@@ -208,10 +203,7 @@ function generate_map(zones_url) {
         activeId = window.PZBasemaps.getDefaultBasemap(window.PZ_THEME).id;
     }
 
-    // Viewport restoration (#130). If the user has panned / zoomed before,
-    // we remembered where — no more dumping Groningen (the original
-    // upstream author's home) on users outside the Netherlands every first
-    // load. Falls back to the Groningen default if no viewport is stored.
+    // Open where the user last left the map, not at the default.
     const {center: initialCenter, zoom: initialZoom, restored: restoredViewport} =
         restore_viewport();
 
@@ -221,8 +213,7 @@ function generate_map(zones_url) {
         zoom: initialZoom,
     });
 
-    // Persist viewport changes on moveend/zoomend, debounced so a single
-    // user pan doesn't hammer localStorage.
+    // Debounced so a pan doesn't hammer localStorage. A zoom fires moveend too.
     let viewportSaveTimer = null;
     const schedule_viewport_save = () => {
         if (viewportSaveTimer) clearTimeout(viewportSaveTimer);
@@ -235,7 +226,6 @@ function generate_map(zones_url) {
         }, 500);
     };
     map.on('moveend', schedule_viewport_save);
-    map.on('zoomend', schedule_viewport_save);
 
     // swap_to drives every layer change the app makes — picker events,
     // theme auto-swap, and the initial picker-populate — so it's the
@@ -244,9 +234,7 @@ function generate_map(zones_url) {
     function swap_to(newId) {
         if (!layers[newId]) return;
         if (newId === activeId) return;
-        Object.values(layers).forEach(l => {
-            if (l && map.hasLayer(l)) map.removeLayer(l);
-        });
+        map.removeLayer(layers[activeId]);
         layers[newId].addTo(map);
         activeId = newId;
         reset_tile_error_banner();
@@ -281,30 +269,46 @@ function generate_map(zones_url) {
     map.addLayer(editableLayers);
 
     // Loading affordance so an in-flight fetch is distinguishable from a
-    // genuinely empty zone list. Cleared by render_zone_list() on success or
-    // the error handler below.
+    // genuinely empty zone list. Cleared by render_zone_list() or by
+    // load_zones on failure.
     let _loading_list = document.querySelector('.zone-list');
     if (_loading_list) {
         _loading_list.setAttribute('aria-busy', 'true');
         _loading_list.textContent = 'Loading zones…';
     }
 
-    fetch(zones_url)
+    load_zones(zones_url, restoredViewport);
+
+    // Opt-in tracker overlay. Resolves to nothing when overlay_entities is
+    // unset, which is the default.
+    if (typeof setup_tracker_overlay === 'function') setup_tracker_overlay(map);
+
+    return {map, editableLayers};
+}
+
+/* The first load of the saved zones. Save stays refused until it succeeds. */
+function load_zones(zones_url, restoredViewport) {
+    // A stalled load would keep Save refused for good.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    return fetch(zones_url, {signal: controller.signal})
         .then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            zones_etag = response.headers.get('ETag');
-            return response.text();
-        })
-        .then(json => {
-            let data;
-            try { data = JSON.parse(json); }
-            catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
-
-            load_saved_zones(data, restoredViewport);
+            return response.text().then(json => {
+                // A bulk load that landed first replaced the saved zones on
+                // purpose; this answer is stale.
+                if (zones_loaded) return;
+                let data;
+                try { data = JSON.parse(json); }
+                catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
+                zones_etag = response.headers.get('ETag');
+                load_saved_zones(data, restoredViewport);
+            });
         })
         .catch(err => {
-            zones_load_failed = true;
             console.error('Failed to load zones:', err);
+            if (zones_loaded) return;
+            zones_load_failed = true;
             let list = document.querySelector('.zone-list');
             if (list) {
                 list.removeAttribute('aria-busy');
@@ -312,13 +316,8 @@ function generate_map(zones_url) {
                     "Couldn't load zones. Check the add-on log (Settings → Add-ons → Polygonal Zones → Log).";
             }
             create_load_btn();
-        });
-
-    // Opt-in tracker overlay. Resolves to nothing when overlay_entities is
-    // unset, which is the default.
-    if (typeof setup_tracker_overlay === 'function') setup_tracker_overlay(map);
-
-    return {map, editableLayers};
+        })
+        .finally(() => clearTimeout(timer));
 }
 
 function setup_editing(map, editableLayers) {
@@ -376,10 +375,8 @@ function setup_editing(map, editableLayers) {
         'leaflet-pm-icon-delete': 'Delete a zone',
     };
     Promise.resolve().then(() => {
-        // Geoman renders one .leaflet-pm-toolbar per control block, so there
-        // are several — scoping to the first labelled the draw button and left
-        // delete bare, which is precisely the failure this patch exists to
-        // prevent. Query across all of them.
+        // Geoman renders one .leaflet-pm-toolbar per control block; the
+        // delete button is not in the first.
         document.querySelectorAll('.leaflet-pm-toolbar a[title]:not([aria-label])')
             .forEach(a => a.setAttribute('aria-label', a.getAttribute('title')));
 
@@ -399,9 +396,20 @@ function setup_editing(map, editableLayers) {
             });
     });
 
+    // Geoman fires pm:edit on the layer and its parent groups, never on the
+    // map. No list rebuild: that would close the row being edited.
+    editableLayers.on('pm:edit', e => {
+        mark_dirty();
+        const entry = Array.from(document.querySelectorAll('zone-entry'))
+            .find(z => z.getAttribute('zone-id') === e.layer.feature.properties.id);
+        if (entry) show_zone_area(entry, e.layer);
+        map.fire('pz:zoneschanged');
+    });
+
     // Geoman removes one layer per click, so there is no batch of deletions
     // to fold into one rebuild.
     map.on('pm:remove', function (e) {
+        if (!editableLayers.hasLayer(e.layer)) return;
         editableLayers.removeLayer(e.layer);
         render_zone_list();
         mark_dirty();
@@ -414,27 +422,17 @@ function setup_editing(map, editableLayers) {
     map.on('pm:create', function (e) {
         let layer = e.layer;
 
-        // Generate a unique "Zone N" name. Layer-count + 1 collided after
-        // deletions (delete zone 2 of 3, draw a new one → "Zone 3" duplicated
-        // the renamed one). Use one past the highest existing "Zone N" instead.
+        // One past the highest "Zone N", not the layer count, which repeats a
+        // name after a deletion.
         let maxN = 0;
         editableLayers.eachLayer(l => {
             let m = /^Zone (\d+)$/.exec(l.feature?.properties?.name ?? '');
             if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
         });
         let name = `Zone ${maxN + 1}`;
-        // `type: 'Feature'` is required. Leaflet's toGeoJSON() uses this
-        // object as a template — when `layer.feature` is already set it
-        // extends it with a `geometry` field but does NOT auto-add the
-        // `type`. Without this, saving a drawn polygon POSTed features
-        // missing `"type":"Feature"`, which the server-side validator
-        // rejects with 422. Existed in the code since the handler was
-        // written but not caught because no test exercised the
-        // draw → save round-trip end-to-end.
-        //
-        // `properties.id` is the stable binding handle automations use
-        // across renames. Server backfills one if the client omits it,
-        // so curl restores of pre-versioned files still work.
+        // toGeoJSON() extends layer.feature with a geometry but never adds
+        // `type`, and the server refuses a feature without it. The id keeps
+        // automations bound to the zone across renames.
         layer.feature = {
             type: 'Feature',
             properties: {
@@ -447,6 +445,7 @@ function setup_editing(map, editableLayers) {
         // before handing it to editableLayers, or it ends up owned by both
         // and a later group removal leaves an orphan rendering on the map.
         map.removeLayer(layer);
+        layer.bindPopup(l => text_element(l.feature.properties.name));
         editableLayers.addLayer(layer);
         render_zone_list();
         mark_dirty();
@@ -457,7 +456,7 @@ function setup_editing(map, editableLayers) {
 
 // 32 lowercase hex characters: a UUID with the dashes removed. randomUUID
 // exists only in secure contexts, and HA is often opened over plain HTTP on
-// the LAN, where calling it threw and the drawn zone was silently lost (#46).
+// the LAN, where calling it throws.
 function new_zone_id() {
     if (typeof crypto.randomUUID === 'function') {
         return crypto.randomUUID().replace(/-/g, '');
@@ -466,21 +465,26 @@ function new_zone_id() {
         b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function edit_zone_event(e) {
-    // disable editing for all zones.
-    editableLayers.eachLayer(layer => { if (layer.pm) layer.pm.disable(); });
-    document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
+/* Finish the open row as its Done button would, so a name typed there is kept
+ * by whatever comes next: a save, another row, or a list rebuild. */
+function close_open_edit() {
+    document.querySelector('zone-entry[editing="true"]')?.edit_event_handler();
+}
 
+function edit_zone_event(e) {
     // Every zone has an id (drawn ones at creation, loaded ones in add_zones),
     // so the id alone finds it whatever its name.
     let layer = editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id);
+    // The zone was deleted while its row was open.
+    if (!layer) return;
 
-    // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
+        close_open_edit();
         map.fitBounds(layer.getBounds());
+        // A self-crossing ring is a zone whose inside is ambiguous.
         layer.pm.enable({ allowSelfIntersection: false });
     } else {
-        // once we stop we will disable editing and save the changes
+        layer.pm.disable();
         // An empty box leaves the zone unnamed: two zones named "" would be
         // refused on save as duplicates.
         if (e.detail.name) layer.feature.properties.name = e.detail.name;
@@ -490,49 +494,41 @@ function edit_zone_event(e) {
     }
 }
 
-// Return the number of polygon shapes a layer represents. 1 for a plain
-// Polygon; N for a MultiPolygon (read via public toGeoJSON so we don't
-// depend on Leaflet's internal _latlngs shape).
-function shape_count(layer) {
-    const geometry = layer.toGeoJSON().geometry;
-    if (geometry && geometry.type === 'MultiPolygon') {
-        return geometry.coordinates.length;
-    }
-    return 1;
+// Area is the cheapest sanity check there is on a hand-drawn zone: a
+// room-sized number on something meant to be a property boundary is obvious at
+// a glance and invisible on the map itself. trackers.js measures it.
+function show_zone_area(entry, layer) {
+    if (typeof pz_layer_area_m2 !== 'function') return;
+    const area = pz_layer_area_m2(layer);
+    if (area > 0) entry.setAttribute('area-m2', String(Math.round(area)));
+    else entry.removeAttribute('area-m2');
 }
 
 function render_zone_list() {
+    close_open_edit();
     let zone_list = document.querySelector('.zone-list');
     zone_list.innerHTML = '';
     // Whatever called us has finished loading (this is also the success path of
     // the initial fetch), so clear the loading affordance.
     zone_list.removeAttribute('aria-busy');
     editableLayers.eachLayer(layer => {
-        // render a zone-entry element and set attribute name
         let zone_entry = document.createElement('zone-entry');
         // A zone may have no name; an absent attribute value would read "undefined".
         zone_entry.setAttribute('name', layer.feature.properties.name ?? '');
-        // Stable id (if present) so edit events can target the exact layer even
-        // when display names collide.
-        if (layer.feature.properties.id) {
-            zone_entry.setAttribute('zone-id', layer.feature.properties.id);
+        // Edit events find the layer by id, since names may repeat or be absent.
+        zone_entry.setAttribute('zone-id', layer.feature.properties.id);
+        if (typeof pz_layer_polygons === 'function') {
+            const count = pz_layer_polygons(layer).length;
+            if (count > 1) zone_entry.setAttribute('shape-count', String(count));
         }
-        const count = shape_count(layer);
-        if (count > 1) zone_entry.setAttribute('shape-count', String(count));
-        // Area is the cheapest sanity check there is on a hand-drawn zone: a
-        // room-sized number on something meant to be a property boundary is
-        // obvious at a glance and invisible on the map itself.
-        if (typeof pz_layer_area_m2 === 'function') {
-            const area = pz_layer_area_m2(layer);
-            if (area > 0) zone_entry.setAttribute('area-m2', String(Math.round(area)));
-        }
+        show_zone_area(zone_entry, layer);
         zone_entry.addEventListener('edit', edit_zone_event);
 
         zone_list.appendChild(zone_entry);
     });
 
     // Let the tracker overlay (if any) re-measure against the new shapes.
-    if (map && typeof map.fire === 'function') map.fire('pz:zoneschanged');
+    map.fire('pz:zoneschanged');
 
     // Distinct empty state — a blank list otherwise reads identically to a
     // still-loading one.
@@ -548,34 +544,20 @@ function save_zones() {
     // Ignored while a save is on its way, before anything below changes what
     // the user sees.
     if (save_in_flight) return Promise.resolve();
-    // Clear any prior error state on a fresh save attempt. #123: previous
-    // errors persist on screen until the next user action, so this is the
-    // "next action" that dismisses them. Success auto-clears at the
-    // setTimeout below; 412 conflicts stay until explicitly dismissed here.
-    const save_btn = document.querySelector('.save-btn');
-    const save_status = document.getElementById('save-status');
-    if (save_btn) save_btn.classList.remove('error');
-    if (save_status && save_status.textContent && save_status.textContent !== 'Zones saved.') {
-        save_status.textContent = '';
-    }
-
     if (!zones_loaded) {
-        if (save_btn) save_btn.classList.add('error');
-        if (save_status) save_status.textContent = zones_load_failed ? NOT_LOADED_TEXT.failed : NOT_LOADED_TEXT.pending;
+        show_save_state('error', zones_load_failed ? NOT_LOADED_TEXT.failed : NOT_LOADED_TEXT.pending);
         return Promise.resolve();
     }
 
+    close_open_edit();
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
     // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
     // a single-ring Polygon, losing every ring beyond the first.
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
-        // toGeoJSON preserves the layer's original feature.properties when
-        // present, but we re-write `name` to pick up any rename that hasn't
-        // yet been flushed back onto the inner feature object. The id is
-        // preserved so renames stay bindable by the HA integration; the
-        // server backfills one for zones loaded from pre-versioned files.
+        // Only name and id are sent; the id keeps a renamed zone bound to
+        // the same automations.
         const src = layer.feature.properties || {};
         feature.properties = {name: src.name};
         if (src.id) feature.properties.id = src.id;
@@ -589,13 +571,12 @@ function save_zones() {
     save_in_flight = true;
     const sent_seq = edit_seq;
     clearTimeout(save_status_timer);
-    if (save_btn) save_btn.classList.remove('success');
-    if (save_status) save_status.textContent = 'Saving…';
-    // AbortController + setTimeout rather than AbortSignal.timeout, which
-    // Safari/iOS before 16 lack.
+    // Errors stay on screen until this, the next click: one that vanished
+    // after a moment left users unsure whether their zones saved.
+    show_save_state(null, 'Saving…');
     const controller = new AbortController();
     let timed_out = false;
-    const timer = setTimeout(() => { timed_out = true; controller.abort(); }, SAVE_TIMEOUT_MS);
+    const timer = setTimeout(() => { timed_out = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
     // Started inside the chain, so even a synchronous throw reaches .finally
     // and Save is never left blocked.
     return Promise.resolve().then(() => fetch('./save_zones', {
@@ -604,53 +585,29 @@ function save_zones() {
         body: JSON.stringify(geojson),
         signal: controller.signal,
     })).then(response => {
-        let elem = document.querySelector('.save-btn');
-        let status = document.getElementById('save-status');
-        if (response.status === 412) {
-            elem.classList.remove('success')
-            elem.classList.add('error')
-            // Don't auto-clear — conflict needs explicit user attention.
-            // Stay dirty: the user still hasn't flushed their edits.
-            if (status) status.textContent =
-                'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.';
-            return;
-        }
-        if (response.ok) {
-            elem.classList.remove('error')
-            elem.classList.add('success')
-            if (status) status.textContent = 'Zones saved.';
+        // Stays dirty: the edits are still unsaved.
+        if (response.status === 412) return show_save_state('error',
+            'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.');
+        if (!response.ok) return show_save_state('error', `Save failed (${response.status}).`);
+        return response.json().catch(() => null).then(body => {
+            show_save_state('success', 'Zones saved.');
             // Only a save that landed moves the editor to the new version: a
             // 412 carries the other session's ETag, and adopting it would let
-            // the next click overwrite their edits.
-            const new_etag = response.headers.get('ETag');
+            // the next click overwrite their edits. The body carries it too,
+            // for a proxy that strips the header.
+            // The body's value is checked: it ends up in a request header.
+            const body_etag = /^"[0-9a-f]+"$/.test(body?.etag) ? body.etag : null;
+            const new_etag = response.headers.get('ETag') || body_etag;
             if (new_etag) zones_etag = new_etag;
             // An edit made while the request was in flight is still unsaved.
             if (edit_seq === sent_seq) mark_clean();
-            // Success auto-clears at 2s. Errors below persist until the next
-            // save click (top of save_zones()): 2s is too short for a user
-            // not looking at the button, especially on mobile.
-            save_status_timer = setTimeout(() => {
-                elem.classList.remove('success');
-                if (status && status.textContent === 'Zones saved.') status.textContent = '';
-            }, 2000);
-        } else {
-            elem.classList.remove('success')
-            elem.classList.add('error')
-            if (status) status.textContent = `Save failed (${response.status}).`;
-            // No setTimeout: stay visible until the next save attempt.
-        }
+            save_status_timer = setTimeout(() => show_save_state(null, ''), 2000);
+        });
     }).catch(err => {
-        let elem = document.querySelector('.save-btn');
-        let status = document.getElementById('save-status');
-        elem.classList.remove('success')
-        elem.classList.add('error')
-        if (status) status.textContent = timed_out
+        show_save_state('error', timed_out
             // The server may still have written: say so rather than "not saved".
             ? 'Save timed out. It may not have saved; reload to check before saving again.'
-            : `Save failed: ${err.message}`;
-        // No setTimeout: an intermittent ingress failure flashing red for
-        // 2s and disappearing left users unsure whether their zones saved.
-        // The error stays until the next save click (#123).
+            : `Save failed: ${err.message}`);
     }).finally(() => {
         clearTimeout(timer);
         save_in_flight = false;
@@ -680,7 +637,7 @@ function load_saved_zones(data, restoredViewport) {
         show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
     }
     if (editableLayers.getLayers().length > 0) {
-        // A remembered view (#130) wins over centring on the zones.
+        // A remembered view wins over centring on the zones.
         if (!restoredViewport) map.setView(editableLayers.getBounds().getCenter(), 13);
     } else {
         create_load_btn();
@@ -701,10 +658,8 @@ function add_zones(data, replace) {
         onEachFeature: (feature, layer) => {
             // GeoJSON allows null properties; the editor reads and writes them.
             if (!feature.properties) feature.properties = {};
-            // Every zone gets an id, so its list entry finds it even when names
-            // are missing or repeated. The server keeps an id it is given.
-            if (!feature.properties.id) feature.properties.id = new_zone_id();
-            layer.bindPopup(name_popup_element(feature));
+            // A function, so the popup reads the name at open, after any rename.
+            layer.bindPopup(l => text_element(l.feature.properties.name));
             layers.push(layer);
         },
     });
@@ -713,18 +668,26 @@ function add_zones(data, replace) {
     const skipped = layers.length - zones.length;
     if (replace) {
         if (skipped) throw new Error('not polygon zones');
-        // The server takes a name that is text, null or absent; refuse anything
-        // else now rather than at save.
-        if (zones.some(layer => {
-            const name = layer.feature.properties.name;
-            return name != null && typeof name !== 'string';
-        })) {
-            throw new Error('zone name is not text');
+        // The server takes a name that is text, null or absent, and an id that
+        // is null, absent or unique non-empty text; refuse anything else now
+        // rather than at save.
+        const ids = new Set();
+        for (const {feature: {properties: {name, id}}} of zones) {
+            if (name != null && typeof name !== 'string') throw new Error('zone name is not text');
+            if (id == null) continue;
+            if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('bad zone id');
+            ids.add(id);
         }
         if (!zones.length) return {count: 0, skipped: 0};
         editableLayers.clearLayers();
     }
-    zones.forEach(layer => editableLayers.addLayer(layer));
+    zones.forEach(layer => {
+        // Every zone gets a text id, so its list entry finds it even when
+        // names are missing or repeated. The server keeps an id it is given.
+        const p = layer.feature.properties;
+        if (typeof p.id !== 'string' || !p.id) p.id = new_zone_id();
+        editableLayers.addLayer(layer);
+    });
     return {count: zones.length, skipped};
 }
 

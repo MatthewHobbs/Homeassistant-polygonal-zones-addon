@@ -23,14 +23,21 @@ function fakeElement(tag) {
         tagName: tag.toUpperCase(),
         attributes: {},
         children: [],
-        innerHTML: '',
+        get innerHTML() { return ''; },
+        set innerHTML(_v) { this.children = []; },
         textContent: '',
+        listeners,
         // Like the DOM: attribute values are stored as strings.
         setAttribute(k, v) { this.attributes[k] = String(v); },
+        getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; },
         classes: new Set(),
         get classList() {
             const s = this.classes;
-            return { add: (c) => s.add(c), remove: (c) => s.delete(c), contains: (c) => s.has(c) };
+            return {
+                add: (c) => s.add(c),
+                remove: (...cs) => cs.forEach((c) => s.delete(c)),
+                contains: (c) => s.has(c),
+            };
         },
         removeAttribute(k) { delete this.attributes[k]; },
         appendChild(child) { this.children.push(child); return child; },
@@ -38,6 +45,33 @@ function fakeElement(tag) {
         click() { (listeners.change || []).forEach((fn) => fn()); },
         remove() {},
     };
+}
+
+// zone-entry's contract with map.js: its Edit/Done button sends an `edit`
+// event carrying the name typed in its box, then flips its `editing`
+// attribute. `typed` stands in for that box.
+function fakeZoneEntry() {
+    const el = fakeElement('zone-entry');
+    el.typed = null;
+    el.edit_event_handler = function () {
+        const editing = this.attributes.editing === 'true';
+        const detail = {
+            editing: !editing,
+            name: this.typed ?? this.attributes.name,
+            id: this.attributes['zone-id'] || null,
+        };
+        (this.listeners.edit || []).forEach((fn) => fn({ detail, target: this }));
+        this.setAttribute('editing', String(!editing));
+    };
+    return el;
+}
+
+// Leaflet's Evented, reduced to on/fire.
+function evented(target) {
+    const handlers = {};
+    target.on = (evt, fn) => { (handlers[evt] = handlers[evt] || []).push(fn); };
+    target.fire = (evt, e = {}) => { (handlers[evt] || []).forEach((fn) => fn(e)); };
+    return target;
 }
 
 function bounds(layers) {
@@ -51,8 +85,12 @@ function bounds(layers) {
 }
 
 class Polygon {
-    constructor(feature) { this.feature = feature; }
-    bindPopup() { return this; }
+    constructor(feature) {
+        this.feature = feature;
+        this.pm = { enabled: false, enable(opts) { this.enabled = true; this.opts = opts; }, disable() { this.enabled = false; } };
+    }
+    bindPopup(content) { this.popup = content; return this; }
+    getBounds() { return bounds([this]); }
     toGeoJSON() { return { type: 'Feature', geometry: this.feature.geometry }; }
 }
 
@@ -92,38 +130,55 @@ function geoJSON(data, options) {
 
 function loadMap({ noAbortTimeout = false } = {}) {
     const errors = [];
+    const logged = [];
     const calls = [];
     const elements = { '.zone-list': fakeElement('div'), '.save-btn': fakeElement('button') };
     const status = fakeElement('p');
     const posts = [];
     let reply = { status: 200, etag: null };
+    let zonesReply = { hang: true };
+    // Like fetch: an already-aborted signal rejects at once.
+    const hangUntilAborted = (opts) => {
+        const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
+        if (!opts?.signal) return new Promise(() => {});
+        if (opts.signal.aborted) return Promise.reject(aborted());
+        return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
+    };
     const timers = [];
     const cleared = [];
     let pendingFile = null;
 
     const layers = [];
-    const editableLayers = {
+    const editableLayers = evented({
         addLayer(l) { layers.push(l); },
+        removeLayer(l) { const i = layers.indexOf(l); if (i >= 0) layers.splice(i, 1); },
+        hasLayer: (l) => layers.includes(l),
         clearLayers() { calls.push('clearLayers'); layers.length = 0; },
         getLayers: () => layers.slice(),
         eachLayer(fn) { layers.slice().forEach(fn); },
         getBounds: () => bounds(layers),
-    };
-    const map = {
+    });
+    const map = evented({
         fitBounds(b) {
             if (!b.isValid()) throw new Error('Bounds are not valid.');
             calls.push('fitBounds');
         },
         setView(center, zoom) { calls.push(['setView', zoom]); },
-        fire() {},
-    };
+        removeLayer() {},
+        pm: { setGlobalOptions() {}, addControls() {} },
+    });
+    const mapFire = map.fire;
+    map.fire = (evt, e) => { calls.push(evt); mapFire(evt, e); };
+    const entries = () => elements['.zone-list'].children.filter((c) => c.tagName === 'ZONE-ENTRY');
 
     const document = {
-        querySelector: (sel) => elements[sel] || null,
+        querySelector: (sel) => (sel === 'zone-entry[editing="true"]'
+            ? entries().find((e) => e.attributes.editing === 'true') || null
+            : elements[sel] || null),
         getElementById: (id) => (id === 'save-status' ? status : null),
-        querySelectorAll: () => [],
+        querySelectorAll: (sel) => (sel === 'zone-entry' ? entries() : []),
         createElement(tag) {
-            const el = fakeElement(tag);
+            const el = tag === 'zone-entry' ? fakeZoneEntry() : fakeElement(tag);
             if (tag === 'input') el.files = [pendingFile];
             return el;
         },
@@ -138,32 +193,40 @@ function loadMap({ noAbortTimeout = false } = {}) {
         window: { addEventListener() {}, ZONE_COLOUR: 'green' },
         document,
         fetch: (url, opts) => {
+            if (url === './zones.json') {
+                if (zonesReply.reject) return Promise.reject(new TypeError('Failed to fetch'));
+                if (zonesReply.hang) return hangUntilAborted(opts);
+                return Promise.resolve({
+                    status: 200,
+                    ok: true,
+                    headers: { get: (h) => (h.toLowerCase() === 'etag' ? zonesReply.etag : null) },
+                    text: async () => zonesReply.text,
+                });
+            }
             if (url !== './save_zones') return new Promise(() => {});
             posts.push(opts);
             if (reply.throwSync) throw new TypeError('fetch threw');
-            if (reply.hang) {
-                // Like fetch: an already-aborted signal rejects at once.
-                const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
-                if (opts.signal.aborted) return Promise.reject(aborted());
-                return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
-            }
+            if (reply.hang) return hangUntilAborted(opts);
             return Promise.resolve({
                 status: reply.status,
                 ok: reply.status >= 200 && reply.status < 300,
                 headers: { get: (h) => (h.toLowerCase() === 'etag' ? reply.etag : null) },
+                json: async () => reply.body ?? {},
             });
         },
         setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
         clearTimeout: (id) => { cleared.push(id); },
         AbortController,
-        console,
+        console: { ...console, error: (...a) => logged.push(a.join(' ')) },
         L: { geoJSON, Polygon },
         crypto: require('node:crypto').webcrypto,
         AbortSignal: noAbortTimeout ? {} : AbortSignal,
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
-        name_popup_element: () => ({}),
+        text_element: (text) => ({ text }),
+        pz_layer_polygons: () => [{}],
+        pz_layer_area_m2: (layer) => layer.area || 0,
         delete_load_btn: () => calls.push('delete_load_btn'),
         create_load_btn: () => calls.push('create_load_btn'),
     });
@@ -173,16 +236,23 @@ function loadMap({ noAbortTimeout = false } = {}) {
     return {
         layers,
         errors,
+        logged,
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
         zoneList: elements['.zone-list'],
         posts,
         status,
-        reply: (s, etag = null) => { reply = { status: s, etag }; },
+        reply: (s, etag = null, body) => { reply = { status: s, etag, body }; },
+        zonesReply: (r) => { zonesReply = r; },
+        loadZones: (restored = false) => vm.runInContext('load_zones', context)('./zones.json', restored),
         hang: () => { reply = { hang: true }; },
         throwSync: () => { reply = { throwSync: true }; },
         timers,
         cleared,
+        map,
+        editableLayers,
+        entries,
+        setupEditing: () => vm.runInContext('setup_editing', context)(map, editableLayers),
         fireSaveTimeout: () => timers.filter((t) => t.ms === 30000).forEach((t) => t.fn()),
         setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
         save: () => vm.runInContext('save_zones', context)(),
@@ -321,7 +391,7 @@ test('bulk load accepts a null name, as the server does', () => {
 test('finishing an edit of an unnamed zone with an empty box leaves it unnamed', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(unnamed({ id: 'a' }), unnamed({ id: 'b' }))));
-    for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', oldName: '', id });
+    for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', id });
     assert.deepEqual(m.layers.map((l) => l.feature.properties.id), ['a', 'b'], 'saved ids are kept');
     // Two zones named "" would be refused on save as duplicate names.
     assert.deepEqual(m.layers.map((l) => 'name' in l.feature.properties), [false, false]);
@@ -332,7 +402,7 @@ test('the second of two unnamed zones without ids is the one renamed', () => {
     m.loadSaved(JSON.parse(collection(unnamed(null), unnamed({}))));
     const ids = m.layers.map((l) => l.feature.properties.id);
     assert.ok(ids.every(Boolean) && ids[0] !== ids[1], 'each loaded zone gets its own id');
-    m.editZone({ editing: false, name: 'Shed', oldName: '', id: ids[1] });
+    m.editZone({ editing: false, name: 'Shed', id: ids[1] });
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), [undefined, 'Shed']);
 });
 
@@ -368,6 +438,27 @@ test('a successful save adopts the new ETag', async () => {
     await m.save();
     await m.save();
     assert.equal(m.posts[1].headers['If-Match'], '"saved"');
+});
+
+test('a save adopts the body etag when a proxy strips the ETag header', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    // main.py's save_zones answers {"status": "ok", "etag": ...}.
+    m.reply(200, null, { status: 'ok', etag: '"5a7ed"' });
+    await m.save();
+    await m.save();
+    assert.equal(m.posts[1].headers['If-Match'], '"5a7ed"');
+});
+
+test('a body etag that is not a quoted hex digest is ignored', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(200, null, { status: 'ok', etag: '"x"\r\nX-Evil: 1' });
+    await m.save();
+    await m.save();
+    assert.equal(m.posts[1].headers['If-Match'], '"loaded"');
 });
 
 test('save refuses until the saved zones have loaded', async () => {
@@ -513,4 +604,213 @@ test('a fetch that throws at once still frees Save', async () => {
     m.reply(200, '"saved"');
     await m.save();
     assert.equal(m.posts.length, 2);
+});
+
+test('dragging a vertex marks the editor unsaved and re-measures the zone', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    const layer = m.layers[0];
+    layer.area = 1234;
+    m.calls.length = 0;
+    // Geoman fires pm:edit on the layer and its parent groups, not the map.
+    m.editableLayers.fire('pm:edit', { layer });
+    assert.equal(m.isDirty(), true);
+    assert.equal(m.entries()[0].attributes['area-m2'], '1234');
+    assert.ok(m.calls.includes('pz:zoneschanged'), 'the tracker readout is not re-measured');
+});
+
+// Opens the first listed zone and types `name` into its box.
+function typeInto(m, index, name) {
+    const row = m.entries()[index];
+    row.edit_event_handler();
+    row.typed = name;
+    return row;
+}
+
+test('saving with a rename still open saves the typed name and closes the row', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'), polygon('B'))));
+    typeInto(m, 0, 'Renamed');
+    assert.equal(m.layers[0].pm.enabled, true);
+    m.reply(200, '"saved"');
+    await m.save();
+    const sent = JSON.parse(m.posts[0].body).features.map((f) => f.properties.name);
+    assert.deepEqual(sent, ['Renamed', 'B']);
+    assert.equal(m.layers[0].pm.enabled, false, 'the edit handles stayed on');
+    assert.equal(m.isDirty(), false);
+});
+
+test('saving with an emptied name box leaves the zone unnamed', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, '');
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.ok(!('name' in JSON.parse(m.posts[0].body).features[0].properties));
+});
+
+test('opening another zone keeps the name typed in the open one', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'), polygon('B'))));
+    const a = typeInto(m, 0, 'A2');
+    m.entries()[1].edit_event_handler();
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A2', 'B']);
+    assert.equal(a.attributes.editing, 'false');
+    assert.deepEqual(m.layers.map((l) => l.pm.enabled), [false, true]);
+});
+
+test('editing a zone refuses self-crossing edges', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.entries()[0].edit_event_handler();
+    assert.equal(m.layers[0].pm.opts?.allowSelfIntersection, false);
+});
+
+test('an edit event for a zone that is gone does nothing', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    assert.doesNotThrow(() => m.editZone({ editing: true, name: 'X', id: 'gone' }));
+    assert.doesNotThrow(() => m.editZone({ editing: false, name: 'X', id: 'gone' }));
+});
+
+test('drawing a zone while a rename is open keeps the typed name', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, 'A2');
+    m.map.fire('pm:create', { layer: new Polygon() });
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A2', 'Zone 1']);
+    assert.equal(m.layers[0].pm.enabled, false);
+});
+
+const staticJs = (file) => fs.readFileSync(path.join(__dirname, '..', 'app', 'static', 'js', file), 'utf8');
+
+test('a remembered collapsed sidebar is applied before the map is built, and the toggle says so', () => {
+    const body = fakeElement('div');
+    body.setAttribute('data-sidebar', 'open');
+    const button = fakeElement('button');
+    const context = vm.createContext({
+        document: { querySelector: (sel) => ({ '.body': body, '.sidebar-toggle': button })[sel] || null },
+        window: { PZStorage: { get: (k) => (k === 'pz:sidebar' ? 'collapsed' : null), set() {} } },
+    });
+    // index.html's order: ui-state.js, sidebar-toggle.js, then map.js builds the map.
+    vm.runInContext(staticJs('ui-state.js'), context);
+    assert.equal(body.attributes['data-sidebar'], 'collapsed', 'the map would measure an open sidebar');
+    vm.runInContext(staticJs('sidebar-toggle.js'), context);
+    assert.equal(button.attributes['aria-expanded'], 'false');
+    assert.equal(button.attributes['aria-label'], 'Expand sidebar');
+});
+
+test('a zone popup shows its current name, and a drawn zone has one', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    const loaded = m.layers[0];
+    m.editZone({ editing: false, name: 'B', id: loaded.feature.properties.id });
+    assert.equal(typeof loaded.popup, 'function', 'the popup was fixed at load');
+    assert.equal(loaded.popup(loaded).text, 'B');
+    const drawn = new Polygon();
+    m.map.fire('pm:create', { layer: drawn });
+    assert.equal(typeof drawn.popup, 'function', 'a drawn zone has no popup');
+    assert.equal(drawn.popup(drawn).text, 'Zone 1');
+});
+
+test('delete mode ignores a layer that is not a zone', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.calls.length = 0;
+    m.map.fire('pm:remove', { layer: new Polygon() });
+    assert.equal(m.isDirty(), false);
+    assert.equal(m.layers.length, 1);
+    assert.ok(!m.calls.includes('create_load_btn'));
+});
+
+test('the load button is added once however often it is asked for', () => {
+    const header = fakeElement('div');
+    const byId = (id) => header.children.find((c) => c.id === id) || null;
+    const context = vm.createContext({
+        document: {
+            querySelector: (sel) => (sel === '.header' ? header : sel.startsWith('#') ? byId(sel.slice(1)) : null),
+            getElementById: byId,
+            createElement: fakeElement,
+        },
+    });
+    vm.runInContext(staticJs('helpers.js'), context);
+    vm.runInContext('create_load_btn(); create_load_btn();', context);
+    assert.deepEqual(header.children.map((c) => c.id), ['load-text', 'load-btn']);
+});
+
+for (const [what, ids] of [['a number', [5]], ['an empty string', ['']], ['a repeat', ['x', 'x']]]) {
+    test(`bulk load refuses a zone id that is ${what}, before clearing`, () => {
+        const m = withExistingZone();
+        m.bulkLoad(collection(...ids.map((id) => unnamed({ id }))));
+        assert.equal(m.errors.length, 1);
+        assert.ok(!m.calls.includes('clearLayers'));
+        assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home']);
+    });
+}
+
+test('bulk load gives a null id a fresh one, as the server does', () => {
+    const m = withExistingZone();
+    m.bulkLoad(collection(unnamed({ id: null })));
+    assert.deepEqual(m.errors, []);
+    assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
+});
+
+test('a first load that fails marks the zones unloaded and offers the load button', async () => {
+    const m = loadMap();
+    m.zonesReply({ reject: true });
+    await m.loadZones();
+    assert.match(m.zoneList.textContent, /^Couldn't load zones/);
+    assert.ok(m.calls.includes('create_load_btn'));
+    await m.save();
+    assert.match(m.status.textContent, /couldn't be loaded/);
+});
+
+test('a first load that gets no answer times out down the failure path', { timeout: 2000 }, async () => {
+    const m = loadMap({ noAbortTimeout: true });
+    m.zonesReply({ hang: true });
+    const pending = m.loadZones();
+    m.fireSaveTimeout();
+    await pending;
+    assert.ok(m.calls.includes('create_load_btn'));
+    await m.save();
+    assert.match(m.status.textContent, /couldn't be loaded/);
+});
+
+test('a first load shows the saved zones and adopts their ETag', async () => {
+    const m = loadMap();
+    m.zonesReply({ text: collection(polygon('A')), etag: '"disk"' });
+    await m.loadZones();
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A']);
+    await m.save();
+    assert.equal(m.posts[0].headers['If-Match'], '"disk"');
+});
+
+test('a first load that lands after a bulk load changes nothing', async () => {
+    const m = loadMap();
+    m.bulkLoad(collection(polygon('B')));
+    m.zonesReply({ text: collection(polygon('A')), etag: '"disk"' });
+    await m.loadZones();
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['B']);
+    await m.save();
+    assert.equal(m.posts[0].headers['If-Match'], undefined, 'the bulk load replaced the saved zones on purpose');
+});
+
+test('a first load that fails after a bulk load leaves the list alone', async () => {
+    const m = loadMap();
+    m.bulkLoad(collection(polygon('B')));
+    m.zonesReply({ reject: true });
+    await m.loadZones();
+    assert.equal(m.zoneList.textContent, '');
+    assert.ok(!m.calls.includes('create_load_btn'));
+    assert.equal(m.logged.length, 1, 'the failure was not logged');
+});
+
+test('first load gives a zone whose id is not text a fresh one', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed({ id: 5 }))));
+    assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
 });

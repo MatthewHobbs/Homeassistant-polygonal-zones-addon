@@ -11,21 +11,19 @@
  *  - It MEASURES, it does not PREDICT. The readout says "inside" or "3.8 m
  *    outside"; it never says which zone the integration would report. Those
  *    rules live in the integration and reimplementing them here would create a
- *    second source of truth that drifts (see js/geometry.js for the incident
- *    that motivated this).
+ *    second source of truth that drifts (see js/geometry.js).
  *  - It is silent unless the user opts in. With `overlay_entities` unset the
  *    endpoint reports `configured: false` and this module renders nothing at
  *    all — no panel, no error, no marker.
  */
 
-// In the browser, index.html loads geometry.js before this file as separate
-// <script> tags, so pz_ring_area_m2 & co. are already real globals by the
-// time this runs. Under Node (tests) there is no such tag, so pull them onto
-// globalThis here — never with `let`/`const`, which would shadow the
-// browser's own globals for every reference below instead of only adding a
-// fallback for Node.
+// In the browser, index.html loads geometry.js and helpers.js before this
+// file, so pz_ring_area_m2, text_element & co. are already globals. Under
+// Node (tests) there is no such tag, so pull them onto globalThis here —
+// never with `let`/`const`, which would shadow the browser's own globals for
+// every reference below instead of only adding a fallback for Node.
 if (typeof module !== 'undefined' && module.exports) {
-    Object.assign(globalThis, require('./geometry.js'));
+    Object.assign(globalThis, require('./geometry.js'), require('./helpers.js'));
 }
 
 const PZ_TRACKER_ENDPOINT = './trackers.json';
@@ -206,18 +204,11 @@ function pz_render_readout() {
     panel.appendChild(note);
 }
 
-/* Leaflet renders a string tooltip as HTML; a friendly name comes from Home
- * Assistant, so hand it over as a text node, as name_popup_element does for
- * zone popups. */
-function pz_tooltip_element(name) {
-    const el = document.createElement('span');
-    el.textContent = typeof name === 'string' ? name : '';
-    return el;
-}
-
 function pz_render_markers() {
     if (!pz_tracker_layer) return;
     pz_tracker_layer.clearLayers();
+    // pmIgnore: Geoman would otherwise let delete mode remove a dot and snap
+    // drawn vertices to it.
     pz_trackers.forEach((tracker) => {
         const latlng = [tracker.latitude, tracker.longitude];
         if (Number.isFinite(tracker.gps_accuracy) && tracker.gps_accuracy > 0) {
@@ -225,10 +216,11 @@ function pz_render_markers() {
                 radius: tracker.gps_accuracy,
                 className: 'tracker-accuracy',
                 interactive: false,
+                pmIgnore: true,
             }).addTo(pz_tracker_layer);
         }
-        L.circleMarker(latlng, { radius: 6, className: 'tracker-marker' })
-            .bindTooltip(pz_tooltip_element(tracker.name), { permanent: false })
+        L.circleMarker(latlng, { radius: 6, className: 'tracker-marker', pmIgnore: true })
+            .bindTooltip(text_element(tracker.name), { permanent: false })
             .addTo(pz_tracker_layer);
     });
 }
@@ -295,8 +287,7 @@ function pz_start_tracker_refresh(seconds) {
 function setup_tracker_overlay(mapInstance) {
     return pz_fetch_trackers()
         .then((body) => {
-            // Not opted in (the default), or the endpoint refused us. Either
-            // way the editor behaves exactly as it did before this feature.
+            // Not opted in (the default), or the endpoint refused us: no overlay.
             if (!body || !body.configured) return;
             if (body.error === 'no_supervisor_token') {
                 console.warn(
@@ -310,8 +301,8 @@ function setup_tracker_overlay(mapInstance) {
             pz_tracker_layer = L.layerGroup().addTo(mapInstance);
             pz_apply_trackers(body);
 
-            ['pz:zoneschanged', 'pm:create', 'pm:remove', 'pm:edit', 'pm:update']
-                .forEach((evt) => mapInstance.on(evt, pz_schedule_measure));
+            // map.js fires this after every draw, delete, load and vertex drag.
+            mapInstance.on('pz:zoneschanged', pz_schedule_measure);
             pz_start_tracker_refresh(body.refresh_seconds);
         })
         .catch((err) => {
