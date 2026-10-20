@@ -8,7 +8,7 @@
 #   CORE_VERSION=2026.7.1 scripts/supervisor-pilot.sh all
 #
 # Phases can also be run one at a time against a running devcontainer
-# (build, up, versions, sideload, install, provenance, probe,
+# (build, up, versions, sideload, install, provenance, probe, watchdog,
 # diagnostics, down). Needs docker with privileged containers, git and jq.
 #
 # Environment:
@@ -37,6 +37,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADDON_DIR="polygonal_zones_editor"
 SLUG="local_polygonal_zones"
 ADDON_CONTAINER="app_${SLUG}"
+ADDON_HOST="${SLUG//_/-}"
 NAME="${PILOT_NAME:-pz-supervisor}"
 CORE_VERSION="${CORE_VERSION:-stable}"
 IMAGE_SOURCE="${PILOT_IMAGE_SOURCE:-checkout}"
@@ -241,6 +242,14 @@ core_url() {
   return 1
 }
 
+core_reaches_healthz() {
+  dc docker exec homeassistant python3 -c "
+import urllib.request
+r = urllib.request.urlopen('http://${ADDON_HOST}:8000/healthz', timeout=5)
+assert r.status == 200, r.status
+"
+}
+
 core_ready() {
   ha_cli core info --raw-json | jq -e '.data.version != "landingpage"' && core_url
 }
@@ -422,12 +431,9 @@ cmd_probe() {
   # any other non-ingress client under this run's default options
   # (allow_all_ips off, no save_token). DOCS.md must not claim this path is
   # "through ingress" or usable without allow_all_ips/save_token.
-  local addon_host="${SLUG//_/-}"
-  dc docker exec homeassistant python3 -c "
-import urllib.request
-r = urllib.request.urlopen('http://${addon_host}:8000/healthz', timeout=5)
-assert r.status == 200, r.status
-" || fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
+  local addon_host="$ADDON_HOST"
+  core_reaches_healthz ||
+    fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
   log "OK Core reaches the add-on via internal hostname $addon_host (no ingress, no LAN port)"
 
   # /zones.json and /trackers.json share the same authorisation gate, but
@@ -460,6 +466,56 @@ except urllib.error.HTTPError as e:
         -r /probe/requirements.txt && exec python3 /probe/probe.py "$@"' probe \
     --base "$base" --ingress "$ingress" --expect-colour "$PROBE_COLOUR" \
     --tracker-entity "$TRACKER_ENTITY" --tracker-refresh-seconds "$TRACKER_REFRESH_SECONDS"
+}
+
+# --- watchdog: the Supervisor restarts the add-on when its web process dies --
+# The stop path only: failing /healthz on purpose can leave a restart loop.
+set_watchdog() {
+  supervisor_post "/addons/$SLUG/options" "{\"watchdog\": $1}" >/dev/null ||
+    fail "Supervisor rejected watchdog: $1"
+  # The read-back is what proves the field name: an ignored key would not set it.
+  ha_cli apps info "$SLUG" --raw-json | jq -e --argjson w "$1" '.data.watchdog == $w' >/dev/null ||
+    fail "the Supervisor does not report watchdog: $1 after setting it"
+}
+
+addon_started_at() { dc docker inspect -f '{{.State.StartedAt}}' "$ADDON_CONTAINER"; }
+addon_not_running() {
+  [[ "$(dc docker inspect -f '{{.State.Running}}' "$ADDON_CONTAINER" 2>/dev/null)" != true ]]
+}
+# A new StartedAt, not a later one: RFC 3339 with trimmed nanoseconds does not sort as text.
+addon_restarted_since() {
+  local state
+  state="$(dc docker inspect -f '{{.State.Running}} {{.State.StartedAt}}' "$ADDON_CONTAINER")" || return 1
+  [[ "$state" == "true "* && "$state" != "true $1" ]] && core_reaches_healthz
+}
+kill_web() {
+  dc docker exec "$ADDON_CONTAINER" pkill -f 'python main.py' ||
+    fail "could not kill python main.py in $ADDON_CONTAINER"
+}
+
+cmd_watchdog() {
+  local before t
+  # Off first: a restart that happens anyway would make the leg below prove nothing.
+  set_watchdog false
+  before="$(addon_started_at)"
+  kill_web
+  poll "$ADDON_CONTAINER stopped after its web process was killed" 30 1 addon_not_running ||
+    fail "the add-on container did not stop when its web process died"
+  sleep 30
+  addon_not_running || fail "the add-on restarted with the watchdog off"
+  log "OK no restart within 30s with the watchdog off"
+  ha_ok apps start "$SLUG" >/dev/null || fail "start of $SLUG failed"
+  poll "$SLUG started again by hand" 120 3 addon_restarted_since "$before" ||
+    fail "the add-on did not come back after a manual start"
+
+  set_watchdog true
+  before="$(addon_started_at)"
+  kill_web
+  t=$SECONDS
+  poll "Supervisor watchdog restarted $SLUG and Core reaches /healthz" 120 2 \
+    addon_restarted_since "$before" ||
+    fail "the Supervisor did not restart the add-on within 120s of its web process dying, watchdog on"
+  log "OK watchdog restart after $((SECONDS - t))s"
 }
 
 cmd_diagnostics() {
@@ -504,7 +560,7 @@ cmd_all() {
   [[ "${PILOT_KEEP:-0}" == 1 ]] || trap 'cleanup_all' EXIT
   # Each phase in its own process: a function called on the left of || runs
   # with set -e disabled, which would let a failed step pass silently.
-  for phase in build up versions sideload install provenance probe; do
+  for phase in build up versions sideload install provenance probe watchdog; do
     t=$SECONDS
     log "=== $phase"
     if ! bash "${BASH_SOURCE[0]}" "$phase"; then
@@ -520,13 +576,13 @@ cmd_all() {
 }
 
 case "${1:-}" in
-  build | up | wait-core | versions | sideload | install | provenance | probe | diagnostics | down | all | copy-addon)
+  build | up | wait-core | versions | sideload | install | provenance | probe | watchdog | diagnostics | down | all | copy-addon)
     cmd="${1//-/_}"
     shift
     "cmd_$cmd" "$@"
     ;;
   *)
-    echo "usage: $0 {all|build|up|wait-core|versions|sideload|install|provenance|probe|diagnostics|down}" >&2
+    echo "usage: $0 {all|build|up|wait-core|versions|sideload|install|provenance|probe|watchdog|diagnostics|down}" >&2
     exit 2
     ;;
 esac
