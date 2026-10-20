@@ -6,12 +6,8 @@
 # privilege-drop reasons alone.
 
 # shellcheck disable=SC2164
-# `cd /app` can technically fail, but `/app` is Dockerfile-installed and
-# always present in a shipped image. If cd were to fail, the subsequent
-# `python main.py` would also fail (main.py isn't at /), s6 would mark
-# the service down, finish runs, and Supervisor restarts the addon —
-# same end state as an explicit `|| exit`, with no live-Supervisor
-# behaviour change to verify in this PR.
+# No `|| exit`: the Dockerfile always creates /app, and if cd failed anyway,
+# `python main.py` would fail too and finish would stop the container.
 cd /app
 
 if ! command -v s6-setuidgid >/dev/null 2>&1; then

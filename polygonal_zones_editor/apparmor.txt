@@ -1,11 +1,7 @@
-# Policy ABI pinned to 3.0. A parser compiles a profile against the running
-# kernel's feature set unless told otherwise. A parser newer than 4.0 on a
-# kernel from 6.17, which mediates unix sockets, then produced a policy under
-# which `network,` granted no unix socket at all: s6 could not create its
-# control socket and the add-on never started. Found by the ADR 0001 pilot on
-# Ubuntu 24.04 runners; HA OS 18.3's parser 3.1.7 cannot produce that
-# encoding, so users were not hit. The pin keeps the encoding this profile was
-# written and tested against, on every parser from 3.0 up.
+# Policy ABI pinned to 3.0, so every parser from 3.0 up compiles the encoding
+# this profile was written against. Unpinned, a parser newer than 4.0 on a
+# kernel that mediates unix sockets (6.17+) compiles `network,` to grant no
+# unix socket, and s6 cannot create its control socket.
 abi <abi/3.0>,
 
 #include <tunables/global>
@@ -15,11 +11,9 @@ abi <abi/3.0>,
 # Deny-list design: the profile grants the same general access that
 # docker-default grants (file, signal, network, capability) and then
 # explicitly denies the specific paths and operations a map-drawing
-# addon has no legitimate need for. This is strictly better than
-# running with no custom profile — the addon gets docker-default plus
-# targeted hardening — while avoiding the allow-list pitfall that
-# took the addon offline in 0.2.16–0.2.21 (a path the Python runtime
-# or s6-overlay needed wasn't in the allow-list, silently failed).
+# addon has no legitimate need for. Not an allow-list: one that misses
+# a path the Python runtime or s6-overlay needs stops the add-on from
+# booting, and fails silently.
 #
 # Permissive baseline rules:
 #   file,        allow any file read/write/exec not explicitly denied

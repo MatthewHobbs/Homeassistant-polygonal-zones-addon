@@ -335,14 +335,10 @@ def _validate_feature_collection(obj) -> None:
     if not isinstance(obj, dict) or obj.get("type") != "FeatureCollection":
         raise ValueError("expected a GeoJSON FeatureCollection")
 
-    # schema_version is optional on input for backward compatibility with
-    # curl-restored pre-versioned files. The canonical location is the foreign
-    # member ``polygonal_zones.schema_version`` (matching the spec and the
-    # companion integration's reader); a bare top-level ``schema_version`` is
-    # accepted only as a legacy fallback for files written before this fix.
-    # When present it must be an int. isinstance(True, int) is True in Python
-    # because bool subclasses int, so reject bool explicitly — a consumer
-    # doing `schema_version >= 1` shouldn't silently pass on `True`.
+    # schema_version is optional, so a restored unversioned file still saves.
+    # It belongs at polygonal_zones.schema_version, where the integration reads
+    # it; a bare top-level key is accepted because older files carry one. bool
+    # is refused: `schema_version >= 1` must not pass on True.
     pz_in = obj.get("polygonal_zones")
     nested_version = pz_in.get("schema_version") if isinstance(pz_in, dict) else None
     schema_version = nested_version if nested_version is not None else obj.get("schema_version")
@@ -425,16 +421,13 @@ def _validate_feature_collection(obj) -> None:
 def _normalise_feature_collection(obj: dict) -> dict:
     """Stamp `schema_version` and backfill missing `properties.id`.
 
-    Runs immediately before the on-disk write — so rejected payloads don't
-    get partially normalised. Guarantees that every persisted zones.json
-    carries a current `schema_version` and that every feature has a
-    stable `properties.id` the companion integration can bind automations
-    to across renames. Mutates and returns ``obj``.
+    Runs only on a payload that passed validation. Guarantees that every
+    persisted zones.json carries a current `schema_version` and that every
+    feature has a stable `properties.id` the companion integration can bind
+    automations to across renames. Mutates and returns ``obj``.
     """
-    # Stamp the canonical foreign-member location the integration reads
-    # (polygonal_zones.schema_version per docs/ZONES_FORMAT.md). Earlier
-    # builds wrote a bare top-level key the integration never read, so a
-    # future schema bump would have silently bypassed its version guard.
+    # The integration's version guard reads polygonal_zones.schema_version
+    # (docs/ZONES_FORMAT.md) and nothing else.
     pz = obj.get("polygonal_zones")
     if not isinstance(pz, dict):
         pz = {}
@@ -895,13 +888,7 @@ def generate_app(options: dict) -> TransportPeerMiddleware:
 
     proxy_ip_allowlist = _parse_trusted_proxies(options)
     if proxy_ip_allowlist:
-        # Log the count only, not the list contents. `proxy_ip_allowlist` is
-        # derived from the `trusted_proxies` option, and CodeQL's
-        # py/clear-text-logging-sensitive-data rule flags any options-sourced
-        # value logged via %s — same reason _parse_trusted_proxies itself
-        # logs rejection reasons as constant strings. TESTING.md already
-        # documents the count-based format as the expected operator-visible
-        # output, so this aligns code with docs.
+        # The count only, for the reason _parse_trusted_proxies gives.
         _LOGGER.info(
             "Honouring X-Forwarded-For from %d configured proxy/proxies.",
             len(proxy_ip_allowlist),
@@ -1032,10 +1019,8 @@ def log_retired_allow_all_ips(options: dict) -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    # The entrypoint block is covered by the build.yml smoke test (boots
-    # the container under docker, probes /healthz + /zones.json), not by
-    # pytest. Extracting to a function would give pytest a handle but
-    # wouldn't exercise uvicorn.run(), which is the point of the block.
+    # Exercised by the boot tests in test_request_trust.py (through runpy,
+    # with uvicorn.run captured) and by build.yml's container smoke.
     # Bring logging up at the default level first so any errors in
     # load_options are visible, then re-apply the configured level.
     configure_logging()
