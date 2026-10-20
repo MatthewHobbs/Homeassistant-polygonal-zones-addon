@@ -8,7 +8,7 @@
 # `just ha-floor` runs it on demand, `just ci` never does.
 
 # Local CI gate - the same commands remote CI runs, for the checks it covers.
-ci: lint test
+ci: venv lint test
 
 # ADR 0001 row 12 - the declared HA floor against the bound from current stable Core (network; not in `ci`).
 ha-floor:
@@ -23,8 +23,9 @@ venv:
 
 lint:
     # Same scope as lint.yml's ruff-action: the repo root, so scripts/ is covered.
-    ruff check
-    ruff format --check
+    # The venv's ruff is the version lint.yml pins; run `just venv` first.
+    .venv/bin/ruff check
+    .venv/bin/ruff format --check
     # Same files as lint.yml's shellcheck job; keep the two lists identical.
     shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh
     shellcheck -x polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms polygonal_zones_editor/rootfs/etc/services.d/web/run polygonal_zones_editor/rootfs/etc/services.d/web/finish
