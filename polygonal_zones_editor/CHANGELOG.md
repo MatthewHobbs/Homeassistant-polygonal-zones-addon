@@ -16,12 +16,11 @@
 - **Fixed: a double click on Save no longer reports a conflict with itself.**
   Save shows "Saving…" while a save is on its way and ignores further clicks;
   a save that gets no answer gives up after 30 seconds and says it may not
-  have saved.
+  have saved. A zone drawn, deleted or renamed while a save is on its way
+  stays marked as unsaved instead of being shown as saved.
 - **Changed: the editor's page and scripts are served with
   `Cache-Control: no-cache`,** so browsers check for a newer version on each
-  load instead of reusing an old copy after an update. A zone
-  drawn, deleted or renamed while a save is on its way stays marked as
-  unsaved instead of being shown as saved.
+  load instead of reusing an old copy after an update.
 
 ## 0.5.6 — 2026-10-20
 
