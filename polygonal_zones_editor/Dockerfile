@@ -43,9 +43,10 @@ ENV VIRTUAL_ENV=/opt/venv \
 # Overwrite the base image's vulnerable /usr/bin/tempio with the patched build above.
 COPY --from=tempio /tempio /usr/bin/tempio
 
+# The venv's own pip (from the base image's Python) does the hashed install
+# below; an unpinned `--upgrade pip` would be the one unhashed download here.
 RUN apk add --no-cache python3 py3-pip \
- && python3 -m venv "$VIRTUAL_ENV" \
- && pip install --no-cache-dir --upgrade pip
+ && python3 -m venv "$VIRTUAL_ENV"
 
 # Install pinned, hash-verified deps from the generated lock file.
 # requirements.txt remains the high-level spec; regenerate the lock with
