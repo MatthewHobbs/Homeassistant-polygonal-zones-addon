@@ -4,8 +4,8 @@ on:
   push:
     tags:
       - 'v*'
-  # A change to the publish path, including an action bump, is rehearsed as a
-  # dry run before it merges; nothing else exercises publish until a tag.
+  # A change to the release path runs every gate as a dry run before it
+  # merges. The publish and release jobs themselves still first run on a tag.
   pull_request:
     branches: [main]
     paths:
@@ -43,6 +43,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, so a tag's commit can be checked against main.
+          fetch-depth: 0
 
       - name: Resolve version
         id: ver
@@ -67,6 +69,12 @@ jobs:
           # publish one version's images from another version's commit.
           if [[ "$GITHUB_REF" == refs/tags/* ]] && [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
             echo "::error::version '$VERSION' does not match the ref $GITHUB_REF"
+            exit 1
+          fi
+          # A tag must point at a commit main contains: images built from a
+          # commit that never landed would ship code nobody merged.
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF is not on main"
             exit 1
           fi
           # Sanity-check: must match the version in config.yaml so we don't
@@ -135,7 +143,7 @@ jobs:
     needs: [version, tests, lint, build]
     # Only a v* tag publishes: a tag push, or a dispatch with dry_run
     # unticked. Any other trigger, pull_request included, is a dry run.
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.dry_run == false)
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
     # Native runner per arch, as build.yml uses: no QEMU emulator image in a
     # job that holds packages:write and id-token:write.
     runs-on: ${{ matrix.runner }}
@@ -152,10 +160,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The BuildKit that builds the published image, pinned by digest rather
-      # than whatever the action pulls today. Renovate rewrites the tag, digest
-      # and trailing tag comment together.
-      # BuildKit by digest: the builder image runs in the job that holds packages:write.
+      # BuildKit pinned by digest (it runs in the job that holds packages:write);
+      # build.yml uses the same pin, so every PR builds with it. Renovate
+      # rewrites tag, digest and comment together in both files.
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea # v0.33.1
@@ -220,7 +227,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: [version, publish]
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.dry_run == false)
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
     runs-on: ubuntu-latest
     permissions:
       contents: write       # create the GitHub Release
@@ -251,7 +258,7 @@ jobs:
     name: Notify on failure
     # Real releases only: a failed dry run publishes nothing and its run page
     # already shows what broke.
-    if: failure() && startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.dry_run == false)
+    if: failure() && startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
     needs: [version, tests, lint, build, publish, release]
     runs-on: ubuntu-latest
     permissions:

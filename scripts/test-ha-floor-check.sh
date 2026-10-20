@@ -9,12 +9,14 @@ trap 'rm -rf "$WORK"' EXIT
 fails=0
 
 # check <name> <declared floor> <stable Core> <wanted exit>
+# A refusal must be the bound's own message, not some other error exiting 1.
 check() {
-  local got=0
+  local got=0 err
   printf 'homeassistant: "%s"\n' "$2" >"$WORK/config.yaml"
   printf '{"homeassistant": {"default": "%s"}}\n' "$3" >"$WORK/stable.json"
-  HA_ADDON_CONFIG="$WORK/config.yaml" HA_STABLE_JSON="$WORK/stable.json" \
-    "$REPO_ROOT/scripts/ha-floor-check.sh" >/dev/null 2>&1 || got=$?
+  err=$(HA_ADDON_CONFIG="$WORK/config.yaml" HA_STABLE_JSON="$WORK/stable.json" \
+    "$REPO_ROOT/scripts/ha-floor-check.sh" 2>&1 >/dev/null) || got=$?
+  if [ "$got" = 1 ] && ! grep -q 'newer than the bound' <<<"$err"; then got="1 (not the bound: $err)"; fi
   if [ "$got" = "$4" ]; then
     echo "ok - $1"
   else
@@ -27,6 +29,7 @@ check "in bound: the .1 of the month before stable" 2026.8.1 2026.9.3 0
 check "out of bound: newer than that .1" 2026.8.2 2026.9.0 1
 # Bound is 2026.12.1. Without the rollback it would be 2027.0.1, which passes.
 check "January rolls back to the previous December" 2026.12.2 2027.1.0 1
+check "in January, December's .1 is in bound" 2026.12.1 2027.1.0 0
 
 if [ "$fails" -gt 0 ]; then
   echo "FAILED: $fails check(s)" >&2

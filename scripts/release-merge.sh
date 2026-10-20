@@ -11,9 +11,10 @@
 # Exit codes:
 #   0  success
 #   2  usage error
-#   3  pre-flight failure (PR state, checks, mergeability, version mismatch)
+#   3  pre-flight failure (PR state, base not main, checks, mergeability,
+#      version mismatch, or a resume whose version is not main's)
 #   4  merge failed
-#   5  tag creation failed
+#   5  tag creation failed, or the merge commit is unknown
 #   6  release workflow failed
 #
 # stdout uses STATUS:<TOKEN> lines so a wrapper
@@ -92,7 +93,19 @@ watch_run() {
 # The PR's own squash commit, not main's HEAD: another merge may already have
 # moved main.
 merge_commit_of() {
-  gh -R "$REPO" pr view "$1" --json mergeCommit -q '.mergeCommit.oid // empty'
+  local oid i
+  # GitHub can report a just-merged PR before its merge commit is filled in.
+  for i in 1 2 3 4 5; do
+    oid=$(gh -R "$REPO" pr view "$1" --json mergeCommit -q '.mergeCommit.oid // empty')
+    if [ -n "$oid" ]; then echo "$oid"; return 0; fi
+    [ "$i" = 5 ] || sleep "${MERGE_POLL_SECONDS:-2}"
+  done
+}
+
+# Releases come only from main: a PR into any other branch would tag and
+# publish a commit that main never contains.
+require_main_base() {
+  [ "$1" = "main" ] || fail "pr-base-$1-not-main" $EXIT_PREFLIGHT
 }
 
 # Tag PR $2's merge commit v$1, find the resulting release run, and watch it.
@@ -124,6 +137,10 @@ resume_merged() {
     say RESUMING "v$version (tag already exists)"
     watch_for_tag "v$version"
   else
+    # Only main's current version may be released: an older merged PR whose
+    # version was superseded must never be published after the fact.
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "bad-version-at-merge-commit: '$version'" $EXIT_PREFLIGHT
+    [ "$version" = "$MAIN_VERSION" ] || fail "resume-not-main-version: v$version, main is $MAIN_VERSION" $EXIT_PREFLIGHT
     log "tag v$version missing; finishing release"
     tag_and_watch "$version" "$pr"
   fi
@@ -175,6 +192,7 @@ log "state: $STATE"
 
 MAIN_VERSION=$(read_version_at_ref main)
 log "main version: $MAIN_VERSION"
+require_main_base "$(jq -r .baseRefName <<<"$PR_JSON")"
 
 # ───── auto-resume: PR already merged ──────────────────────────────
 

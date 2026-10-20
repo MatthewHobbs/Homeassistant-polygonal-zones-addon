@@ -14,7 +14,7 @@ Operational procedures for the release pipeline. For routine releases, use `scri
    - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter` + shellcheck on `scripts/` and `rootfs/`).
    - **build** — reusable call to `build.yml` — multi-arch docker build + per-arch boot-smoke + Playwright smoke (`scripts/ui_smoke.py`: draw→save round-trip, a11y aria-labels, tile-picker assertions). It stops a tag publishing an image that has never booted. Its arch matrix is also the one **publish** uses.
    - **publish** — per arch: refuses to push if `<version>` is already on GHCR from a different commit (see **Publish refuses: version already published from another commit**), then builds and pushes `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`, labelled `org.opencontainers.image.revision=<commit>`, and attaches a Sigstore build-provenance attestation (keyless, via GitHub OIDC — no secret required).
-   - **release** — extracts the CHANGELOG section for the version and creates/updates the GitHub Release.
+   - **release** — creates or updates the GitHub Release from the CHANGELOG notes the **version** job extracted.
    - **notify-failure** — opens a GitHub issue if any upstream job of a real (tag, not dry-run) release failed.
 
 Supervisor picks up the new version within minutes via its addon-update check.
@@ -41,7 +41,7 @@ A pull request that changes `release.yml`, `build.yml`, `test.yml`, `lint.yml` o
 
 ### Partial-matrix publish failure
 
-One or more arch `Publish (<arch>)` jobs fail mid-matrix (GHCR auth timeout, rate limit, transient network). `:latest` was removed in #68, so there's no drift there — but users on the failed arches silently stay on the previous version.
+One or more arch `Publish (<arch>)` jobs fail mid-matrix (GHCR auth timeout, rate limit, transient network). There is no `:latest` tag, so there's no drift there — but users on the failed arches silently stay on the previous version.
 
 1. **Identify failed arches** from the `notify-failure` issue or the workflow run page.
 2. **Retry failed jobs** via **Actions → Release addon → <run> → Re-run failed jobs**. This re-runs only the failed matrix legs, re-pushing their images under the same version tag. A re-run is the same commit, so the overwrite check passes even if the failed leg had already pushed its image.
@@ -106,7 +106,7 @@ Note: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-
 1. Check the `Attest build provenance` step output in the `publish` job.
 2. Most common cause: the `publish` job's `permissions:` block is missing `id-token: write` / `attestations: write` (the workflow-level default is read-only, so they must be granted on the job), or `steps.build.outputs.digest` is empty (the `docker/build-push-action` step must have `id: build` and `push: true`). The image push itself has already succeeded by this point, so the image is published but unattested.
 3. **Safe regression** if you need to ship while attestation is broken: the image is usable without the attestation (the Supervisor does not gate installs on it). Re-run the failed `publish` job after fixing permissions, or attach the attestation out-of-band with `gh attestation` against the pushed digest.
-4. Verify a published image: `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs`.
+4. Verify a published image: `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs --source-ref refs/tags/v<version> --signer-workflow MatthewHobbs/Homeassistant-polygonal-zones-addon/.github/workflows/release.yml` (the source ref and workflow pin the attestation to the tag's own release run, not a dry run).
 
 ### Tag pushed before version was bumped in config.yaml
 

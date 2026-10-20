@@ -68,7 +68,8 @@
     },
     {
       "customType": "regex",
-      // The devcontainer, Playwright and registry images the Supervisor pilot runs, each a
+      // The devcontainer and registry images the Supervisor pilot runs (Playwright is
+      // bumped by hand, see below), each a
       // quoted `name:tag@digest`. The tag is the exact upstream tag (6-apps, v1.63.0-noble),
       // so the lookup can find it; a tag that does not exist upstream fails silently.
       "description": "Keep the Supervisor pilot's digest-pinned images fresh",
@@ -81,7 +82,7 @@
     {
       "customType": "regex",
       "description": "Track the digest-pinned BuildKit image release.yml's publish job builds with",
-      "managerFilePatterns": ["/^\\.github/workflows/release\\.yml$/"],
+      "managerFilePatterns": ["/^\\.github/workflows/(release|build)\\.yml$/"],
       "matchStrings": [
         "image=(?<depName>moby/buildkit):(?<currentValue>v[\\d.]+)@(?<currentDigest>sha256:[a-f0-9]{64}) # v[\\d.]+",
       ],

@@ -16,6 +16,12 @@ TARGET="$REPO_ROOT/scripts/release-merge.sh"
 REPO="owner/repo"
 # shellcheck disable=SC2034
 EXIT_TAG=5
+# shellcheck disable=SC2034
+EXIT_PREFLIGHT=3
+# shellcheck disable=SC2034
+MAIN_VERSION="1.2.3"
+# shellcheck disable=SC2034
+MERGE_POLL_SECONDS=0
 MERGE_OID="1111111111111111111111111111111111111111"
 MAIN_HEAD="2222222222222222222222222222222222222222"
 CALLS="$(mktemp -d)"
@@ -23,7 +29,7 @@ trap 'rm -rf "$CALLS"' EXIT
 fails=0
 
 extract() { sed -n "/^$1() {/,/^}/p" "$TARGET"; }
-for fn in merge_commit_of tag_and_watch resume_merged; do
+for fn in require_main_base merge_commit_of tag_and_watch resume_merged; do
   body="$(extract "$fn")"
   [ -n "$body" ] || { echo "not ok - $fn not found in $TARGET"; exit 1; }
   eval "$body"
@@ -33,7 +39,7 @@ say() { :; }
 log() { :; }
 fail() { echo "STATUS:FAILED $1" >&2; exit "${2:-1}"; }
 watch_for_tag() { echo "$1" >"$CALLS/watched"; }
-read_version_at_ref() { echo "$1" >"$CALLS/version-ref"; echo "1.2.3"; }
+read_version_at_ref() { echo "$1" >"$CALLS/version-ref"; echo "${STUB_VERSION-1.2.3}"; }
 
 # shellcheck disable=SC2317,SC2329 # called from the eval'd bodies
 gh() {
@@ -80,6 +86,10 @@ else
 fi
 STUB_TAG_EXISTS=1 check "resume path with the tag present tags nothing" 0 none resume_merged 42
 STUB_NO_MERGE=1 check "an unknown merge commit stops before tagging" 5 none tag_and_watch 1.2.3 42
+STUB_VERSION=1.2.2 check "resume refuses a version that is not main's" 3 none resume_merged 42
+STUB_VERSION="" check "resume refuses an unreadable version" 3 none resume_merged 42
+check "a PR into main passes the base check" 0 none require_main_base main
+check "a PR into another branch is refused" 3 none require_main_base feature
 
 # shellcheck disable=SC2034
 DRY_RUN=1
