@@ -148,7 +148,7 @@ function loadMap() {
         zoneList: elements['.zone-list'],
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         editZone: (detail) => vm.runInContext('edit_zone_event', context)({ detail, target: fakeElement('zone-entry') }),
-        loadSaved: (data) => vm.runInContext('load_saved_zones', context)(data, false),
+        loadSaved: (data, restored = false) => vm.runInContext('load_saved_zones', context)(data, restored),
         bulkLoad(text) {
             pendingFile = text;
             vm.runInContext('load_bulk_json', context)();
@@ -278,4 +278,23 @@ test('finishing an edit of an unnamed zone with an empty box leaves it unnamed',
     for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', oldName: '', id });
     // Two zones named "" would be refused on save as duplicate names.
     assert.deepEqual(m.layers.map((l) => 'name' in l.feature.properties), [false, false]);
+});
+
+test('an unnamed zone without an id can be renamed', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed(null))));
+    m.editZone({ editing: false, name: 'Shed', oldName: '', id: null });
+    assert.equal(m.layers[0].feature.properties.name, 'Shed');
+});
+
+test('first load keeps a remembered view instead of centring on the zones', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))), true);
+    assert.ok(!m.calls.some((c) => Array.isArray(c) && c[0] === 'setView'));
+});
+
+test('first load of no zones offers the load button', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection()));
+    assert.ok(m.calls.includes('create_load_btn'));
 });

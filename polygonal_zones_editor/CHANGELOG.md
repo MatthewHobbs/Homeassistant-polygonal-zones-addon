@@ -4,41 +4,41 @@
 
 - **Fixed: loading zones from a file now tells you when it can't.** A file
   with no zones in it, JSON that is not GeoJSON, anything other than
-  polygons, or a zone name that is not text is reported with a message at the top of the page, and
-  your current zones are left as they were. Before, the zones on screen
-  were cleared before the file was checked, so an empty or unusable file
-  wiped them, a file of points loaded as markers, and a zone with no
-  properties broke the zone list.
+  polygons, or a zone name that is not text is reported with a message at
+  the top of the page, and your current zones are left as they were.
+  Before, the zones on screen were cleared before the file was checked, so
+  an empty or unusable file wiped them, a file of points loaded as markers,
+  and a zone with no properties broke the zone list.
 - **Fixed: saved zones without a name behave.** A saved zone with null
   properties no longer breaks the zone list, a zone without a name is listed
-  with an empty name rather than "undefined", and finishing an edit of one
-  with an empty name leaves it unnamed instead of naming it "" (two such zones
-  could not be saved). A saved feature that is not a polygon, which the
-  add-on has refused to save for a long time, is no longer drawn: a message
-  says it will be dropped on the next save, where before every save failed.
-- **Changed: every range listed in `trusted_proxies` now logs a warning**,
-  since every address in it is believed about which client it forwards for.
-  List each proxy's own IP to silence it. A range written in a non-canonical
-  IPv6 spelling (such as `2001:DB8::/32`) no longer draws the host-bits
-  warning.
+  with an empty name rather than "undefined" and can be renamed, and
+  finishing an edit of one with an empty name leaves it unnamed instead of
+  naming it "" (two such zones could not be saved). A saved feature that is
+  not a polygon, which the add-on has refused to save for a long time, is no
+  longer drawn: a message says it will be dropped on the next save, where
+  before every save failed.
+- **Changed: the health check fails when the zones file can't be read by the
+  add-on**, not only when it is missing.
+- **Changed: `trusted_proxies`.** An entry that means every address, in any
+  spelling (such as `0::/0`), is refused. Every range now logs a warning,
+  since every address in it is believed about which client it forwards for;
+  list each proxy's own IP to silence it. A range in a non-canonical IPv6
+  spelling (such as `2001:DB8::/32`) no longer draws the host-bits warning.
 - **Changed: a client hitting the failed-attempt limit on `GET /trackers.json`
-  is now logged**, as it already was on `/zones.json` and `/save_zones`.
-- **Changed: the record of failed attempts is swept at most once a second**,
-  so a flood of failures from many addresses no longer costs a full sweep
-  each.
+  is now logged**, as it already was on `/zones.json` and `/save_zones`, and
+  the record of failed attempts is swept at most once a second, so a flood
+  of failures from many addresses no longer costs a full sweep each.
+- **Changed: `GET /zones.json` no longer sends `Pragma` or `Expires`.**
+  `Cache-Control: no-store` already says the same to every current client.
 - **Docs:** rolling back to a chosen earlier version is not possible — the
-  Supervisor's `update` takes no version — so the runbook now offers a
-  forward fix or the add-on's own pre-update backup. The `homeassistant_api`
-  grant is described as it is: applied at install and not read-only, with an
-  empty `overlay_entities` meaning only that it goes unused. A failing health
+  Supervisor's `update` takes no version — so the runbook offers a forward
+  fix or the add-on's own pre-update backup, and the 32-bit hosts note no
+  longer suggests pinning an old version. The `homeassistant_api` grant is
+  described as it is: applied at install and not read-only, with an empty
+  `overlay_entities` meaning only that it goes unused. A failing health
   check marks the container unhealthy; the claim that Supervisor then
   restarts it was unverified and is removed. A new **Privacy and data**
   section says what backups, map tiles, your browser and the log keep.
-- **Changed: `GET /zones.json` no longer sends `Pragma` or `Expires`.**
-  `Cache-Control: no-store` already says the same to every current client.
-- **Changed: the health check fails when the zones file can't be read by the
-  add-on**, not only when it is missing, and a `trusted_proxies` entry that
-  means every address, in any spelling (such as `0::/0`), is refused.
 - Internal: one authorisation gate for the three gated routes, and dead code
   and stale comments removed.
 

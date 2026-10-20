@@ -59,8 +59,10 @@ The `Refuse to overwrite a different build of this version` step in `Publish (<a
 **Option B — restore the add-on's partial backup.** This exists only if the user updated with backups on: the backup toggle in the UI's update dialog, or from a Supervisor shell:
 
 ```sh
-ha apps update polygonal_zones --backup
+ha apps update <slug> --backup
 ```
+
+`<slug>` is the add-on's installed slug, which ends in `_polygonal_zones` (a repository-specific prefix comes first); `ha apps info` on the add-on shows it.
 
 Restoring that backup (**Settings → System → Backups**) puts back the add-on as it was before the update. There is no way to install a chosen earlier version instead: the CLI's `update` takes only `--backup`, and its help says "It is currently not possible to upgrade/downgrade to a specific version."
 

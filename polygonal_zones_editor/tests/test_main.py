@@ -1262,7 +1262,9 @@ def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dange
         result = main._parse_trusted_proxies({"trusted_proxies": dangerous})
 
     assert result == []
-    assert any(dangerous in rec.message for rec in caplog.records)
+    # The message names the rule that fired, not just any rule.
+    expected = "covers the HA ingress IP" if dangerous == "172.30.32.2" else "means every address"
+    assert any(expected in rec.message for rec in caplog.records)
 
 
 def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplog):
@@ -1944,10 +1946,14 @@ def test_healthz_returns_503_when_zones_file_cannot_be_read(restricted_client, t
 
 
 @pytest.mark.parametrize("entry", ["0::/0", "::0/0", "0.0.0.0/00", "0.0.0.0", "::"])
-def test_parse_trusted_proxies_refuses_any_spelling_of_everything(app_factory, entry):
+def test_parse_trusted_proxies_refuses_any_spelling_of_everything(app_factory, entry, caplog):
+    import logging
+
     import main
 
-    assert main._parse_trusted_proxies({"trusted_proxies": entry}) == []
+    with caplog.at_level(logging.ERROR):
+        assert main._parse_trusted_proxies({"trusted_proxies": entry}) == []
+    assert any("means every address" in rec.message for rec in caplog.records)
 
 
 def test_save_without_credentials_is_403_not_415(restricted_client):

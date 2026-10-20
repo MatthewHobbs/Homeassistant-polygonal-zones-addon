@@ -443,13 +443,14 @@ function edit_zone_event(e) {
     editableLayers.eachLayer(layer => { if (layer.pm) layer.pm.disable(); });
     document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
 
-    let oldName = e.detail.oldName || e.detail.name
+    // An unnamed zone's entry reports an empty oldName; it still names this zone.
+    let oldName = e.detail.oldName ?? e.detail.name
     // Match on the stable id when we have one (two zones can share a display
     // name); fall back to name for zones from a pre-versioned file with no id.
     let layer =
         (e.detail.id &&
             editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id)) ||
-        editableLayers.getLayers().find(l => l.feature.properties.name === oldName);
+        editableLayers.getLayers().find(l => (l.feature.properties.name ?? '') === oldName);
 
     // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
