@@ -273,21 +273,7 @@ function generate_map(zones_url) {
             try { data = JSON.parse(json); }
             catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
 
-            const {skipped} = add_zones(data, false);
-            const count = editableLayers.getLayers().length;
-            render_zone_list();
-            if (skipped) {
-                show_transient_error(`${skipped} saved feature(s) are not named polygon zones and were not loaded.`);
-            }
-            // Only centre on the zones when the user hasn't positioned the
-            // viewport before (#130): their remembered center/zoom wins.
-            if (count > 0) {
-                if (!restoredViewport) {
-                    map.setView(editableLayers.getBounds().getCenter(), 13);
-                }
-            } else {
-                create_load_btn();
-            }
+            load_saved_zones(data, restoredViewport);
         })
         .catch(err => {
             console.error('Failed to load zones:', err);
@@ -624,28 +610,45 @@ function show_transient_error(message) {
     setTimeout(() => el.remove(), 5000);
 }
 
-/* Add the named polygon zones in `data`; return {count, skipped}. Layers are
- * built before anything changes. With `replace`, anything that is not a named
- * polygon throws and leaves the editor as it was, and the current zones are
- * cleared only when there is something to replace them with. Without it
- * (the first load), zones are added beside any already drawn and the rest is
- * skipped and counted. */
+/* Show the saved zones from the first load. They join any zone drawn while
+ * the fetch was in flight rather than replacing it. */
+function load_saved_zones(data, restoredViewport) {
+    const {skipped} = add_zones(data, false);
+    render_zone_list();
+    if (skipped) {
+        show_transient_error(`${skipped} saved feature(s) are not polygon zones and were not loaded.`);
+    }
+    if (editableLayers.getLayers().length > 0) {
+        // A remembered view (#130) wins over centring on the zones.
+        if (!restoredViewport) map.setView(editableLayers.getBounds().getCenter(), 13);
+    } else {
+        create_load_btn();
+    }
+}
+
+/* Add the polygon zones in `data`; return {count, skipped}. Layers are built
+ * before anything changes. With `replace`, anything that is not a polygon
+ * throws and leaves the editor as it was, and the current zones are cleared
+ * only when there is something to replace them with. Without it (the first
+ * load), zones are added beside any already drawn and anything else is
+ * skipped and counted. A zone needs no name: the server accepts unnamed ones,
+ * and dropping them here would delete them on the next save. */
 function add_zones(data, replace) {
     const layers = [];
     L.geoJSON(data, {
         style: () => ({color: window.ZONE_COLOUR}),
         onEachFeature: (feature, layer) => {
+            // GeoJSON allows null properties; the editor reads and writes them.
+            if (!feature.properties) feature.properties = {};
             layer.bindPopup(name_popup_element(feature));
             layers.push(layer);
         },
     });
-    // Polygon covers MultiPolygon too; the server refuses anything else, and
-    // the editor needs each zone's name.
-    const zones = layers.filter(layer => layer instanceof L.Polygon
-        && layer.feature.properties && typeof layer.feature.properties.name === 'string');
+    // Polygon covers MultiPolygon too; the server refuses anything else.
+    const zones = layers.filter(layer => layer instanceof L.Polygon);
     const skipped = layers.length - zones.length;
     if (replace) {
-        if (skipped) throw new Error('not named polygon zones');
+        if (skipped) throw new Error('not polygon zones');
         if (!zones.length) return {count: 0, skipped: 0};
         editableLayers.clearLayers();
     }

@@ -14,6 +14,16 @@ def chdir_to_app(monkeypatch):
     monkeypatch.chdir(APP_DIR)
 
 
+@pytest.fixture(autouse=True)
+def reset_failure_sweep():
+    # The sweep clock is module state; a test that fakes time must not leak it.
+    import main
+
+    main._last_sweep = 0.0
+    yield
+    main._last_sweep = 0.0
+
+
 @pytest.fixture
 def tmp_zones_file(tmp_path, monkeypatch):
     import const

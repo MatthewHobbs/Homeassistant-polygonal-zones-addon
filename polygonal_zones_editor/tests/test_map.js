@@ -144,6 +144,7 @@ function loadMap() {
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
+        loadSaved: (data) => vm.runInContext('load_saved_zones', context)(data, false),
         bulkLoad(text) {
             pendingFile = text;
             vm.runInContext('load_bulk_json', context)();
@@ -207,30 +208,39 @@ test('bulk load of a file that is not JSON says so', () => {
     assert.equal(m.layers.length, 1);
 });
 
-test('bulk load of a feature with null properties is refused before clearing', () => {
+const unnamed = (properties) => ({
+    type: 'Feature', properties,
+    geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
+});
+
+test('bulk load accepts polygons without a name, as the server does', () => {
     const m = withExistingZone();
-    m.bulkLoad(collection({
-        type: 'Feature', properties: null,
-        geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
-    }));
-    assert.equal(m.errors.length, 1);
-    assert.ok(!m.calls.includes('clearLayers'));
-    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home']);
+    m.bulkLoad(collection(unnamed(null), unnamed({ id: 'abc' })));
+    assert.deepEqual(m.errors, []);
+    assert.equal(m.layers.length, 2);
+    assert.deepEqual(m.layers.map((l) => JSON.stringify(l.feature.properties)), ['{}', '{"id":"abc"}']);
+});
+
+test('first load keeps unnamed zones, so a save cannot drop them', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'), unnamed({ id: 'abc' }), unnamed(null))));
+    assert.deepEqual(m.errors, []);
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.id || l.feature.properties.name || null),
+        ['A', 'abc', null]);
 });
 
 test('first load adds to zones already drawn instead of replacing them', () => {
     const m = withExistingZone();
-    const result = m.addZones(JSON.parse(collection(polygon('A'))), false);
-    assert.equal(result.count, 1);
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
     assert.ok(!m.calls.includes('clearLayers'), 'a zone drawn before the load finished was cleared');
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home', 'A']);
 });
 
-test('first load keeps the polygon zones and counts what it skipped', () => {
+test('first load keeps the polygon zones and says what it skipped', () => {
     const m = loadMap();
-    const result = m.addZones(JSON.parse(collection(polygon('A'), {
+    m.loadSaved(JSON.parse(collection(polygon('A'), {
         type: 'Feature', properties: { name: 'Pin' }, geometry: { type: 'Point', coordinates: [0, 0] },
-    })), false);
-    assert.deepEqual([result.count, result.skipped], [1, 1]);
+    })));
+    assert.deepEqual(m.errors, ['1 saved feature(s) are not polygon zones and were not loaded.']);
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A']);
 });

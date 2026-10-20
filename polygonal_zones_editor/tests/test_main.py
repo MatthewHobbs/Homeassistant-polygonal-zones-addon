@@ -20,10 +20,8 @@ def reset_save_rate_limit():
     import main
 
     main._auth_failures.clear()
-    main._last_sweep = 0.0
     yield
     main._auth_failures.clear()
-    main._last_sweep = 0.0
 
 
 @pytest.fixture
@@ -1945,7 +1943,7 @@ def test_healthz_returns_503_when_zones_file_cannot_be_read(restricted_client, t
     assert r.status_code == 503
 
 
-@pytest.mark.parametrize("entry", ["0::/0", "::0/0", "0.0.0.0/00"])
+@pytest.mark.parametrize("entry", ["0::/0", "::0/0", "0.0.0.0/00", "0.0.0.0", "::"])
 def test_parse_trusted_proxies_refuses_any_spelling_of_everything(app_factory, entry):
     import main
 
@@ -1955,3 +1953,9 @@ def test_parse_trusted_proxies_refuses_any_spelling_of_everything(app_factory, e
 def test_save_without_credentials_is_403_not_415(restricted_client):
     r = restricted_client.post("/save_zones", content=b"{}", headers={"Content-Type": "text/plain"})
     assert r.status_code == 403
+
+
+def test_parse_trusted_proxies_keeps_a_range_that_starts_at_zero(app_factory):
+    import main
+
+    assert main._parse_trusted_proxies({"trusted_proxies": "0.0.0.0/8"}) == ["0.0.0.0/8"]

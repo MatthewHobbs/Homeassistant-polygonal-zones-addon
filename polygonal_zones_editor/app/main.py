@@ -962,13 +962,18 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
             iface_ip = ipaddress.ip_interface(entry).ip
         except ValueError:
             net = iface_ip = None
-        # Every spelling of "all addresses" (::/0, 0::/0, 0.0.0.0/0, ...).
+        # Every spelling of "all addresses": a /0 network (::/0, 0::/0,
+        # 0.0.0.0/0, ...) or the bare unspecified address (0.0.0.0, ::).
         if entry == "*" or (
-            net is not None and (net.prefixlen == 0 or net.network_address.is_unspecified)
+            net is not None
+            and (
+                net.prefixlen == 0
+                or (net.num_addresses == 1 and net.network_address.is_unspecified)
+            )
         ):
             _LOGGER.error(
-                "Refusing a wildcard trusted_proxies entry (one of "
-                "*, 0.0.0.0, 0.0.0.0/0, ::, ::/0). It would let any client "
+                "Refusing a trusted_proxies entry that means every address "
+                "(such as *, 0.0.0.0/0 or ::/0). It would let any client "
                 "choose the address it is logged and rate-limited as. "
                 "Dropping this entry; fix the option in the addon configuration."
             )
