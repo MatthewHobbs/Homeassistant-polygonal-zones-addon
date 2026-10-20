@@ -83,6 +83,14 @@
       "groupName": "supervisor-pilot-images",
     },
     {
+      // The image's browsers must match the hash-locked playwright== in
+      // scripts/supervisor-probe-requirements.txt, which no bot can regenerate. Bump both by
+      // hand together, with the command in that file's header.
+      "description": "Playwright image and its client lockfile are bumped together by hand.",
+      "matchPackageNames": ["mcr.microsoft.com/playwright/python"],
+      "enabled": false,
+    },
+    {
       "description": "One PR for all GitHub Actions, matching the grouping Dependabot used before this change.",
       "matchManagers": ["github-actions"],
       "groupName": "actions",
