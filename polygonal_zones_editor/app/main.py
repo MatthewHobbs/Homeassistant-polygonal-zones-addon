@@ -869,8 +869,8 @@ async def healthz(_request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
-    """Build the ASGI app exactly as it is served, plus uvicorn's log config.
+def generate_app(options: dict) -> TransportPeerMiddleware:
+    """Build the ASGI app exactly as it is served.
 
     Proxy headers are applied here rather than by uvicorn, inside the layer
     that records the TCP peer, so serve it with ``proxy_headers=False``.
@@ -886,15 +886,6 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
         # precedence on their exact paths.
         Mount("/", app=StaticFiles(directory=static_folder, html=True), name="static"),
     ]
-
-    log_config = uvicorn.config.LOGGING_CONFIG
-    log_config["version"] = 1
-    log_config["disable_existing_loggers"] = False
-    # Quiet the access log: uvicorn's default access logger records the client
-    # IP + request line for every request at INFO, which the Supervisor add-on
-    # log surfaces to any HA user. Client IP is personal data (GDPR Recital 30)
-    # and the add-on log has no retention control, so raise it to WARNING.
-    log_config.setdefault("loggers", {}).setdefault("uvicorn.access", {})["level"] = "WARNING"
 
     middleware = [
         Middleware(AuthoriseMiddleware, options=options),
@@ -921,7 +912,7 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
             len(proxy_ip_allowlist),
         )
         app = ProxyHeadersMiddleware(app, trusted_hosts=proxy_ip_allowlist)
-    return TransportPeerMiddleware(app), log_config
+    return TransportPeerMiddleware(app)
 
 
 # Ingress is decided by the TCP peer (TransportPeerMiddleware), never by a
@@ -1075,9 +1066,12 @@ if __name__ == "__main__":  # pragma: no cover
         )
     log_retired_allow_all_ips(options)
 
-    app, log_config = generate_app(options)
     # generate_app applies trusted_proxies itself, inside the layer that
     # records the TCP peer; uvicorn's own proxy handling (on by default)
     # would rewrite the client before that record is taken.
+    # No access log: it records every client's IP and request line at INFO in
+    # an add-on log any HA user can read and nothing expires.
     # Port 8000 is what config.yaml's ingress_port and the HEALTHCHECK expect.
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=log_config, proxy_headers=False)
+    uvicorn.run(
+        generate_app(options), host="0.0.0.0", port=8000, access_log=False, proxy_headers=False
+    )

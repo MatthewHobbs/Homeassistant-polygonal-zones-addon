@@ -30,7 +30,7 @@ def app_factory(tmp_zones_file):
     import main
 
     def _build(options=None):
-        app, _ = main.generate_app(options or {})
+        app = main.generate_app(options or {})
         return app
 
     return _build
@@ -875,7 +875,7 @@ def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
     token is set — the HA UI's zones.json fetch must keep working."""
     import main
 
-    app, _ = main.generate_app({"save_token": "sekrit"})
+    app = main.generate_app({"save_token": "sekrit"})
     client = TestClient(app)
     import helpers
 
@@ -898,7 +898,7 @@ def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
 
     import main
 
-    app, _ = main.generate_app({"save_token": "s3cret"})
+    app = main.generate_app({"save_token": "s3cret"})
     # Simulate a request from the ingress IP.
     client = TC(app, base_url="http://172.30.32.2")
     # TestClient doesn't expose a way to set request.client.host directly, so

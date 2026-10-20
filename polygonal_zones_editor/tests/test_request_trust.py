@@ -59,6 +59,7 @@ def boot(tmp_path, tmp_zones_file, tmp_options_file, monkeypatch):
 
         monkeypatch.setattr(uvicorn, "run", fake_run)
         runpy.run_path(str(APP_DIR / "main.py"), run_name="__main__")
+        _boot.run_kwargs = captured["kwargs"]
 
         kwargs = {
             k: v
@@ -127,6 +128,13 @@ def test_forwarded_header_ignored_without_trusted_proxies(boot):
     assert client.get("/zones.json", headers={"X-Forwarded-For": INGRESS}).status_code == 403
 
 
+def test_uvicorn_access_log_is_off(boot):
+    # It would log every client's IP and request line at INFO.
+    boot({})
+    assert boot.run_kwargs["access_log"] is False
+    assert "log_config" not in boot.run_kwargs
+
+
 def test_uvicorn_adds_no_proxy_handling_of_its_own(boot):
     # The boot runs main.py afresh, so its class is not main's: compare names.
     served = boot({"trusted_proxies": PROXY_RANGE})
@@ -137,7 +145,7 @@ def test_app_without_peer_record_is_never_ingress(tmp_zones_file):
     """The Starlette app alone, without the outer layer, fails closed."""
     import main
 
-    served, _ = main.generate_app({"save_token": TOKEN})
+    served = main.generate_app({"save_token": TOKEN})
     client = TestClient(served.app, client=(INGRESS, 5000))
     assert client.get("/zones.json").status_code == 403
 
@@ -145,7 +153,7 @@ def test_app_without_peer_record_is_never_ingress(tmp_zones_file):
 def test_lifespan_passes_through_the_peer_layer(tmp_zones_file):
     import main
 
-    served, _ = main.generate_app({"trusted_proxies": "10.0.0.5"})
+    served = main.generate_app({"trusted_proxies": "10.0.0.5"})
     with TestClient(served, client=(INGRESS, 5000)) as client:
         assert client.get("/zones.json").status_code == 200
 
@@ -158,7 +166,7 @@ def open_client(tmp_zones_file):
     import main
 
     main._auth_failures.clear()
-    app, _ = main.generate_app({})
+    app = main.generate_app({})
     yield TestClient(app, client=(INGRESS, 5000))
     main._auth_failures.clear()
 
@@ -226,7 +234,7 @@ def test_cross_site_refusal_ignores_a_valid_token_and_spends_no_budget(tmp_zones
     import main
 
     main._auth_failures.clear()
-    app, _ = main.generate_app({"save_token": TOKEN})
+    app = main.generate_app({"save_token": TOKEN})
     client = TestClient(app)
     headers = {"Sec-Fetch-Site": "cross-site", "X-Save-Token": TOKEN}
     for _ in range(main._AUTH_FAILURE_LIMIT + 1):
@@ -358,7 +366,7 @@ def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     import main
 
     main._auth_failures.clear()
-    app, _ = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
+    app = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
     client = TestClient(app, client=HOST_IN_PROXY_RANGE)
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 5)
     clock = [1_000_000.0]
