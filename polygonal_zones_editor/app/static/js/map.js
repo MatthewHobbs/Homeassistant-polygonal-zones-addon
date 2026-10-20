@@ -304,11 +304,10 @@ function generate_map(zones_url) {
 }
 
 function setup_editing(map, editableLayers) {
-    // Geoman replaces Leaflet-Draw here. Only the controls this editor needs
-    // are enabled: zones are polygons, so every other shape is off.
-    // drawRectangle stays on: a rectangle is drawn as an L.Rectangle, which
-    // extends L.Polygon, so toGeoJSON() below emits a plain Polygon
-    // indistinguishable from one drawn point-by-point (ADR 0002 row 11).
+    // Only the controls this editor needs are enabled: zones are polygons, so
+    // every other shape is off. drawRectangle stays on: a rectangle is drawn
+    // as an L.Rectangle, which extends L.Polygon, so toGeoJSON() emits a
+    // plain Polygon indistinguishable from one drawn point-by-point.
     map.pm.setGlobalOptions({
         allowSelfIntersection: false,
         snappable: true,
@@ -339,8 +338,8 @@ function setup_editing(map, editableLayers) {
         drawText: false,
     });
 
-    // Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman needs more work here
-    // than Leaflet-Draw did, in two different ways:
+    // Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman falls short in two
+    // different ways:
     //
     //  - Its *action* buttons (Finish, Cancel, Remove Last Vertex) carry a
     //    `title` only. Many screen readers — NVDA, VoiceOver on iOS — ignore or
@@ -382,8 +381,8 @@ function setup_editing(map, editableLayers) {
             });
     });
 
-    // Geoman removes one layer per click, so unlike Leaflet-Draw's batched
-    // draw:deleted there is no N-deletions-one-rebuild case to optimise for.
+    // Geoman removes one layer per click, so there is no batch of deletions
+    // to fold into one rebuild.
     map.on('pm:remove', function (e) {
         editableLayers.removeLayer(e.layer);
         render_zone_list();
@@ -426,10 +425,9 @@ function setup_editing(map, editableLayers) {
             }
         };
 
-        // Geoman adds the new shape to the map itself, unlike Leaflet-Draw
-        // which handed over an unattached layer. Take it off the map before
-        // handing it to editableLayers, or it ends up owned by both and a
-        // later group removal leaves an orphan rendering on the map.
+        // Geoman adds the new shape to the map itself. Take it off the map
+        // before handing it to editableLayers, or it ends up owned by both
+        // and a later group removal leaves an orphan rendering on the map.
         map.removeLayer(layer);
         editableLayers.addLayer(layer);
         render_zone_list();
@@ -541,10 +539,8 @@ function save_zones() {
     }
 
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
-    // round-trip. The previous hand-assembly read _latlngs[0] only, which
-    // silently converted MultiPolygon zones (loaded from zones.json or via
-    // bulk-load) back into a single-ring Polygon — losing every ring
-    // beyond the first.
+    // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
+    // a single-ring Polygon, losing every ring beyond the first.
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
@@ -587,11 +583,9 @@ function save_zones() {
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
             mark_clean();
-            // Success auto-clears at 2s (same as before). #123 only changed
-            // the error paths below — they used to auto-clear in 2s too,
-            // which was too short for a user not looking at the button
-            // (especially on mobile). Error state now persists until the
-            // user's next save click, handled at the top of save_zones().
+            // Success auto-clears at 2s. Errors below persist until the next
+            // save click (top of save_zones()): 2s is too short for a user
+            // not looking at the button, especially on mobile.
             setTimeout(() => {
                 elem.classList.remove('success');
                 if (status && status.textContent === 'Zones saved.') status.textContent = '';

@@ -221,10 +221,9 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
 
 # Content-Security-Policy tailored to the addon's frontend.
 #
-# Leaflet and Leaflet-Draw are vendored under app/static/vendor/ (0.2.32,
-# #122) so script-src / style-src / img-src no longer need unpkg.com.
-# script-src dropped 'unsafe-inline' along with the Save button's inline
-# onclick (#128) — the only inline script-src user that remained.
+# Leaflet and Leaflet-Geoman are vendored under app/static/vendor/, so
+# script-src and style-src need no CDN. The editor has no inline script, so
+# script-src needs no 'unsafe-inline'.
 #
 # style-src KEEPS 'unsafe-inline': Leaflet injects runtime inline styles
 # for tile positioning (transform translate3d on every tile); without
@@ -236,10 +235,9 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
 # Imagery) plus data:/blob: for Leaflet's inline-rendered markers.
 #
 # frame-ancestors permits HA ingress (same-origin under HA's web frontend,
-# covered by 'self') and Nabu Casa remote. The prior *.home-assistant.io
-# entry was a typo — that's HA's marketing / docs domain, not any
-# iframe-embedding origin, and allowing it widened the clickjacking
-# surface to anyone hosting on a home-assistant.io subdomain.
+# covered by 'self') and Nabu Casa remote. Not *.home-assistant.io: that is
+# HA's docs domain, not an embedding origin, and listing it would let any
+# page hosted there frame the editor.
 _CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -867,24 +865,15 @@ def zones_json_generator(options: dict):
             if etag in candidates or "*" in candidates:
                 return Response(status_code=304, headers=base_headers)
 
-        return Response(
-            content=body,
-            media_type="application/json",
-            headers={
-                **base_headers,
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        )
+        return Response(content=body, media_type="application/json", headers=base_headers)
 
     return zones_json
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
     # Verify the zones file is accessible — /healthz drives the Docker
-    # HEALTHCHECK which drives Supervisor's container-restart signal. A
-    # process-alive-only check would leave users in a broken-but-"running"
-    # state when zones.json becomes unreadable.
+    # HEALTHCHECK, so an unreadable zones.json marks the container unhealthy
+    # rather than leaving it broken but reported as running.
     try:
         os.stat(ZONES_FILE)
     except OSError:
@@ -1104,10 +1093,4 @@ if __name__ == "__main__":  # pragma: no cover
     # generate_app applies trusted_proxies itself, inside the layer that
     # records the TCP peer; uvicorn's own proxy handling (on by default)
     # would rewrite the client before that record is taken.
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_config=log_config,
-        proxy_headers=False,
-    )
+    uvicorn.run(app, host="0.0.0.0", log_config=log_config, proxy_headers=False)

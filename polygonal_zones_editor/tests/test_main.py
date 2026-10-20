@@ -1,6 +1,5 @@
 from collections import Counter
 import json
-import sys
 import time
 import urllib.error
 
@@ -20,10 +19,7 @@ def reset_save_rate_limit():
 
 
 @pytest.fixture
-def app_factory(tmp_zones_file, monkeypatch):
-    # Keep sys.argv clean so allow_all_ips doesn't flip via CLI flags.
-    monkeypatch.setattr(sys, "argv", ["main.py"])
-
+def app_factory(tmp_zones_file):
     import main
 
     def _build(options=None):
@@ -194,8 +190,9 @@ def test_save_without_if_match_still_works(allow_all_client, tmp_zones_file):
 def test_zones_json_sets_cache_headers(allow_all_client):
     response = allow_all_client.get("/zones.json")
     assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-    assert response.headers["pragma"] == "no-cache"
-    assert response.headers["expires"] == "0"
+    # Cache-Control: no-store already says it; the HTTP/1.0 headers add nothing.
+    assert "pragma" not in response.headers
+    assert "expires" not in response.headers
 
 
 def test_zones_json_no_wildcard_cors(allow_all_client):
@@ -216,10 +213,10 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert "etag" in body  # new in 0.2.11
-    # As of 0.2.33 the server stamps schema_version and backfills
-    # properties.id on write, so the persisted file is a normalised
-    # superset of the incoming payload rather than byte-identical.
+    assert "etag" in body
+    # The server stamps schema_version and backfills properties.id on write,
+    # so the persisted file is a normalised superset of the incoming payload
+    # rather than byte-identical.
     stored = json.loads(tmp_zones_file.read_text())
     assert stored["type"] == payload["type"]
     assert len(stored["features"]) == len(payload["features"])
@@ -237,8 +234,8 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
 
 
 def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_file):
-    """When the client supplies a stable properties.id (Leaflet-draw path
-    where the editor generates a client-side UUID), the server must
+    """When the client supplies a stable properties.id (a drawn zone, for
+    which the editor generates a client-side UUID), the server must
     round-trip it verbatim rather than overwriting with a fresh one —
     otherwise automations bound to the id would break on every save."""
     stable_id = "aaaa1111bbbb2222cccc3333dddd4444"
@@ -764,9 +761,8 @@ def test_save_token_required_when_set_and_lan_request(app_factory, tmp_zones_fil
 
 
 def test_save_token_strips_whitespace_symmetrically(app_factory, tmp_zones_file):
-    """Both stored and provided tokens are stripped before compare.
-    Previously only the stored token was stripped, so a trailing space
-    in the X-Save-Token header would fail an otherwise-correct token."""
+    """Both stored and provided tokens are stripped before compare, so a
+    trailing space in the X-Save-Token header can't fail a correct token."""
     app = app_factory({"save_token": "sekrit"})
     client = TestClient(app)
     # Trailing whitespace on the provided token should be tolerated.
@@ -796,10 +792,8 @@ def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
 
 def test_zones_json_requires_token_when_set_and_lan_request(app_factory, tmp_zones_file):
     """When save_token is set, non-ingress GET /zones.json requests must
-    present the same X-Save-Token as /save_zones. Previously (before
-    #113) /zones.json was reachable on LAN without a token once
-    allow_all_ips was on — zone geometry was less protected than the
-    less-sensitive write action."""
+    present the same X-Save-Token as /save_zones, so zone geometry is never
+    less protected than the write action."""
     app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
     client = TestClient(app)
 
@@ -951,10 +945,9 @@ def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
 def test_index_serves_static_html(allow_all_client):
     response = allow_all_client.get("/")
     assert response.status_code == 200
-    # index.html is now served by StaticFiles (html=True) — no template
-    # rendering, no per-request file open.
+    # index.html is served as a static file, not a template: the colour
+    # comes from /config.json, so no placeholder may survive in the page.
     assert "<title>Polygonal zones: Edit zones</title>" in response.text
-    # Placeholder must be gone now that ZONE_COLOUR comes from /config.json.
     assert "{{ ZONE_COLOUR }}" not in response.text
     assert "ZONE_COLOUR" not in response.text
 
@@ -1028,17 +1021,16 @@ def test_security_headers_applied(allow_all_client):
     # so we don't have to update every test when a directive is tuned.
     assert "default-src 'self'" in csp
     # frame-ancestors: only 'self' (for HA ingress same-origin) plus Nabu
-    # Casa remote access. *.home-assistant.io was removed in 0.2.32 (#128)
-    # — it was HA's marketing domain, not an iframe-embedding origin.
+    # Casa remote access; *.home-assistant.io is HA's docs domain, not an
+    # iframe-embedding origin.
     assert "frame-ancestors 'self' https://*.ui.nabu.casa" in csp
     assert "https://*.home-assistant.io" not in csp
-    # 'unsafe-inline' removed from script-src in 0.2.32 (#128) after the
-    # Save button's inline onclick moved to addEventListener. style-src
-    # still needs it for Leaflet's injected tile transforms.
+    # The editor has no inline script, so script-src needs no
+    # 'unsafe-inline'. style-src still needs it for Leaflet's injected tile
+    # transforms.
     assert "script-src 'self';" in csp
     assert "'unsafe-inline'" not in csp.split("style-src")[0]
-    # unpkg.com dropped once Leaflet + Leaflet-Draw went self-hosted in
-    # 0.2.32 (#122). Guard against anyone re-adding a CDN dep silently.
+    # The map libraries are vendored; guard against a CDN dep creeping back.
     assert "unpkg.com" not in csp
     assert "object-src 'none'" in csp
     # OSM, CARTO, and Esri World Imagery tile hosts must remain in img-src
@@ -1087,8 +1079,7 @@ def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, t
     """The companion integration's first action on every poll is
     json.loads(body) + a type check. Byte-identity passthrough isn't
     enough — the response must remain parseable GeoJSON with the right
-    Content-Type. Previously only byte-identity and empty-file shape
-    were tested.
+    Content-Type.
     """
     payload = _valid_payload(name="Home")
     r = allow_all_client.post("/save_zones", json=payload)
@@ -1104,8 +1095,8 @@ def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, t
 
 
 def test_zones_json_returns_503_when_file_unreadable(allow_all_client, tmp_zones_file):
-    """Unguarded open() previously produced a 500 with no log line. Now
-    returns 503 with a JSON body."""
+    """An unreadable file is a 503 with a JSON body and a log line, not a
+    bare 500."""
     tmp_zones_file.unlink()
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 503
@@ -1113,9 +1104,9 @@ def test_zones_json_returns_503_when_file_unreadable(allow_all_client, tmp_zones
 
 
 def test_healthz_returns_503_when_zones_missing(restricted_client, tmp_zones_file):
-    """Healthcheck now reflects zones-file readability so the Docker
+    """Healthcheck reflects zones-file readability so the Docker
     HEALTHCHECK surfaces a broken state instead of staying green while
-    /zones.json 500s."""
+    /zones.json fails."""
     tmp_zones_file.unlink()
     r = restricted_client.get("/healthz")
     assert r.status_code == 503
@@ -1255,10 +1246,9 @@ def test_parse_trusted_proxies_handles_empty_and_list(app_factory):
     ],
 )
 def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dangerous):
-    """Wildcards and the ingress IP must never be handed to uvicorn's
-    forwarded_allow_ips — doing so lets any on-path attacker forge
-    X-Forwarded-For: 172.30.32.2 and bypass the ingress-IP check on
-    /save_zones. The parser drops them and logs an error."""
+    """Wildcards and the ingress IP are never trusted as proxies: a wildcard
+    lets any client choose the address it is rate-limited as. The parser
+    drops them and logs an error."""
     import logging
 
     import main
@@ -1298,10 +1288,8 @@ def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplo
 )
 def test_parse_trusted_proxies_drops_ingress_supernets(app_factory, caplog, supernet):
     """A CIDR that contains the ingress IP (172.30.32.2) is the same
-    mistake as listing the ingress IP directly — the attacker forges
-    XFF from any IP inside the range. Previously only exact-string
-    matches were blocked; ipaddress-based containment check catches
-    the supernet bypass."""
+    mistake as listing the ingress IP directly: a containment check, not a
+    string match, so every supernet is caught."""
     import logging
 
     import main
@@ -1331,9 +1319,9 @@ def test_parse_trusted_proxies_accepts_non_ingress_cidrs(app_factory, caplog):
 
 
 def test_parse_trusted_proxies_rejects_unparseable_entries(app_factory, caplog):
-    """Hostnames and garbage strings are rejected with a typed error —
-    previously they'd silently slip through to uvicorn's
-    forwarded_allow_ips, where behaviour is undefined."""
+    """Hostnames and garbage strings are rejected with a logged error rather
+    than handed to uvicorn's forwarded_allow_ips, where behaviour is
+    undefined."""
     import logging
 
     import main

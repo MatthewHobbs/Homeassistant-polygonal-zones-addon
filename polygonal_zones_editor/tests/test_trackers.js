@@ -1,6 +1,6 @@
-// Node tests for trackers.js's polygon-with-holes measurement (ADR 0002
-// row 12). Run with `node --test tests/test_trackers.js` from
-// polygonal_zones_editor/ (also wired into CI — see lint.yml).
+// Node tests for trackers.js and the geometry.js it measures with. Run
+// with `node --test tests/test_trackers.js` from polygonal_zones_editor/
+// (also run in CI by test.yml).
 //
 // trackers.js reads Leaflet layers via layer.getLatLngs(), so these tests
 // build minimal fake layers with that one method rather than loading real
@@ -59,9 +59,6 @@ test('area subtracts the hole instead of adding it', () => {
     const withoutHole = pz_layer_area_m2(fakePolygonLayer([OUTER]));
     const withHole = pz_layer_area_m2(fakePolygonLayer([OUTER, HOLE]));
     assert.ok(withHole < withoutHole, `hole must reduce area: ${withHole} vs ${withoutHole}`);
-    // Sanity: previously (flattening rings) a hole was summed in, so this
-    // specific regression — area going *up* with a hole — is exactly what
-    // this test would have missed if it only checked "some area value".
     assert.ok(withHole > 0, 'square minus a smaller square must still have positive area');
 });
 
@@ -109,9 +106,9 @@ test('MultiPolygon: a hole in one part never subtracts from, or leaks into, anot
 });
 
 test('MultiPolygon: a point inside one part stays inside even when another part is nearer', () => {
-    // Found by adversarial review, not by hand: comparing edgeDistanceM
-    // regardless of `inside` let a closer-but-outside second part overturn
-    // an already-inside result from the first. The point below sits deep
+    // Regression test: comparing edgeDistanceM regardless of `inside` let a
+    // closer-but-outside second part overturn an already-inside result from
+    // the first. The point below sits deep
     // inside part 1 (OUTER, ~500m from its own edges) but just ~11m outside
     // part 2's edge — under the bug, part 2's smaller edgeDistanceM won the
     // comparison and overturned the correct "inside" result from part 1.

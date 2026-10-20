@@ -94,30 +94,11 @@ function pz_distance_to_ring_m(lon, lat, ring) {
     return best;
 }
 
-/* How a point relates to one ring, as a plain measurement.
- *
- * `inside` and `edgeDistanceM` are facts about geometry. `withinAccuracy` says
- * only that the point's own error circle reaches the ring — it is NOT a claim
- * that the integration would match this zone, which depends on rules that live
- * there and are deliberately not reimplemented here. */
-function pz_measure(lon, lat, ring, accuracyM) {
-    const inside = pz_point_in_ring(lon, lat, ring);
-    const edgeDistanceM = pz_distance_to_ring_m(lon, lat, ring);
-    const acc = Number.isFinite(accuracyM) && accuracyM > 0 ? accuracyM : 0;
-    return {
-        inside,
-        edgeDistanceM,
-        withinAccuracy: inside || edgeDistanceM <= acc,
-        areaM2: pz_ring_area_m2(ring),
-    };
-}
-
 /* Node (tests / local checks) and browser both, without a module system. */
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         pz_ring_area_m2,
         pz_point_in_ring,
         pz_distance_to_ring_m,
-        pz_measure,
     };
 }

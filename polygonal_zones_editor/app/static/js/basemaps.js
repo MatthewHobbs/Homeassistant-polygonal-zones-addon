@@ -1,11 +1,6 @@
-// Registry of Leaflet basemap layers used by the editor. map.js resolves
-// its initial tile layer through getDefaultBasemap() and createLayer()
-// instead of hardcoding L.tileLayer calls, so #31 (user-selectable tile
-// layers) only needs to call register() for each additional provider —
-// no further changes to map.js or index.html.
-//
-// The two seed entries are copied byte-identical from the original
-// map.js:30-37 tile layer literals so this refactor is pixel-neutral.
+// Registry of the Leaflet basemap layers the editor offers. map.js builds its
+// tile layers and the basemap picker from this list, so a provider is added
+// here, plus its tile host in main.py's CSP img-src.
 (function () {
     const osmAttrib = '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors';
 
@@ -59,10 +54,6 @@
         return entries.slice();
     }
 
-    function register(entry) {
-        entries.push(entry);
-    }
-
     function createLayer(id) {
         const entry = getBasemap(id);
         if (!entry) return null;
@@ -70,5 +61,5 @@
         return L.tileLayer(entry.url, options);
     }
 
-    window.PZBasemaps = {getBasemap, getDefaultBasemap, listBasemaps, register, createLayer};
+    window.PZBasemaps = {getDefaultBasemap, listBasemaps, createLayer};
 })();

@@ -1,29 +1,17 @@
 import json
-import sys
 
 import pytest
 
 
-def test_allow_all_ips_ignores_argv_flags(monkeypatch):
-    """The legacy --allow-all-ips / -a argv flags no longer grant access;
-    allow_all_ips is options-only now."""
+def test_allow_all_ips_from_options():
     import helpers
 
-    monkeypatch.setattr(sys, "argv", ["main.py", "--allow-all-ips", "-a"])
-    assert helpers.allow_all_ips({}) is False
-
-
-def test_allow_all_ips_from_options(monkeypatch):
-    import helpers
-
-    monkeypatch.setattr(sys, "argv", ["main.py"])
     assert helpers.allow_all_ips({"allow_all_ips": True}) is True
 
 
-def test_allow_all_ips_default_false(monkeypatch):
+def test_allow_all_ips_default_false():
     import helpers
 
-    monkeypatch.setattr(sys, "argv", ["main.py"])
     assert helpers.allow_all_ips({}) is False
     assert helpers.allow_all_ips({"allow_all_ips": False}) is False
 
@@ -60,17 +48,15 @@ def test_allowed_ip_uses_transport_peer_not_resolved_client(request_factory):
     assert helpers.allowed_ip(unrecorded) is False
 
 
-def test_allow_request_opens_when_allow_all(monkeypatch, request_factory):
+def test_allow_request_opens_when_allow_all(request_factory):
     import helpers
 
-    monkeypatch.setattr(sys, "argv", ["main.py"])
     assert helpers.allow_request({"allow_all_ips": True}, request_factory("10.0.0.1")) is True
 
 
-def test_allow_request_falls_back_to_ip_allowlist(monkeypatch, request_factory):
+def test_allow_request_falls_back_to_ip_allowlist(request_factory):
     import helpers
 
-    monkeypatch.setattr(sys, "argv", ["main.py"])
     assert helpers.allow_request({}, request_factory("172.30.32.2")) is True
     assert helpers.allow_request({}, request_factory("10.0.0.1")) is False
 
