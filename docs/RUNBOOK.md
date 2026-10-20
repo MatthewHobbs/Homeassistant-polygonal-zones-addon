@@ -112,7 +112,13 @@ Note: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-
 
 The `version` job fails at the version-match check. The release run dies before any image is pushed.
 
-1. Delete the bad tag: `git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`.
+1. Delete the bad tag. The **Release tags are immutable** ruleset refuses to delete or move a `v*` tag, for everyone, so switch it off for this step only, then switch it straight back on:
+   ```sh
+   gh api -X PUT repos/MatthewHobbs/Homeassistant-polygonal-zones-addon/rulesets/25513030 -f enforcement=disabled
+   git push --delete origin vX.Y.Z && git tag -d vX.Y.Z
+   gh api -X PUT repos/MatthewHobbs/Homeassistant-polygonal-zones-addon/rulesets/25513030 -f enforcement=active
+   ```
+   Creating a tag is not blocked, so step 3 needs no change.
 2. Bump `config.yaml` on `main` (or in a PR), merge.
 3. Re-tag: `git tag vX.Y.Z <merge-commit> && git push origin vX.Y.Z`.
 
