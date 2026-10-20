@@ -9,12 +9,13 @@
   were cleared before the file was checked, so an empty or unusable file
   wiped them, a file of points loaded as markers, and a zone with no
   properties broke the zone list.
-- **Fixed: a zone drawn while the saved zones were still loading is kept.**
-  Before, the arriving zones replaced it. A saved zone with null
-  properties now loads too, and a zone without a name is listed with an
-  empty name rather than "undefined"; a saved feature that is not a polygon
-  (which the add-on has refused to save for a long time) is skipped with a
-  message.
+- **Fixed: saved zones without a name behave.** A saved zone with null
+  properties no longer breaks the zone list, a zone without a name is listed
+  with an empty name rather than "undefined", and finishing an edit of one
+  with an empty name leaves it unnamed instead of naming it "" (two such zones
+  could not be saved). A saved feature that is not a polygon, which the
+  add-on has refused to save for a long time, is no longer drawn: a message
+  says it will be dropped on the next save, where before every save failed.
 - **Changed: every range listed in `trusted_proxies` now logs a warning**,
   since every address in it is believed about which client it forwards for.
   List each proxy's own IP to silence it. A range written in a non-canonical

@@ -110,6 +110,7 @@ function loadMap() {
 
     const document = {
         querySelector: (sel) => elements[sel] || null,
+        querySelectorAll: () => [],
         createElement(tag) {
             const el = fakeElement(tag);
             if (tag === 'input') el.files = [pendingFile];
@@ -146,6 +147,7 @@ function loadMap() {
         isDirty: () => vm.runInContext('isDirty', context),
         zoneList: elements['.zone-list'],
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
+        editZone: (detail) => vm.runInContext('edit_zone_event', context)({ detail, target: fakeElement('zone-entry') }),
         loadSaved: (data) => vm.runInContext('load_saved_zones', context)(data, false),
         bulkLoad(text) {
             pendingFile = text;
@@ -243,7 +245,7 @@ test('first load keeps the polygon zones and says what it skipped', () => {
     m.loadSaved(JSON.parse(collection(polygon('A'), {
         type: 'Feature', properties: { name: 'Pin' }, geometry: { type: 'Point', coordinates: [0, 0] },
     })));
-    assert.deepEqual(m.errors, ['1 saved feature(s) are not polygon zones and were not loaded.']);
+    assert.deepEqual(m.errors, ['1 saved feature(s) are not polygon zones; they were not loaded and the next save drops them.']);
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A']);
 });
 
@@ -261,4 +263,19 @@ test('an unnamed zone is listed with an empty name, not "undefined"', () => {
     const entries = m.zoneList.children.filter((c) => c.tagName === 'ZONE-ENTRY');
     assert.equal(entries.length, 1);
     assert.equal(entries[0].attributes.name, '');
+});
+
+test('bulk load accepts a null name, as the server does', () => {
+    const m = withExistingZone();
+    m.bulkLoad(collection(unnamed({ name: null })));
+    assert.deepEqual(m.errors, []);
+    assert.equal(m.layers.length, 1);
+});
+
+test('finishing an edit of an unnamed zone with an empty box leaves it unnamed', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed({ id: 'a' }), unnamed({ id: 'b' }))));
+    for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', oldName: '', id });
+    // Two zones named "" would be refused on save as duplicate names.
+    assert.deepEqual(m.layers.map((l) => 'name' in l.feature.properties), [false, false]);
 });

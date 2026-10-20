@@ -457,7 +457,10 @@ function edit_zone_event(e) {
         layer.pm.enable({ allowSelfIntersection: false });
     } else {
         // once we stop we will disable editing and save the changes
-        layer.feature.properties.name = e.detail.name;
+        // An empty box leaves the zone unnamed: two zones named "" would be
+        // refused on save as duplicates.
+        if (e.detail.name) layer.feature.properties.name = e.detail.name;
+        else delete layer.feature.properties.name;
         e.target.setAttribute('name', e.detail.name);
         mark_dirty();
     }
@@ -617,7 +620,7 @@ function load_saved_zones(data, restoredViewport) {
     const {skipped} = add_zones(data, false);
     render_zone_list();
     if (skipped) {
-        show_transient_error(`${skipped} saved feature(s) are not polygon zones and were not loaded.`);
+        show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
     }
     if (editableLayers.getLayers().length > 0) {
         // A remembered view (#130) wins over centring on the zones.
@@ -650,8 +653,12 @@ function add_zones(data, replace) {
     const skipped = layers.length - zones.length;
     if (replace) {
         if (skipped) throw new Error('not polygon zones');
-        // The server only stores text names; refuse now rather than at save.
-        if (zones.some(layer => !['string', 'undefined'].includes(typeof layer.feature.properties.name))) {
+        // The server takes a name that is text, null or absent; refuse anything
+        // else now rather than at save.
+        if (zones.some(layer => {
+            const name = layer.feature.properties.name;
+            return name != null && typeof name !== 'string';
+        })) {
             throw new Error('zone name is not text');
         }
         if (!zones.length) return {count: 0, skipped: 0};
