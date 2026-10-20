@@ -1111,7 +1111,7 @@ def test_save_zones_rate_limit_window_expires(app_factory, tmp_zones_file, monke
     # Freeze time at t0, record 10 failures, advance past the window, then
     # a fresh attempt should succeed (old failures get popped).
     t = [1000.0]
-    monkeypatch.setattr(main.time, "time", lambda: t[0])
+    monkeypatch.setattr(main.time, "monotonic", lambda: t[0])
 
     app = app_factory({"save_token": "sekrit"})
     client = TestClient(app)

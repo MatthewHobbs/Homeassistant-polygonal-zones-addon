@@ -96,17 +96,16 @@ def _rate_limit_exceeded(request: Request) -> bool:
     """Whether this request's client has used its failure budget."""
     if allowed_ip(request):
         return False
-    cutoff = time.time() - _AUTH_FAILURE_WINDOW_SECONDS
+    cutoff = time.monotonic() - _AUTH_FAILURE_WINDOW_SECONDS
     return _prune(_failure_key(request), cutoff) >= _AUTH_FAILURE_LIMIT
 
 
 def _record_auth_failure(request: Request) -> None:
     global _last_sweep
-    now = time.time()
-    # abs(): the wall clock can step backwards, which must not stall sweeps.
+    now = time.monotonic()
     if (
         len(_auth_failures) > _AUTH_FAILURE_MAX_KEYS
-        and abs(now - _last_sweep) >= _SWEEP_INTERVAL_SECONDS
+        and now - _last_sweep >= _SWEEP_INTERVAL_SECONDS
     ):
         _last_sweep = now
         cutoff = now - _AUTH_FAILURE_WINDOW_SECONDS

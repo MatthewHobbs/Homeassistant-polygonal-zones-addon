@@ -370,7 +370,7 @@ def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     client = TestClient(app, client=HOST_IN_PROXY_RANGE)
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 5)
     clock = [1_000_000.0]
-    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock[0])
     for i in range(1, 30):
         client.get("/zones.json", headers={"X-Forwarded-For": f"192.0.2.{i}"})
     assert len(main._auth_failures) == 29
@@ -388,7 +388,7 @@ def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkey
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 2)
     monkeypatch.setattr(main, "_last_sweep", 0.0)
     clock = [1_000_000.0]
-    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock[0])
     sweeps = []
     real_prune = main._prune
     monkeypatch.setattr(
@@ -410,18 +410,6 @@ def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkey
     assert sweeps[3:] == [1_000_001.0] * 51
     main._auth_failures.clear()
 
-
-def test_failure_record_sweep_survives_the_clock_stepping_back(request_factory, monkeypatch):
-    import main
-
-    main._auth_failures.clear()
-    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 0)
-    monkeypatch.setattr(main.time, "time", lambda: 1_000_000.0)
-    monkeypatch.setattr(main, "_last_sweep", 1_000_000.0 + 3600)
-    main._auth_failures["192.0.2.1"].append(1_000_000.0 - 120)  # expired
-    main._record_auth_failure(request_factory("192.0.2.2"))
-    assert list(main._auth_failures) == ["192.0.2.2"]
-    main._auth_failures.clear()
 
 
 def test_real_ingress_with_forwarded_header_is_still_ingress(boot):
