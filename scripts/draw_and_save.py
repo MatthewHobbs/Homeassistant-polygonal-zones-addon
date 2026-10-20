@@ -7,9 +7,52 @@ two, which let a fix to one (such as #46's non-secure-origin leg) land in
 only one copy. The pilot's own ingress-specific setup (Core login, the
 ingress session, the option check) stays in supervisor_probe.py; only this
 shared mechanic moved here.
+
+It also holds what both smokes need around it: fail(), the page error
+listeners, and SMOKE_ZONES, the zones every smoke saves before its browser
+checks (build.yml POSTs it with curl, so this module imports nothing beyond
+the standard library).
 """
 
 import re
+import sys
+
+# A Polygon and a two-shape MultiPolygon: the browser checks expect both to
+# render, and the MultiPolygon to show "(2 shapes)".
+SMOKE_ZONES = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {"name": "smoke"},
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
+        },
+        {
+            "type": "Feature",
+            "properties": {"name": "multi"},
+            "geometry": {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[2, 2], [3, 2], [3, 3], [2, 2]]],
+                    [[[4, 4], [5, 4], [5, 5], [4, 4]]],
+                ],
+            },
+        },
+    ],
+}
+
+
+def fail(msg, errors=()):
+    print(f"FAIL {msg}")
+    for e in errors:
+        print(" -", e)
+    sys.exit(1)
+
+
+def watch_errors(page, errors):
+    """Collect uncaught exceptions and console errors from page into errors."""
+    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+    page.on("console", lambda m: m.type == "error" and errors.append(f"console.error: {m.text}"))
 
 
 async def draw_and_save(page, label, errors, fail):

@@ -17,12 +17,11 @@ concurrency, hidden tabs); this only has to show the real stack agrees.
 import argparse
 import asyncio
 import json
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from draw_and_save import draw_and_save
+from draw_and_save import SMOKE_ZONES, draw_and_save, fail, watch_errors
 from playwright.async_api import async_playwright
 
 # A name that maps to the same Core but is not loopback, so the page is not a
@@ -30,13 +29,6 @@ from playwright.async_api import async_playwright
 INSECURE_HOST = "ha.test"
 USERNAME = "pilot"
 PASSWORD = "pilot-not-a-secret"
-
-
-def fail(msg, errors=()):
-    print(f"FAIL {msg}")
-    for e in errors:
-        print(" -", e)
-    sys.exit(1)
 
 
 def http(method, url, data=None, form=False, token=None):
@@ -136,29 +128,10 @@ async def smoke(request, url, expect_colour):
         fail(f"/zones.json through ingress: {r.status} {d!r}")
     print("OK /zones.json shape")
 
-    payload = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "properties": {"name": "smoke"},
-                "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
-            },
-            {
-                "type": "Feature",
-                "properties": {"name": "multi"},
-                "geometry": {
-                    "type": "MultiPolygon",
-                    "coordinates": [
-                        [[[2, 2], [3, 2], [3, 3], [2, 2]]],
-                        [[[4, 4], [5, 4], [5, 5], [4, 4]]],
-                    ],
-                },
-            },
-        ],
-    }
     r = await request.post(
-        url + "save_zones", data=json.dumps(payload), headers={"Content-Type": "application/json"}
+        url + "save_zones",
+        data=json.dumps(SMOKE_ZONES),
+        headers={"Content-Type": "application/json"},
     )
     if r.status != 200 or '"status":"ok"' not in (await r.text()).replace(" ", ""):
         fail(f"/save_zones through ingress returned {r.status}: {(await r.text())[:200]!r}")
@@ -239,8 +212,7 @@ async def tracker_refresh(page, base, token, entity_id, refresh_seconds):
 
 async def open_editor(context, origin, ingress, errors, expect_secure):
     page = await context.new_page()
-    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
-    page.on("console", lambda m: m.type == "error" and errors.append(f"console.error: {m.text}"))
+    watch_errors(page, errors)
     resp = await page.goto(origin + ingress, wait_until="networkidle")
     if not resp or resp.status != 200:
         fail(f"{origin}{ingress} returned {resp.status if resp else 'nothing'}", errors)
