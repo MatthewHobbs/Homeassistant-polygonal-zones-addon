@@ -457,6 +457,7 @@ function setup_editing(map, editableLayers) {
         // before handing it to editableLayers, or it ends up owned by both
         // and a later group removal leaves an orphan rendering on the map.
         map.removeLayer(layer);
+        layer.bindPopup(l => name_popup_element(l.feature));
         editableLayers.addLayer(layer);
         render_zone_list();
         mark_dirty();
@@ -719,7 +720,8 @@ function add_zones(data, replace) {
             // Every zone gets an id, so its list entry finds it even when names
             // are missing or repeated. The server keeps an id it is given.
             if (!feature.properties.id) feature.properties.id = new_zone_id();
-            layer.bindPopup(name_popup_element(feature));
+            // A function, so the popup reads the name at open, after any rename.
+            layer.bindPopup(l => name_popup_element(l.feature));
             layers.push(layer);
         },
     });

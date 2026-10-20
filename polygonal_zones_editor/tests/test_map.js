@@ -648,3 +648,17 @@ test('a remembered collapsed sidebar is applied before the map is built, and the
     assert.equal(button.attributes['aria-expanded'], 'false');
     assert.equal(button.attributes['aria-label'], 'Expand sidebar');
 });
+
+test('a zone popup shows its current name, and a drawn zone has one', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    const loaded = m.layers[0];
+    m.editZone({ editing: false, name: 'B', id: loaded.feature.properties.id });
+    assert.equal(typeof loaded.popup, 'function', 'the popup was fixed at load');
+    assert.equal(loaded.popup(loaded).text, 'B');
+    const drawn = new Polygon();
+    m.map.fire('pm:create', { layer: drawn });
+    assert.equal(typeof drawn.popup, 'function', 'a drawn zone has no popup');
+    assert.equal(drawn.popup(drawn).text, 'Zone 1');
+});
