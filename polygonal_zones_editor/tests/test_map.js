@@ -662,3 +662,29 @@ test('a zone popup shows its current name, and a drawn zone has one', () => {
     assert.equal(typeof drawn.popup, 'function', 'a drawn zone has no popup');
     assert.equal(drawn.popup(drawn).text, 'Zone 1');
 });
+
+test('delete mode ignores a layer that is not a zone', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.calls.length = 0;
+    m.map.fire('pm:remove', { layer: new Polygon() });
+    assert.equal(m.isDirty(), false);
+    assert.equal(m.layers.length, 1);
+    assert.ok(!m.calls.includes('create_load_btn'));
+});
+
+test('the load button is added once however often it is asked for', () => {
+    const header = fakeElement('div');
+    const byId = (id) => header.children.find((c) => c.id === id) || null;
+    const context = vm.createContext({
+        document: {
+            querySelector: (sel) => (sel === '.header' ? header : sel.startsWith('#') ? byId(sel.slice(1)) : null),
+            getElementById: byId,
+            createElement: fakeElement,
+        },
+    });
+    vm.runInContext(staticJs('helpers.js'), context);
+    vm.runInContext('create_load_btn(); create_load_btn();', context);
+    assert.deepEqual(header.children.map((c) => c.id), ['load-text', 'load-btn']);
+});

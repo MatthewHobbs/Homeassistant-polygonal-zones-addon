@@ -1,4 +1,5 @@
 function create_load_btn() {
+    if (document.getElementById('load-btn')) return;
     let load_text = document.createElement('p');
     load_text.innerHTML = 'You can also load bulk zones from a geojson file by clicking the load button.';
     load_text.id = 'load-text';

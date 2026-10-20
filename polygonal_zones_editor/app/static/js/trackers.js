@@ -218,6 +218,8 @@ function pz_tooltip_element(name) {
 function pz_render_markers() {
     if (!pz_tracker_layer) return;
     pz_tracker_layer.clearLayers();
+    // pmIgnore: Geoman would otherwise let delete mode remove a dot and snap
+    // drawn vertices to it.
     pz_trackers.forEach((tracker) => {
         const latlng = [tracker.latitude, tracker.longitude];
         if (Number.isFinite(tracker.gps_accuracy) && tracker.gps_accuracy > 0) {
@@ -225,9 +227,10 @@ function pz_render_markers() {
                 radius: tracker.gps_accuracy,
                 className: 'tracker-accuracy',
                 interactive: false,
+                pmIgnore: true,
             }).addTo(pz_tracker_layer);
         }
-        L.circleMarker(latlng, { radius: 6, className: 'tracker-marker' })
+        L.circleMarker(latlng, { radius: 6, className: 'tracker-marker', pmIgnore: true })
             .bindTooltip(pz_tooltip_element(tracker.name), { permanent: false })
             .addTo(pz_tracker_layer);
     });

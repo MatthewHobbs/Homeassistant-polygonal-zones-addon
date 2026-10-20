@@ -412,6 +412,7 @@ function setup_editing(map, editableLayers) {
     // Geoman removes one layer per click, so there is no batch of deletions
     // to fold into one rebuild.
     map.on('pm:remove', function (e) {
+        if (!editableLayers.hasLayer(e.layer)) return;
         editableLayers.removeLayer(e.layer);
         render_zone_list();
         mark_dirty();
