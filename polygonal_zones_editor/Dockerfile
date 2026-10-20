@@ -9,7 +9,8 @@ ARG BUILD_FROM
 # x/crypto >= 0.52.0 and overwrite the base copy below. Verified: trivy reports 0 CVEs
 # on the result. Tracking upstream fix: https://github.com/home-assistant/tempio/issues/132
 # Remove this stage (and the COPY below) once a patched tempio ships in the base image.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS tempio
+# 1.27-alpine
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS tempio
 # Pinned to an immutable commit for reproducible builds. The SHA is an upstream *release*
 # rather than an arbitrary main commit, so Renovate can follow it: the version comment and the
 # SHA below are captured together by a custom manager and rewritten as a pair, which keeps the
