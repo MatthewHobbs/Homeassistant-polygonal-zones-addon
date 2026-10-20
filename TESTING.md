@@ -25,7 +25,7 @@ The smoke step in `build.yml` boots the container on each arch's native runner w
 
 `.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). Each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). It installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor — this is what caught the profile's unix-socket-mediation break, fixed in 0.4.2 — on a newer parser and kernel than HA OS ships.
 
-It runs nightly and on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release; ADR 0001 row 5 tracks promoting it once a trial period shows no non-flaky failures.
+The full matrix (both arches, both legs) runs weekly on Friday, on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. The other nights run amd64 against stable Core only. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release; ADR 0001 row 5 tracks promoting it once a trial period shows no non-flaky failures.
 
 ## Manual — live HA OS
 
