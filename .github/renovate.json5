@@ -69,6 +69,16 @@
       ],
       "datasourceTemplate": "docker",
     },
+    {
+      "customType": "regex",
+      "description": "Track the digest-pinned BuildKit image release.yml's publish job builds with",
+      "managerFilePatterns": ["/^\\.github/workflows/release\\.yml$/"],
+      "matchStrings": [
+        "image=(?<depName>moby/buildkit):(?<currentValue>v[\\d.]+)@(?<currentDigest>sha256:[a-f0-9]{64}) # v[\\d.]+",
+      ],
+      "autoReplaceStringTemplate": "image={{{depName}}}:{{{newValue}}}@{{{newDigest}}} # {{{newValue}}}",
+      "datasourceTemplate": "docker",
+    },
   ],
   "packageRules": [
     {
