@@ -35,7 +35,7 @@ jobs:
   apparmor:
     # AppArmor is enforced by the Supervisor, not by a local docker run or the
     # build job, so a malformed profile can break startup without any other
-    # job noticing (0.2.16–0.2.22). Compile it with the real parser; -Q skips
+    # job noticing. Compile it with the real parser; -Q skips
     # the kernel load, -K the cache, so this needs no AppArmor-enabled host.
     runs-on: ubuntu-latest
     steps:

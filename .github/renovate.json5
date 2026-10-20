@@ -41,8 +41,7 @@
     {
       "customType": "regex",
       // TEMPIO_REF pins the tempio build stage by immutable commit SHA. No manifest declares
-      // it, so Dependabot cannot see it at all - it sat on an untagged mid-main commit from
-      // 2026-06-30 with no way to notice 2026.07.0 had shipped.
+      // it, so Dependabot cannot see it at all.
       //
       // Tags, not the branch head: a bump should mean an upstream release, not merely the
       // newest commit on main. Versioning is `loose` because tempio uses calendar versions
@@ -101,7 +100,7 @@
       "enabled": false,
     },
     {
-      "description": "One PR for all GitHub Actions, matching the grouping Dependabot used before this change.",
+      "description": "One PR for all GitHub Actions.",
       "matchManagers": ["github-actions"],
       "groupName": "actions",
     },

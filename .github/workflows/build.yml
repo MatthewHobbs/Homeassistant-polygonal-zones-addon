@@ -6,9 +6,8 @@ on:
   push:
     branches: [main]
   # Release workflow calls this as a prerequisite gate, so a tag push never
-  # publishes an image that hasn't been boot-smoked. Closes the regression
-  # hole that bit 0.2.16–0.2.22 (AppArmor profile broke container boot; CI
-  # passed because test.yml + lint.yml don't exercise the image).
+  # publishes an image that hasn't been boot-smoked; test.yml and lint.yml
+  # never run the image.
   workflow_call:
     outputs:
       include:
@@ -95,7 +94,7 @@ jobs:
       # arm64-specific boot regressions before they reach RPi / HA Yellow /
       # HA Green users.
       # Verifies the addon boots under a Supervisor-style /data mount (root-owned
-      # options.json), which would have caught the regressions in 0.2.0 and 0.2.1.
+      # options.json).
       - name: Build polygonal_zones_editor image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:

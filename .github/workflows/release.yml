@@ -120,9 +120,6 @@ jobs:
     # arch on its native runner, for the tagged SHA. Without this gate, a
     # release can publish from a SHA whose image has never been booted.
     # Publish rebuilds the image, so this proves the SHA, not the pushed bytes.
-    # It catches exactly the class of regression that
-    # bit 0.2.16–0.2.22 (AppArmor profile broke container boot; unit tests
-    # and the HA addon linter passed, so the release gate was green).
     # Its `include` output is the arch matrix publish uses, so the two cannot
     # disagree on which arches exist.
     uses: ./.github/workflows/build.yml
@@ -195,11 +192,9 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
           push: true
-          # Supervisor resolves the addon image tag from config.yaml's
-          # `version:` field, not from `:latest`. Pushing :latest only
-          # creates a partial-release hazard (a mid-matrix failure leaves
-          # :latest pointing at mixed versions across arches). Removed.
-          # See docs/RUNBOOK.md for the release-recovery procedure.
+          # The version tag only: Supervisor resolves the image from
+          # config.yaml's `version:`, and a :latest would point at mixed
+          # versions across arches after a mid-matrix failure.
           tags: |
             ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
           # Built from scratch: the gate jobs write the shared build cache and
@@ -207,9 +202,7 @@ jobs:
           no-cache: true
 
       # Sign the pushed image with a Sigstore build-provenance attestation
-      # (keyless, via GitHub OIDC — no secret to manage). Replaces the
-      # discontinued CodeNotary CAS pipeline; CAS's cloud service is dead and
-      # Home Assistant removed the Supervisor `codenotary:` key in 2026.x.
+      # (keyless, via GitHub OIDC — no secret to manage).
       # The attestation is pushed to GHCR alongside the image and is
       # verifiable by anyone with:
       #   gh attestation verify oci://<image>:<version> --owner MatthewHobbs
