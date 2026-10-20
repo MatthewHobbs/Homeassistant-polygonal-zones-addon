@@ -62,7 +62,8 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `zone_colour`     | string   | `purple`  | Colour used to render zones on the map (any CSS colour name or `#rrggbb`).                                                |
 | `theme`           | list     | `auto`    | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override.                                          |
 | `allow_all_ips`   | bool     | `false`   | **No longer grants anything.** Kept so existing configurations still load; when `true`, the add-on logs an error at startup telling you to set `save_token` instead. See **LAN access** below. |
-| `save_token`      | password | *(empty)* | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**): it must carry `X-Save-Token: <value>`. Empty means nothing outside Home Assistant can reach the add-on. See **LAN access**. || `trusted_proxies` | string   | *(empty)* | Comma-separated list of the IP address of each reverse proxy whose `X-Forwarded-For` header should be honoured. List each proxy's own IP rather than a range: every address listed is believed about which client it forwards for, and that is what the add-on's log and failed-attempt limit record. Leave empty unless you front the add-on with your own reverse proxy. |
+| `save_token`      | password | *(empty)* | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**): it must carry `X-Save-Token: <value>`. Empty means nothing outside Home Assistant can reach the add-on. See **LAN access**. |
+| `trusted_proxies` | string   | *(empty)* | Comma-separated list of the IP address of each reverse proxy whose `X-Forwarded-For` header should be honoured. List each proxy's own IP rather than a range: every address listed is believed about which client it forwards for, and that is what the add-on's log and failed-attempt limit record. Leave empty unless you front the add-on with your own reverse proxy. |
 | `log_level`       | list     | `info`    | One of `debug`, `info`, `warning`, `error`, `critical`. Bump to `debug` when troubleshooting.                             |
 
 ### Network ports
@@ -211,7 +212,7 @@ The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Home
 The add-on serves `/zones.json` from local disk; the companion integration reads it on demand. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
 
 - **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails, because `/healthz` checks that the zones file is readable rather than only that the process is alive, so Docker marks the container unhealthy.
-- **The Supervisor** polls the same `/healthz` as the add-on's watchdog, and restarts the add-on when the check fails or the web service has stopped. Leave **Watchdog** switched on in the add-on's **Info** tab for this to happen.
+- **The Supervisor** polls the same `/healthz` as the add-on's watchdog, and restarts the add-on when the check fails or the web service has stopped. This happens only while **Watchdog** is switched on in the add-on's **Info** tab, so switch it on.
 - **The integration** sees the 503 the next time it tries to read zones (on startup or on a `reload_zones` call). Its default behaviour is to retain its last-known-good state — zone-based automations continue to fire based on the zone definitions it last successfully fetched, rather than silently losing geofencing coverage. If the add-on is down entirely (process gone, port unreachable), the integration surfaces an unavailable state; automations that guard on `zone.* != 'unavailable'` will stop firing until the add-on is back.
 
 **Recovery:**
@@ -273,7 +274,7 @@ The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT
 
 #### Map style
 
-- Use the **Map style** dropdown at the top of the sidebar to change the background map: **OpenStreetMap**, **CARTO Dark**, or **Esri World Imagery** (satellite).
+- Use the **Map style** dropdown at the top of the sidebar to change the background map: **Street map** (OpenStreetMap), **Dark** (CARTO), or **Satellite** (Esri World Imagery).
 - **Auto** follows your Home Assistant light/dark theme.
 
 #### Adding zones

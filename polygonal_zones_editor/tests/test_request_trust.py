@@ -6,6 +6,7 @@ uvicorn itself would wrap around the app (its ProxyHeadersMiddleware when
 proxy_headers is on), not a hand-assembled stack.
 """
 
+import asyncio
 import json
 import logging
 import runpy
@@ -334,8 +335,6 @@ def test_no_allow_all_ips_error_when_it_is_off(boot, caplog, options):
 
 
 def test_peer_layer_records_none_without_a_client():
-    import asyncio
-
     import main
 
     seen = {}
@@ -462,3 +461,78 @@ def test_host_bit_entry_is_still_flagged(caplog):
     kept, warnings = _parse_warnings(caplog, "192.168.1.5/24")
     assert kept == ["192.168.1.0/24"]
     assert sum("host bits set" in w for w in warnings) == 1
+
+
+@pytest.mark.parametrize(
+    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
+)
+def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
+    # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse
+    # reads them as a fragment or query and sees an exempt path. The test
+    # client would normalise the dots away, so the scope is sent directly.
+    app = boot({"save_token": TOKEN})
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"addon")],
+        "client": ("192.168.7.7", 5000),
+        "server": ("addon", 8000),
+    }
+    asyncio.run(app(scope, receive, send))
+    assert sent[0]["status"] == 403
+
+
+def test_cross_site_static_loads_never_test_a_token_or_spend_budget(boot):
+    client = _served_client(boot, {"save_token": TOKEN}, ("192.168.7.7", 5000))
+    cross = {"Sec-Fetch-Site": "cross-site"}
+    for _ in range(15):
+        assert client.get("/", headers={**cross, "X-Save-Token": "guess"}).status_code == 403
+    assert client.get("/", headers={**cross, "X-Save-Token": TOKEN}).status_code == 403
+    assert client.get("/zones.json", headers={"X-Save-Token": TOKEN}).status_code == 200
+
+
+def test_ingress_loads_the_editor_from_a_cross_site_link(boot):
+    client = _served_client(boot, {}, (INGRESS, 5000))
+    assert client.get("/", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},'
+        b'"geometry":{"type":"Polygon","coordinates":[[[1'
+        + b"0" * 400
+        + b",0],[1,0],[1,1],[1"
+        + b"0" * 400
+        + b",0]]]}}]}",
+        b"1" * 5000,
+    ],
+    ids=["huge-int", "too-many-digits"],
+)
+def test_a_save_body_python_cannot_hold_is_refused_not_a_500(boot, body):
+    client = _served_client(boot, {"save_token": TOKEN}, (INGRESS, 5000))
+    r = client.post("/save_zones", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code in (400, 422)
+
+
+def test_a_refusal_carries_the_security_headers(boot):
+    client = _served_client(boot, {"save_token": TOKEN}, ("192.168.7.7", 5000))
+    r = client.get("/")
+    assert r.status_code == 403
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["cache-control"] == "no-store"

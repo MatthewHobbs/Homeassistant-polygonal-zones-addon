@@ -11,11 +11,21 @@
   sidebar or **Open Web UI**; opening the LAN port in a browser gets `403`,
   because a browser cannot send the header on a page load. The companion
   integration needs the same token as its `zone_source_token`, which is not
-  yet in a tagged integration release. `/healthz` stays open.
-- **Fixed: a NaN or Infinity in a save no longer breaks the editor.** Python
-  accepted them anywhere in the body, such as in a zone's properties, and
-  stored them, and the editor could not load the file again. They are now
-  refused with `422` and nothing is written.
+  yet in a tagged integration release: until it is, an integration that
+  reads zones over the LAN stops getting them after this update, so hold the
+  update if you rely on that. Automatic updates stop before this version.
+  A request marked by the browser as coming from another site is refused on
+  the LAN without counting against the failed-attempt limit, so a web page
+  cannot lock your browser out. `/healthz` stays open.
+- **Fixed: an encoded `#` or `?` in a path no longer gets past the access
+  check** to the editor's own files.
+- **Fixed: a coordinate too large for Python** (hundreds of digits) gets
+  `422`, and a number too long to read gets `400`, instead of `500`.
+- **Fixed: a save can no longer store NaN or Infinity.** Python accepted
+  them anywhere in the body, such as in a zone's properties, and stored
+  them, and the editor could not load the file again. They are now refused
+  with `422` and nothing is written. A file already holding one still fails
+  to load: restore an earlier backup, or remove the value by hand.
 - **Fixed: one bad reply from Home Assistant no longer takes the tracker
   overlay down.** A garbled or cut-short reply for one entity made
   `/trackers.json` fail with `500`; that entity is now reported unavailable
@@ -33,7 +43,9 @@
   configuration,** including that its positions are readable by anyone
   holding the token.
 - **Changed: the Supervisor restarts the add-on when its health check
-  fails,** through the add-on's watchdog, and every `429` is sent with
+  fails,** through the add-on's watchdog while **Watchdog** is switched on
+  in the add-on's **Info** tab. Refusals now carry the security headers,
+  and every `429` is sent with
   `Cache-Control: no-store`.
 
 ## 0.5.7 — 2026-10-20

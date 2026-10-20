@@ -182,8 +182,8 @@ class TransportPeerMiddleware:
 class AuthoriseMiddleware(BaseHTTPMiddleware):
     """Gates the editor's static files and /config.json like the data routes.
 
-    No cross-origin check: a link from another site to the editor is a
-    legitimate page load, and serving a static file changes nothing.
+    Ingress gets no cross-origin check: a link from another site to the
+    editor is a legitimate page load.
     """
 
     def __init__(self, app, options: dict):
@@ -191,8 +191,11 @@ class AuthoriseMiddleware(BaseHTTPMiddleware):
         self.options = options
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path not in AUTHZ_EXEMPT_PATHS:
-            refusal = _gate(self.options, request, request.url.path, check_origin=False)
+        # The routing path, not request.url.path: uvicorn decodes %23 and %3F
+        # into it, and a URL re-parse would read "/healthz%23/../x" as /healthz.
+        path = request.scope["path"]
+        if path not in AUTHZ_EXEMPT_PATHS:
+            refusal = _gate(self.options, request, path, check_origin=not allowed_ip(request))
             if refusal is not None:
                 return refusal
         return await call_next(request)
@@ -272,8 +275,11 @@ _LAT_MIN, _LAT_MAX = -90.0, 90.0
 
 
 def _finite_number(value) -> bool:
-    # bool subclasses int, but True is not a coordinate.
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    # bool subclasses int, but True is not a coordinate. An int is always
+    # finite, and math.isfinite raises OverflowError on a huge one.
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
 
 
 def _validate_position(pos, where: str) -> None:
@@ -522,7 +528,8 @@ def save_zones_generator(options: dict):
 
         try:
             geo_json = json.loads(body)
-        except json.JSONDecodeError:
+        # ValueError also covers an integer too long to convert.
+        except ValueError:
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
         try:
@@ -876,8 +883,9 @@ def generate_app(options: dict) -> TransportPeerMiddleware:
     ]
 
     middleware = [
-        Middleware(AuthoriseMiddleware, options=options),
+        # Outside the gate, so its refusals carry the headers too.
         Middleware(SecurityHeadersMiddleware),
+        Middleware(AuthoriseMiddleware, options=options),
         # Innermost: compress text responses (the unminified vendored Leaflet
         # JS/CSS are the bulk of page weight). Auth/security middleware stay
         # outermost so they still gate before any work.

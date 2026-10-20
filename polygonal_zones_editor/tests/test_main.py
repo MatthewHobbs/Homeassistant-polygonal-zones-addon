@@ -1897,12 +1897,6 @@ def test_ingress_needs_no_token(app_factory, options, method, path):
     assert _send(client, method, path).status_code == 200
 
 
-def test_a_link_from_another_site_still_opens_the_editor(app_factory):
-    client = TestClient(app_factory({"save_token": "s3cret"}))
-    headers = {"Sec-Fetch-Site": "cross-site", "X-Save-Token": "s3cret"}
-    assert client.get("/", headers=headers).status_code == 200
-
-
 def test_static_files_share_the_failure_budget(app_factory):
     # Otherwise "/" would be an unlimited oracle for guessing the token.
     import main
