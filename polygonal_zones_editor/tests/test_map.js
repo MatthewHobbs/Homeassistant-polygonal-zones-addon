@@ -438,6 +438,17 @@ test('a successful save adopts the new ETag', async () => {
     assert.equal(m.posts[1].headers['If-Match'], '"saved"');
 });
 
+test('a save adopts the body etag when a proxy strips the ETag header', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    // main.py's save_zones answers {"status": "ok", "etag": ...}.
+    m.reply(200, null, { status: 'ok', etag: '"saved"' });
+    await m.save();
+    await m.save();
+    assert.equal(m.posts[1].headers['If-Match'], '"saved"');
+});
+
 test('save refuses until the saved zones have loaded', async () => {
     const m = loadMap();
     await m.save();

@@ -643,14 +643,15 @@ function save_zones() {
                 'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.';
             return;
         }
-        if (response.ok) {
+        if (response.ok) return response.json().catch(() => null).then(body => {
             elem.classList.remove('error')
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
             // Only a save that landed moves the editor to the new version: a
             // 412 carries the other session's ETag, and adopting it would let
-            // the next click overwrite their edits.
-            const new_etag = response.headers.get('ETag');
+            // the next click overwrite their edits. The body carries it too,
+            // for a proxy that strips the header.
+            const new_etag = response.headers.get('ETag') || body?.etag;
             if (new_etag) zones_etag = new_etag;
             // An edit made while the request was in flight is still unsaved.
             if (edit_seq === sent_seq) mark_clean();
@@ -661,12 +662,11 @@ function save_zones() {
                 elem.classList.remove('success');
                 if (status && status.textContent === 'Zones saved.') status.textContent = '';
             }, 2000);
-        } else {
-            elem.classList.remove('success')
-            elem.classList.add('error')
-            if (status) status.textContent = `Save failed (${response.status}).`;
-            // No setTimeout: stay visible until the next save attempt.
-        }
+        });
+        elem.classList.remove('success')
+        elem.classList.add('error')
+        if (status) status.textContent = `Save failed (${response.status}).`;
+        // No setTimeout: stay visible until the next save attempt.
     }).catch(err => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
