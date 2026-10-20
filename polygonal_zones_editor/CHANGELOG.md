@@ -3,10 +3,13 @@
 ## 0.5.6 — 2026-10-20
 
 - **Fixed: loading zones from a file now tells you when it can't.** A file
-  with no zones in it, JSON that is not GeoJSON, or shapes that are not
-  polygons are reported with a message at the top of the page, and your
-  current zones are left as they were. Before, the load failed silently,
-  and a file that was not GeoJSON cleared the zones on screen first.
+  with no zones in it, JSON that is not GeoJSON, or anything other than
+  named polygons is reported with a message at the top of the page, and
+  your current zones are left as they were. Before, the zones on screen
+  were cleared before the file was checked, so an empty or unusable file
+  wiped them, and a file of points loaded as markers.
+- **Fixed: a zone drawn while the saved zones were still loading is kept.**
+  Before, the arriving zones replaced it.
 - **Changed: every range listed in `trusted_proxies` now logs a warning**,
   since every address in it is believed about which client it forwards for.
   List each proxy's own IP to silence it. A range written in a non-canonical
@@ -25,6 +28,11 @@
   check marks the container unhealthy; the claim that Supervisor then
   restarts it was unverified and is removed. A new **Privacy and data**
   section says what backups, map tiles, your browser and the log keep.
+- **Changed: `GET /zones.json` no longer sends `Pragma` or `Expires`.**
+  `Cache-Control: no-store` already says the same to every current client.
+- **Changed: the health check fails when the zones file can't be read by the
+  add-on**, not only when it is missing, and a `trusted_proxies` entry that
+  means "every address" in any spelling (such as `0::/0`) is refused.
 - Internal: one authorisation gate for the three gated routes, and dead code
   and stale comments removed.
 

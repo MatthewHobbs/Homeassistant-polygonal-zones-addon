@@ -273,8 +273,12 @@ function generate_map(zones_url) {
             try { data = JSON.parse(json); }
             catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
 
-            const count = add_zones(data);
+            const {skipped} = add_zones(data, false);
+            const count = editableLayers.getLayers().length;
             render_zone_list();
+            if (skipped) {
+                show_transient_error(`${skipped} saved feature(s) are not named polygon zones and were not loaded.`);
+            }
             // Only centre on the zones when the user hasn't positioned the
             // viewport before (#130): their remembered center/zoom wins.
             if (count > 0) {
@@ -620,11 +624,13 @@ function show_transient_error(message) {
     setTimeout(() => el.remove(), 5000);
 }
 
-/* Replace the drawn zones with the polygons in `data`; return how many.
- * Every layer is built before the current zones are cleared, so input that is
- * not GeoJSON polygons throws and leaves the editor as it was, and input with
- * no zones changes nothing. */
-function add_zones(data) {
+/* Add the named polygon zones in `data`; return {count, skipped}. Layers are
+ * built before anything changes. With `replace`, anything that is not a named
+ * polygon throws and leaves the editor as it was, and the current zones are
+ * cleared only when there is something to replace them with. Without it
+ * (the first load), zones are added beside any already drawn and the rest is
+ * skipped and counted. */
+function add_zones(data, replace) {
     const layers = [];
     L.geoJSON(data, {
         style: () => ({color: window.ZONE_COLOUR}),
@@ -633,14 +639,18 @@ function add_zones(data) {
             layers.push(layer);
         },
     });
-    // Polygon covers MultiPolygon too; anything else the server would refuse.
-    if (!layers.every(layer => layer instanceof L.Polygon)) {
-        throw new Error('not polygon zones');
+    // Polygon covers MultiPolygon too; the server refuses anything else, and
+    // the editor needs each zone's name.
+    const zones = layers.filter(layer => layer instanceof L.Polygon
+        && layer.feature.properties && typeof layer.feature.properties.name === 'string');
+    const skipped = layers.length - zones.length;
+    if (replace) {
+        if (skipped) throw new Error('not named polygon zones');
+        if (!zones.length) return {count: 0, skipped: 0};
+        editableLayers.clearLayers();
     }
-    if (!layers.length) return 0;
-    editableLayers.clearLayers();
-    layers.forEach(layer => editableLayers.addLayer(layer));
-    return layers.length;
+    zones.forEach(layer => editableLayers.addLayer(layer));
+    return {count: zones.length, skipped};
 }
 
 function load_bulk_json() {
@@ -659,7 +669,7 @@ function load_bulk_json() {
                 return;
             }
             let count;
-            try { count = add_zones(data); }
+            try { ({count} = add_zones(data, true)); }
             catch (err) {
                 show_transient_error('The selected file is not GeoJSON polygon zones.');
                 return;

@@ -874,9 +874,9 @@ async def healthz(_request: Request) -> PlainTextResponse:
     # Verify the zones file is accessible — /healthz drives the Docker
     # HEALTHCHECK, so an unreadable zones.json marks the container unhealthy
     # rather than leaving it broken but reported as running.
-    try:
-        os.stat(ZONES_FILE)
-    except OSError:
+    # Readability for this process, not mere existence: a file left owned by
+    # another user must count as broken too.
+    if not os.access(ZONES_FILE, os.R_OK):
         return PlainTextResponse("zones file unreadable", status_code=503)
     return PlainTextResponse("ok")
 
@@ -948,7 +948,6 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
 #     Supervisor network to name any client it likes.
 # Every message is a constant string: CodeQL flags %s-logging of any value
 # derived from the options dict, which also carries save_token.
-_TRUSTED_PROXIES_WILDCARDS = frozenset({"*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"})
 _INGRESS_IPS = tuple(ipaddress.ip_address(ip) for ip in ALLOWED_IPS)
 
 
@@ -958,7 +957,15 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
     entries = [p.strip() for p in raw.split(",") if p.strip()]
     safe = []
     for entry in entries:
-        if entry in _TRUSTED_PROXIES_WILDCARDS:
+        try:
+            net = ipaddress.ip_network(entry, strict=False)
+            iface_ip = ipaddress.ip_interface(entry).ip
+        except ValueError:
+            net = iface_ip = None
+        # Every spelling of "all addresses" (::/0, 0::/0, 0.0.0.0/0, ...).
+        if entry == "*" or (
+            net is not None and (net.prefixlen == 0 or net.network_address.is_unspecified)
+        ):
             _LOGGER.error(
                 "Refusing a wildcard trusted_proxies entry (one of "
                 "*, 0.0.0.0, 0.0.0.0/0, ::, ::/0). It would let any client "
@@ -966,9 +973,7 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
                 "Dropping this entry; fix the option in the addon configuration."
             )
             continue
-        try:
-            net = ipaddress.ip_network(entry, strict=False)
-        except ValueError:
+        if net is None:
             _LOGGER.error(
                 "Refusing an unparseable trusted_proxies entry "
                 "(expected an IPv4/IPv6 address or CIDR). Dropping "
@@ -996,7 +1001,7 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
         # uvicorn parses CIDRs strictly, so a host-bit entry such as
         # 192.168.1.5/24 would silently trust nothing; hand it the network,
         # and say so.
-        if "/" in entry and ipaddress.ip_interface(entry).ip != net.network_address:
+        if "/" in entry and iface_ip != net.network_address:
             _LOGGER.warning(
                 "A trusted_proxies entry has host bits set and is applied as "
                 "its whole network. List each proxy's own IP instead."
@@ -1093,4 +1098,5 @@ if __name__ == "__main__":  # pragma: no cover
     # generate_app applies trusted_proxies itself, inside the layer that
     # records the TCP peer; uvicorn's own proxy handling (on by default)
     # would rewrite the client before that record is taken.
-    uvicorn.run(app, host="0.0.0.0", log_config=log_config, proxy_headers=False)
+    # Port 8000 is what config.yaml's ingress_port and the HEALTHCHECK expect.
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=log_config, proxy_headers=False)

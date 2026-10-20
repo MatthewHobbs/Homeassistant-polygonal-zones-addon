@@ -429,7 +429,7 @@ assert r.status == 200, r.status
 " || fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
   log "OK Core reaches the add-on via internal hostname $addon_host (no ingress, no LAN port)"
 
-  # /zones.json and /trackers.json share the same authorise_read gate, but
+  # /zones.json and /trackers.json share the same authorisation gate, but
   # each is asserted here directly rather than trusted by inference: DOCS.md
   # makes the same claim for both.
   for path in zones.json trackers.json; do

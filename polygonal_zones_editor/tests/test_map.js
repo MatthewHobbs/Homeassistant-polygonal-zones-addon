@@ -143,6 +143,7 @@ function loadMap() {
         errors,
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
+        addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         bulkLoad(text) {
             pendingFile = text;
             vm.runInContext('load_bulk_json', context)();
@@ -204,4 +205,32 @@ test('bulk load of a file that is not JSON says so', () => {
     m.bulkLoad('{not json');
     assert.deepEqual(m.errors, ['The selected file is not valid JSON.']);
     assert.equal(m.layers.length, 1);
+});
+
+test('bulk load of a feature with null properties is refused before clearing', () => {
+    const m = withExistingZone();
+    m.bulkLoad(collection({
+        type: 'Feature', properties: null,
+        geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
+    }));
+    assert.equal(m.errors.length, 1);
+    assert.ok(!m.calls.includes('clearLayers'));
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home']);
+});
+
+test('first load adds to zones already drawn instead of replacing them', () => {
+    const m = withExistingZone();
+    const result = m.addZones(JSON.parse(collection(polygon('A'))), false);
+    assert.equal(result.count, 1);
+    assert.ok(!m.calls.includes('clearLayers'), 'a zone drawn before the load finished was cleared');
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home', 'A']);
+});
+
+test('first load keeps the polygon zones and counts what it skipped', () => {
+    const m = loadMap();
+    const result = m.addZones(JSON.parse(collection(polygon('A'), {
+        type: 'Feature', properties: { name: 'Pin' }, geometry: { type: 'Point', coordinates: [0, 0] },
+    })), false);
+    assert.deepEqual([result.count, result.skipped], [1, 1]);
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A']);
 });

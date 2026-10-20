@@ -20,8 +20,10 @@ def reset_save_rate_limit():
     import main
 
     main._auth_failures.clear()
+    main._last_sweep = 0.0
     yield
     main._auth_failures.clear()
+    main._last_sweep = 0.0
 
 
 @pytest.fixture
@@ -94,7 +96,10 @@ def test_zones_json_returns_last_modified(allow_all_client, tmp_zones_file):
     # RFC 7231 IMF-fixdate of the file's mtime, e.g. "Sun, 06 Nov 1994 08:49:37 GMT".
     expected = formatdate(os.stat(tmp_zones_file).st_mtime, usegmt=True)
     assert response.headers["last-modified"] == expected
-    assert re.fullmatch(r"[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT", expected)
+    assert re.fullmatch(
+        r"[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT",
+        response.headers["last-modified"],
+    )
 
 
 def test_zones_json_returns_304_on_matching_if_none_match(allow_all_client, tmp_zones_file):
@@ -1926,3 +1931,27 @@ def test_rate_limit_refusal_is_logged_on_every_gated_route(
     assert r.json() == {"error": "too many failed attempts"}
     assert r.headers.get("cache-control") == cache_control
     assert f"Rate limit hit on {path} for testclient" in caplog.text
+
+
+def test_healthz_returns_503_when_zones_file_cannot_be_read(restricted_client, tmp_zones_file):
+    """A file that exists but can't be opened (ownership drift) is unhealthy too."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads through file modes")
+    tmp_zones_file.chmod(0)
+    try:
+        r = restricted_client.get("/healthz")
+    finally:
+        tmp_zones_file.chmod(0o644)
+    assert r.status_code == 503
+
+
+@pytest.mark.parametrize("entry", ["0::/0", "::0/0", "0.0.0.0/00"])
+def test_parse_trusted_proxies_refuses_any_spelling_of_everything(app_factory, entry):
+    import main
+
+    assert main._parse_trusted_proxies({"trusted_proxies": entry}) == []
+
+
+def test_save_without_credentials_is_403_not_415(restricted_client):
+    r = restricted_client.post("/save_zones", content=b"{}", headers={"Content-Type": "text/plain"})
+    assert r.status_code == 403

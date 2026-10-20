@@ -97,7 +97,7 @@ Only relevant if you enable the LAN port (`Configuration → Network → set a h
 
 - [ ] Install an older version (e.g. `0.2.14`). Draw and save some zones.
 - [ ] Upgrade to the branch under test. Confirm existing zones are preserved and the addon starts clean.
-- [ ] Rollback via the version picker: confirm zones survive the downgrade.
+- [ ] Rollback by restoring the add-on's pre-update partial backup (`ha apps update polygonal_zones --backup`, then restore it): confirm zones survive.
 
 ## When live verification is not required
 
