@@ -44,8 +44,6 @@ from const import (
     ZONES_FILE,
 )
 from helpers import (
-    allow_all_ips,
-    allow_request,
     allowed_ip,
     atomic_write_json,
     configure_logging,
@@ -55,13 +53,12 @@ from helpers import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Paths that bypass the IP allowlist middleware. /healthz is exempt so the
-# Docker HEALTHCHECK works. The other three run their own gate (_gate), which
-# lets a request carrying save_token through even when allow_all_ips is off:
-# a user who sets the token expects it to unlock LAN reads and writes alike.
+# Paths the middleware leaves alone. /healthz stays open for the Docker
+# HEALTHCHECK and the Supervisor watchdog; the other three call _gate
+# themselves, so their cross-origin refusal comes before the token check.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
 
-# Rate limit on authorisation failures across the three gated routes.
+# Rate limit on authorisation failures, shared by every gated path.
 # Protects against brute-forcing save_token when the port is exposed on LAN.
 # Only failures count. A request whose TCP peer is ingress is never limited,
 # so failures recorded against a forwarded "172.30.32.2" cannot lock the HA
@@ -136,57 +133,35 @@ def _current_zones_etag() -> str | None:
         return None
 
 
-def authorise(options: dict, request: Request) -> tuple[bool, str | None]:
-    """Decide whether a request to one of the three gated routes is allowed.
+def authorise(options: dict, request: Request) -> str | None:
+    """None if the request may proceed, otherwise why not, for the log only.
 
-    Returns ``(allowed, reason)``. ``reason`` is one of ``"token_missing"``,
-    ``"token_wrong"`` or ``"not_allowed"`` — for logging only (ADR 0002 row
-    3): every caller collapses these to one identical response, so a client
-    cannot infer from the response alone whether a token is even configured.
-
-    Order:
-      1. Ingress is always allowed — the HA UI uses it.
-      2. If ``save_token`` is configured, require a constant-time-equal
-         ``X-Save-Token`` header, whatever allow_all_ips says: the token is
-         the stronger signal.
-      3. Otherwise fall back to allow_all_ips.
+    Ingress is always allowed: the HA UI uses it. Anything else needs a
+    configured save_token, presented as X-Save-Token.
     """
     if allowed_ip(request):
-        return True, None
-
+        return None
     save_token = (options.get("save_token") or "").strip()
-    if save_token:
-        # Strip both stored and provided — symmetric handling so a trailing
-        # whitespace in either doesn't silently break a correct token match.
-        provided = request.headers.get("x-save-token", "").strip()
-        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
-            return True, None
-        return False, "token_missing" if not provided else "token_wrong"
-
-    if allow_all_ips(options):
-        return True, None
-
-    return False, "not_allowed"
+    if not save_token:
+        return "not ingress, and no save_token is configured"
+    # Stripped on both sides, so stray whitespace can't fail a correct token.
+    provided = request.headers.get("x-save-token", "").strip()
+    if not provided:
+        return "missing X-Save-Token"
+    if not secrets.compare_digest(provided.encode(), save_token.encode()):
+        return "wrong X-Save-Token"
+    return None
 
 
-# ADR 0002 row 3: every authorisation failure on /zones.json, /trackers.json
-# and /save_zones gets this one status, body and headers, whatever the
-# reason — so a client cannot tell from the response alone whether a token
-# is even configured, let alone which of "IP not allowed", "token missing"
-# or "token wrong" applies. Callers log the precise reason themselves.
+# ADR 0002 row 3: every authorisation failure gets this one status, body and
+# headers, whatever the reason, so a client cannot tell from the response
+# alone whether a token is even configured. The precise reason is logged.
 def _auth_rejection_response() -> JSONResponse:
     return JSONResponse(
         {"error": "not authorised"},
         status_code=403,
         headers={"Cache-Control": "no-store"},
     )
-
-
-_AUTH_REJECTION_LOG_REASON = {
-    "token_missing": "missing X-Save-Token",
-    "token_wrong": "wrong X-Save-Token",
-    "not_allowed": "not ingress, no token configured, allow_all_ips off",
-}
 
 
 class TransportPeerMiddleware:
@@ -205,17 +180,22 @@ class TransportPeerMiddleware:
         await self.app(scope, receive, send)
 
 
-class IPAllowMiddleware(BaseHTTPMiddleware):
+class AuthoriseMiddleware(BaseHTTPMiddleware):
+    """Gates the editor's static files and /config.json like the data routes.
+
+    No cross-origin check: a link from another site to the editor is a
+    legitimate page load, and serving a static file changes nothing.
+    """
+
     def __init__(self, app, options: dict):
         super().__init__(app)
         self.options = options
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in AUTHZ_EXEMPT_PATHS:
-            return await call_next(request)
-        if not allow_request(self.options, request):
-            _LOGGER.warning("Blocked request from %s on %s", request.client.host, request.url.path)
-            return PlainTextResponse("not allowed", status_code=403)
+        if request.url.path not in AUTHZ_EXEMPT_PATHS:
+            refusal = _gate(self.options, request, request.url.path, check_origin=False)
+            if refusal is not None:
+                return refusal
         return await call_next(request)
 
 
@@ -486,7 +466,9 @@ def _browser_cross_origin(request: Request) -> bool:
     return site is not None and site not in _SAVE_FETCH_SITES
 
 
-def _gate(options: dict, request: Request, label: str, respond=JSONResponse) -> Response | None:
+def _gate(
+    options: dict, request: Request, label: str, respond=JSONResponse, check_origin=True
+) -> Response | None:
     """The refusal for a request to a gated route, or None to serve it.
 
     ``label`` names the route in the log; ``respond`` builds the 429, so a
@@ -507,18 +489,13 @@ def _gate(options: dict, request: Request, label: str, respond=JSONResponse) -> 
     # refused whatever it carries. Not counted as a failure: the client did
     # not choose to send it, and counting would let any web page lock the
     # user's own browser out.
-    if _browser_cross_origin(request):
+    if check_origin and _browser_cross_origin(request):
         _LOGGER.warning("Rejected %s from %s: not a same-origin request", label, client_host)
         return _auth_rejection_response()
-    ok, reason = authorise(options, request)
-    if not ok:
+    reason = authorise(options, request)
+    if reason is not None:
         _record_auth_failure(request)
-        _LOGGER.warning(
-            "Rejected %s from %s: %s",
-            label,
-            client_host,
-            _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-        )
+        _LOGGER.warning("Rejected %s from %s: %s", label, client_host, reason)
         return _auth_rejection_response()
     return None
 
@@ -643,9 +620,9 @@ _ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
 def overlay_entities(options: dict) -> list[str]:
     """The entity ids the user has opted in to plotting, validated and capped.
 
-    Empty by default. The editor is LAN-reachable whenever allow_all_ips is on,
-    so the overlay must never become a general state proxy — only ids named
-    here are ever requested from Home Assistant or returned to a client.
+    Empty by default. Anyone holding save_token can read the overlay over the
+    LAN, so it must never become a general state proxy: only ids named here
+    are ever requested from Home Assistant or returned to a client.
     """
     raw = options.get("overlay_entities") or []
     if isinstance(raw, str):
@@ -914,7 +891,7 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
     log_config.setdefault("loggers", {}).setdefault("uvicorn.access", {})["level"] = "WARNING"
 
     middleware = [
-        Middleware(IPAllowMiddleware, options=options),
+        Middleware(AuthoriseMiddleware, options=options),
         Middleware(SecurityHeadersMiddleware),
         # Innermost: compress text responses (the unminified vendored Leaflet
         # JS/CSS are the bulk of page weight). Auth/security middleware stay
@@ -1053,24 +1030,13 @@ def loggable_options(options: dict) -> dict:
     return out
 
 
-def log_open_access(options: dict) -> None:
-    """Say at startup what allow_all_ips exposes without a token."""
-    if not allow_all_ips(options):
-        return
-    if (options.get("save_token") or "").strip():
-        _LOGGER.info(
-            "allow_all_ips is on; /save_zones, /zones.json and /trackers.json "
-            "require X-Save-Token from non-ingress clients."
+def log_retired_allow_all_ips(options: dict) -> None:
+    """allow_all_ips is kept in the schema so old configs validate; say it does nothing."""
+    if options.get("allow_all_ips"):
+        _LOGGER.error(
+            "allow_all_ips no longer grants LAN access. Set save_token and send it as the "
+            "X-Save-Token header; use the editor from the Home Assistant sidebar."
         )
-        return
-    reads = "/zones.json and /trackers.json are" if overlay_entities(options) else "/zones.json is"
-    _LOGGER.warning(
-        "allow_all_ips is enabled and no save_token is set — any client on your network "
-        "can overwrite zones through /save_zones, and %s readable by any client on your "
-        "network. Set the save_token option to require an X-Save-Token header on "
-        "non-ingress requests.",
-        reads,
-    )
 
 
 if __name__ == "__main__":  # pragma: no cover
@@ -1102,7 +1068,7 @@ if __name__ == "__main__":  # pragma: no cover
             "dropping privileges to the 'app' user — check the service log "
             "for a warning explaining which condition fired."
         )
-    log_open_access(options)
+    log_retired_allow_all_ips(options)
 
     app, log_config = generate_app(options)
     # generate_app applies trusted_proxies itself, inside the layer that

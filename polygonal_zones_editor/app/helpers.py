@@ -43,15 +43,6 @@ def configure_logging(level: int = logging.INFO) -> None:
     logging.getLogger().setLevel(level)
 
 
-def allow_all_ips(options: dict) -> bool:
-    """Whether unauthenticated access from any client IP is enabled.
-
-    Options only: an auth bypass keyed on process arguments would be fragile
-    and surprising.
-    """
-    return bool(options.get("allow_all_ips", False))
-
-
 def allowed_ip(request: Request) -> bool:
     """Whether the request's TCP peer is the HA ingress sidecar.
 
@@ -61,11 +52,6 @@ def allowed_ip(request: Request) -> bool:
     """
     peer = request.scope.get(TRANSPORT_PEER_SCOPE_KEY)
     return bool(peer) and peer in ALLOWED_IPS
-
-
-def allow_request(options: dict, request: Request) -> bool:
-    """Check if the request is allowed to access the web interface."""
-    return allow_all_ips(options) or allowed_ip(request)
 
 
 def atomic_write_json(path: str, data) -> None:

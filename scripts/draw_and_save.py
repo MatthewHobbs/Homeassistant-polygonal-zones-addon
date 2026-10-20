@@ -9,13 +9,18 @@ ingress session, the option check) stays in supervisor_probe.py; only this
 shared mechanic moved here.
 
 It also holds what both smokes need around it: fail(), the page error
-listeners, and SMOKE_ZONES, the zones every smoke saves before its browser
-checks (build.yml POSTs it with curl, so this module imports nothing beyond
-the standard library).
+listeners, SMOKE_ZONES, the zones every smoke saves before its browser
+checks, and SMOKE_TOKEN, the save_token build.yml's container runs with
+(build.yml reads both with curl, so this module imports nothing beyond the
+standard library).
 """
 
 import re
 import sys
+
+# A CI stub, not a secret: build.yml's direct-port smoke is a LAN client, so
+# every request it makes needs the token.
+SMOKE_TOKEN = "build-smoke-token"
 
 # A Polygon and a two-shape MultiPolygon: the browser checks expect both to
 # render, and the MultiPolygon to show "(2 shapes)".

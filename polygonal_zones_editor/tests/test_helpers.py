@@ -3,19 +3,6 @@ import json
 import pytest
 
 
-def test_allow_all_ips_from_options():
-    import helpers
-
-    assert helpers.allow_all_ips({"allow_all_ips": True}) is True
-
-
-def test_allow_all_ips_default_false():
-    import helpers
-
-    assert helpers.allow_all_ips({}) is False
-    assert helpers.allow_all_ips({"allow_all_ips": False}) is False
-
-
 def test_allowed_ip_permits_supervisor_host(request_factory):
     import helpers
 
@@ -46,19 +33,6 @@ def test_allowed_ip_uses_transport_peer_not_resolved_client(request_factory):
     unrecorded = request_factory("172.30.32.2")
     unrecorded.scope = {}
     assert helpers.allowed_ip(unrecorded) is False
-
-
-def test_allow_request_opens_when_allow_all(request_factory):
-    import helpers
-
-    assert helpers.allow_request({"allow_all_ips": True}, request_factory("10.0.0.1")) is True
-
-
-def test_allow_request_falls_back_to_ip_allowlist(request_factory):
-    import helpers
-
-    assert helpers.allow_request({}, request_factory("172.30.32.2")) is True
-    assert helpers.allow_request({}, request_factory("10.0.0.1")) is False
 
 
 def test_load_options_returns_empty_dict_when_missing(tmp_options_file):

@@ -32,10 +32,8 @@ startup: services
 ingress: true
 ingress_port: 8000
 # TCP 8000 is declared but unmapped by default. Users who want direct LAN
-# access (e.g. for `curl`-based backups or running the companion integration
-# in a separate container) opt in via Supervisor -> Network -> set a host
-# port. Default ingress-only is the safer posture; pair with save_token
-# whenever the port is exposed.
+# access (curl backups, the companion integration) map a host port under
+# Supervisor -> Network; every non-ingress request then needs save_token.
 ports:
   8000/tcp: null
 
@@ -55,12 +53,12 @@ options:
   save_token: ""
   theme: auto
 schema:
+  # Grants nothing; kept so existing configs still validate.
   allow_all_ips: bool
   # Entity ids to plot on the map (e.g. device_tracker.my_car). Empty by
   # default: nothing is fetched or displayed until you name something here.
-  # These positions are returned by /trackers.json, which is reachable on your
-  # LAN whenever allow_all_ips is on — so list only what you are content to
-  # expose there, and prefer vehicles over people.
+  # Their positions are readable by anyone holding save_token, so prefer
+  # vehicles over people.
   overlay_entities:
     - str?
   # How often an open editor re-reads those positions. 0 loads them once per

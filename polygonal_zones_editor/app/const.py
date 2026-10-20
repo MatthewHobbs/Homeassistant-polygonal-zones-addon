@@ -32,8 +32,8 @@ SCHEMA_VERSION = 1
 # Deliberately NOT a general state proxy: only entities the user has named in
 # the `overlay_entities` option are ever requested or returned. The list is
 # empty by default, so the add-on asks Home Assistant for nothing until the
-# user opts in — the editor is LAN-reachable when allow_all_ips is on, and an
-# unfiltered proxy there would expose every entity in the house.
+# user opts in: anyone holding save_token can read the overlay over the LAN,
+# and an unfiltered proxy there would expose every entity in the house.
 SUPERVISOR_API = "http://supervisor/core/api"
 SUPERVISOR_TOKEN_ENV = "SUPERVISOR_TOKEN"
 

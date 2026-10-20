@@ -82,7 +82,7 @@ def _served_client(boot, options, client):
 def test_forwarded_header_from_trusted_range_is_not_ingress(boot):
     client = _served_client(
         boot,
-        {"allow_all_ips": True, "save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
+        {"save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
         HOST_IN_PROXY_RANGE,
     )
     xff = {"X-Forwarded-For": INGRESS}
@@ -95,7 +95,7 @@ def test_forwarded_header_from_trusted_range_is_not_ingress(boot):
 def test_real_ingress_peer_is_still_ingress_with_proxies_configured(boot):
     client = _served_client(
         boot,
-        {"allow_all_ips": True, "save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
+        {"save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
         (INGRESS, 5000),
     )
 
@@ -107,7 +107,7 @@ def test_real_ingress_peer_is_still_ingress_with_proxies_configured(boot):
 def test_trusted_proxy_still_resolves_the_forwarded_client(boot, caplog):
     client = _served_client(
         boot,
-        {"allow_all_ips": True, "save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
+        {"save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
         HOST_IN_PROXY_RANGE,
     )
     with caplog.at_level(logging.WARNING):
@@ -158,8 +158,8 @@ def open_client(tmp_zones_file):
     import main
 
     main._auth_failures.clear()
-    app, _ = main.generate_app({"allow_all_ips": True})
-    yield TestClient(app)
+    app, _ = main.generate_app({})
+    yield TestClient(app, client=(INGRESS, 5000))
     main._auth_failures.clear()
 
 
@@ -294,60 +294,26 @@ def test_loggable_options_shape():
     assert main.loggable_options({"overlay_entities": {"not": "a list"}})["overlay_entities"] == 0
 
 
-# --- Startup warning ----------------------------------------------------------
+# --- Startup log for the retired allow_all_ips --------------------------------
 
 
-def _warnings(caplog):
-    return " ".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
-
-
-def test_open_access_warning_names_reads_and_trackers(boot, caplog):
+@pytest.mark.parametrize("token", ["", TOKEN])
+def test_allow_all_ips_logs_one_error_at_startup(boot, caplog, token):
     with caplog.at_level(logging.INFO):
-        boot({"allow_all_ips": True, "overlay_entities": ["device_tracker.car"]})
-    text = _warnings(caplog)
-    assert "/save_zones" in text
-    assert "/zones.json" in text
-    assert "/trackers.json" in text
+        boot({"allow_all_ips": True, "save_token": token})
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "allow_all_ips no longer grants LAN access" in errors[0]
+    assert "save_token" in errors[0]
 
 
-def test_open_access_warning_omits_trackers_when_none_configured(boot, caplog):
+@pytest.mark.parametrize("options", [{}, {"allow_all_ips": False}])
+def test_no_allow_all_ips_error_when_it_is_off(boot, caplog, options):
     with caplog.at_level(logging.INFO):
-        boot({"allow_all_ips": True})
-    text = _warnings(caplog)
-    assert "/zones.json" in text
-    assert "/trackers.json" not in text
-
-
-def test_no_open_access_warning_with_token(boot, caplog):
-    with caplog.at_level(logging.INFO):
-        boot({"allow_all_ips": True, "save_token": TOKEN})
-    assert "/zones.json" not in _warnings(caplog)
-    assert "require X-Save-Token" in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("options", "level", "expected"),
-    [
-        ({}, None, None),
-        ({"allow_all_ips": True, "save_token": TOKEN}, logging.INFO, "/trackers.json"),
-        ({"allow_all_ips": True}, logging.WARNING, "/zones.json is readable"),
-        (
-            {"allow_all_ips": True, "overlay_entities": ["device_tracker.car"]},
-            logging.WARNING,
-            "/zones.json and /trackers.json are readable",
-        ),
-    ],
-)
-def test_log_open_access(caplog, options, level, expected):
-    import main
-
-    with caplog.at_level(logging.INFO):
-        main.log_open_access(options)
-    if expected is None:
-        assert caplog.records == []
-    else:
-        assert [r.levelno for r in caplog.records] == [level]
-        assert expected in caplog.text
+        boot(options)
+    assert "allow_all_ips" not in " ".join(
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    )
 
 
 def test_peer_layer_records_none_without_a_client():
@@ -452,7 +418,7 @@ def test_host_bit_cidr_is_applied_as_its_network(boot, caplog):
 
 
 def test_cross_site_reads_never_test_a_token_or_spend_budget(boot):
-    options = {"save_token": TOKEN, "allow_all_ips": True}
+    options = {"save_token": TOKEN}
     client = _served_client(boot, options, ("192.168.7.7", 5000))
     cross = {"Sec-Fetch-Site": "cross-site"}
     for path in ("/zones.json", "/trackers.json"):
