@@ -14,9 +14,9 @@ def reset_save_rate_limit():
     failures leak between tests and later suites spuriously hit 429."""
     import main
 
-    main._save_failures.clear()
+    main._auth_failures.clear()
     yield
-    main._save_failures.clear()
+    main._auth_failures.clear()
 
 
 @pytest.fixture
@@ -1160,7 +1160,7 @@ def test_save_zones_rate_limit_window_expires(app_factory, tmp_zones_file, monke
     assert r.status_code == 429
 
     # Advance time beyond the window.
-    t[0] += main._SAVE_FAILURE_WINDOW_SECONDS + 1
+    t[0] += main._AUTH_FAILURE_WINDOW_SECONDS + 1
 
     # Now a request with the correct token should succeed, and the old
     # failures should have been popped during the check.
@@ -1847,10 +1847,32 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     import main
 
     # Exhaust the bucket on the write path with wrong-token POSTs.
-    for _ in range(main._SAVE_FAILURE_LIMIT):
+    for _ in range(main._AUTH_FAILURE_LIMIT):
         client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "wrong"})
 
     # Correct token now, but the bucket is full — the overlay is refused too.
     r = client.get("/trackers.json", headers={"X-Save-Token": "sekrit"})
     assert r.status_code == 429
     assert r.json() == {"error": "too many failed attempts"}
+
+
+@pytest.mark.parametrize(
+    ("path", "cache_control"),
+    [("/save_zones", None), ("/zones.json", None), ("/trackers.json", "no-store")],
+)
+def test_rate_limit_refusal_is_logged_on_every_gated_route(
+    app_factory, caplog, path, cache_control
+):
+    import logging
+
+    import main
+
+    client = TestClient(app_factory({"save_token": "sekrit"}))
+    for _ in range(main._AUTH_FAILURE_LIMIT):
+        client.get("/zones.json")
+    with caplog.at_level(logging.WARNING):
+        r = client.request("POST" if path == "/save_zones" else "GET", path, json={})
+    assert r.status_code == 429
+    assert r.json() == {"error": "too many failed attempts"}
+    assert r.headers.get("cache-control") == cache_control
+    assert f"Rate limit hit on {path} for testclient" in caplog.text

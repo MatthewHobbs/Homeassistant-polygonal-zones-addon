@@ -55,12 +55,9 @@ from helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 # Paths that bypass the IP allowlist middleware. /healthz is exempt so the
-# Docker HEALTHCHECK works. /save_zones runs its own authorisation logic
-# (allowing token-bearing requests through even when allow_all_ips is off),
-# so it bypasses the coarse middleware too. /zones.json mirrors /save_zones
-# now that reads are also token-gated — a user setting save_token without
-# allow_all_ips: true expects the token to unlock BOTH LAN reads and LAN
-# writes, same as on /save_zones.
+# Docker HEALTHCHECK works. The other three run their own gate (_gate), which
+# lets a request carrying save_token through even when allow_all_ips is off:
+# a user who sets the token expects it to unlock LAN reads and writes alike.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
 
 # Rate limit on authorisation failures across the three gated routes.
@@ -68,12 +65,12 @@ AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trac
 # Only failures count. A request whose TCP peer is ingress is never limited,
 # so failures recorded against a forwarded "172.30.32.2" cannot lock the HA
 # UI out. Behind a trusted proxy the budget is per forwarded client.
-_SAVE_FAILURE_LIMIT = 10
-_SAVE_FAILURE_WINDOW_SECONDS = 60
+_AUTH_FAILURE_LIMIT = 10
+_AUTH_FAILURE_WINDOW_SECONDS = 60
 # Above this many tracked clients, expired entries are swept on each failure,
 # so forwarded addresses that are never seen again don't accumulate.
-_SAVE_FAILURE_MAX_KEYS = 1024
-_save_failures: dict[str, deque] = defaultdict(deque)
+_AUTH_FAILURE_MAX_KEYS = 1024
+_auth_failures: dict[str, deque] = defaultdict(deque)
 
 
 def _failure_key(request: Request) -> str:
@@ -83,13 +80,13 @@ def _failure_key(request: Request) -> str:
 
 
 def _prune(key: str, cutoff: float) -> int:
-    failures = _save_failures.get(key)
+    failures = _auth_failures.get(key)
     if failures is None:
         return 0
     while failures and failures[0] < cutoff:
         failures.popleft()
     if not failures:
-        del _save_failures[key]
+        del _auth_failures[key]
         return 0
     return len(failures)
 
@@ -98,17 +95,17 @@ def _rate_limit_exceeded(request: Request) -> bool:
     """Whether this request's client has used its failure budget."""
     if allowed_ip(request):
         return False
-    cutoff = time.time() - _SAVE_FAILURE_WINDOW_SECONDS
-    return _prune(_failure_key(request), cutoff) >= _SAVE_FAILURE_LIMIT
+    cutoff = time.time() - _AUTH_FAILURE_WINDOW_SECONDS
+    return _prune(_failure_key(request), cutoff) >= _AUTH_FAILURE_LIMIT
 
 
-def _record_save_failure(request: Request) -> None:
+def _record_auth_failure(request: Request) -> None:
     now = time.time()
-    if len(_save_failures) > _SAVE_FAILURE_MAX_KEYS:
-        cutoff = now - _SAVE_FAILURE_WINDOW_SECONDS
-        for key in list(_save_failures):
+    if len(_auth_failures) > _AUTH_FAILURE_MAX_KEYS:
+        cutoff = now - _AUTH_FAILURE_WINDOW_SECONDS
+        for key in list(_auth_failures):
             _prune(key, cutoff)
-    _save_failures[_failure_key(request)].append(now)
+    _auth_failures[_failure_key(request)].append(now)
 
 
 def _etag_for_bytes(body: bytes) -> str:
@@ -129,8 +126,8 @@ def _current_zones_etag() -> str | None:
         return None
 
 
-def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
-    """Decide whether a /save_zones request is allowed.
+def authorise(options: dict, request: Request) -> tuple[bool, str | None]:
+    """Decide whether a request to one of the three gated routes is allowed.
 
     Returns ``(allowed, reason)``. ``reason`` is one of ``"token_missing"``,
     ``"token_wrong"`` or ``"not_allowed"`` — for logging only (ADR 0002 row
@@ -138,10 +135,10 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     cannot infer from the response alone whether a token is even configured.
 
     Order:
-      1. Ingress (172.30.32.2) is always allowed — the HA UI uses it.
+      1. Ingress is always allowed — the HA UI uses it.
       2. If ``save_token`` is configured, require a constant-time-equal
-         ``X-Save-Token`` header. allow_all_ips no longer matters when a
-         token is set; the token is the stronger signal.
+         ``X-Save-Token`` header, whatever allow_all_ips says: the token is
+         the stronger signal.
       3. Otherwise fall back to allow_all_ips.
     """
     if allowed_ip(request):
@@ -151,35 +148,6 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     if save_token:
         # Strip both stored and provided — symmetric handling so a trailing
         # whitespace in either doesn't silently break a correct token match.
-        provided = request.headers.get("x-save-token", "").strip()
-        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
-            return True, None
-        return False, "token_missing" if not provided else "token_wrong"
-
-    if allow_all_ips(options):
-        return True, None
-
-    return False, "not_allowed"
-
-
-def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
-    """Decide whether a GET /zones.json request is allowed.
-
-    Full mirror of ``authorise_save``: ingress → token → allow_all_ips →
-    deny. Previously reads were gated only by the IPAllowMiddleware, which
-    meant save_token didn't unlock LAN reads the way it unlocks LAN writes
-    — a user who set save_token and left allow_all_ips off couldn't read
-    zones.json on LAN even with the correct token. That asymmetry made
-    the reading path harder to reason about than the write path.
-
-    /zones.json is now in AUTHZ_EXEMPT_PATHS, so the middleware lets every
-    request through and this function is the sole read gate.
-    """
-    if allowed_ip(request):
-        return True, None
-
-    save_token = (options.get("save_token") or "").strip()
-    if save_token:
         provided = request.headers.get("x-save-token", "").strip()
         if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
             return True, None
@@ -506,38 +474,48 @@ def _browser_cross_origin(request: Request) -> bool:
     return site is not None and site not in _SAVE_FETCH_SITES
 
 
+def _gate(options: dict, request: Request, label: str, respond=JSONResponse) -> Response | None:
+    """The refusal for a request to a gated route, or None to serve it.
+
+    ``label`` names the route in the log; ``respond`` builds the 429, so a
+    route that must not be cached can say so.
+    """
+    client_host = request.client.host or "unknown"
+    if _rate_limit_exceeded(request):
+        _LOGGER.warning(
+            "Rate limit hit on %s for %s (%d failures in %ds). "
+            "Further attempts refused for the remainder of the window.",
+            request.url.path,
+            client_host,
+            _AUTH_FAILURE_LIMIT,
+            _AUTH_FAILURE_WINDOW_SECONDS,
+        )
+        return respond({"error": "too many failed attempts"}, status_code=429)
+    # Checked before the token, so a browser-sent cross-site request is
+    # refused whatever it carries. Not counted as a failure: the client did
+    # not choose to send it, and counting would let any web page lock the
+    # user's own browser out.
+    if _browser_cross_origin(request):
+        _LOGGER.warning("Rejected %s from %s: not a same-origin request", label, client_host)
+        return _auth_rejection_response()
+    ok, reason = authorise(options, request)
+    if not ok:
+        _record_auth_failure(request)
+        _LOGGER.warning(
+            "Rejected %s from %s: %s",
+            label,
+            client_host,
+            _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
+        )
+        return _auth_rejection_response()
+    return None
+
+
 def save_zones_generator(options: dict):
     async def save_zones(request: Request):
-        client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(request):
-            _LOGGER.warning(
-                "Rate limit hit on /save_zones for %s (%d failures in %ds). "
-                "Further attempts refused for the remainder of the window.",
-                client_host,
-                _SAVE_FAILURE_LIMIT,
-                _SAVE_FAILURE_WINDOW_SECONDS,
-            )
-            return JSONResponse(
-                {"error": "too many failed attempts"},
-                status_code=429,
-            )
-        # Checked before the token, so a browser-sent cross-site request is
-        # refused whatever it carries. Not counted as a failure: the client
-        # did not choose to send it, and counting would let any web page lock
-        # the user's own browser out.
-        if _browser_cross_origin(request):
-            _LOGGER.warning("Rejected /save_zones from %s: not a same-origin request", client_host)
-            return _auth_rejection_response()
-
-        ok, reason = authorise_save(options, request)
-        if not ok:
-            _record_save_failure(request)
-            _LOGGER.warning(
-                "Rejected /save_zones from %s: %s",
-                client_host,
-                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-            )
-            return _auth_rejection_response()
+        refusal = _gate(options, request, "/save_zones")
+        if refusal is not None:
+            return refusal
 
         # A cross-site HTML form can only send form or text/plain bodies, so
         # requiring JSON refuses those even from browsers without Sec-Fetch.
@@ -776,29 +754,12 @@ def trackers_json_generator(options: dict):
     def _uncached(body: dict, status_code: int = 200) -> JSONResponse:
         return JSONResponse(body, status_code=status_code, headers={"Cache-Control": "no-store"})
 
-    async def trackers_json(request: Request) -> JSONResponse:
-        # Same read gate as /zones.json — this returns positions, so it must
-        # not be reachable on terms the zones file isn't.
-        client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(request):
-            return _uncached({"error": "too many failed attempts"}, status_code=429)
-        if _browser_cross_origin(request):
-            # Refused before the token is looked at, and not counted: a page
-            # can make the visitor's browser send this, so it must neither
-            # test a token nor spend the visitor's failure budget.
-            _LOGGER.warning(
-                "Rejected /trackers.json read from %s: not a same-origin request", client_host
-            )
-            return _auth_rejection_response()
-        ok, reason = authorise_read(options, request)
-        if not ok:
-            _record_save_failure(request)
-            _LOGGER.warning(
-                "Rejected /trackers.json read from %s: %s",
-                client_host,
-                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-            )
-            return _auth_rejection_response()
+    async def trackers_json(request: Request) -> Response:
+        # Same gate as /zones.json — this returns positions, so it must not
+        # be reachable on terms the zones file isn't.
+        refusal = _gate(options, request, "/trackers.json read", respond=_uncached)
+        if refusal is not None:
+            return refusal
 
         entities = overlay_entities(options)
         if not entities:
@@ -853,38 +814,11 @@ def trackers_json_generator(options: dict):
 
 def zones_json_generator(options: dict):
     async def zones_json(request: Request) -> Response:
-        # When save_token is set, non-ingress reads require the same
-        # X-Save-Token as writes. Shares the rate-limit bucket with
-        # /save_zones so an attacker can't rotate between GET and POST
-        # to double their guess budget.
-        client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(request):
-            _LOGGER.warning(
-                "Rate limit hit on /zones.json for %s (%d failures in %ds). "
-                "Further attempts refused for the remainder of the window.",
-                client_host,
-                _SAVE_FAILURE_LIMIT,
-                _SAVE_FAILURE_WINDOW_SECONDS,
-            )
-            return JSONResponse(
-                {"error": "too many failed attempts"},
-                status_code=429,
-            )
-        if _browser_cross_origin(request):
-            # As for /trackers.json: refused before the token, never counted.
-            _LOGGER.warning(
-                "Rejected /zones.json read from %s: not a same-origin request", client_host
-            )
-            return _auth_rejection_response()
-        ok, reason = authorise_read(options, request)
-        if not ok:
-            _record_save_failure(request)
-            _LOGGER.warning(
-                "Rejected /zones.json read from %s: %s",
-                client_host,
-                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-            )
-            return _auth_rejection_response()
+        # Shares the failure bucket with /save_zones, so an attacker can't
+        # rotate between GET and POST to double their guess budget.
+        refusal = _gate(options, request, "/zones.json read")
+        if refusal is not None:
+            return refusal
 
         # Pass the file bytes through verbatim — atomic_write_json guarantees
         # the file is always valid JSON, so re-parsing and re-serialising via
