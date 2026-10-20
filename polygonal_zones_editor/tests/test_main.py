@@ -1,5 +1,11 @@
 from collections import Counter
+from email.utils import formatdate
+import hashlib
+import io
 import json
+import os
+import re
+import threading
 import time
 import urllib.error
 
@@ -77,22 +83,18 @@ def test_zones_json_passes_file_bytes_through(allow_all_client, tmp_zones_file):
 def test_zones_json_returns_etag(allow_all_client, tmp_zones_file):
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 200
-    etag = response.headers.get("etag")
-    assert etag is not None
-    # Strong validator: quoted hex sha256.
-    assert etag.startswith('"') and etag.endswith('"')
-    assert len(etag) == 64 + 2  # sha256 hex + quotes
+    # Strong validator: the quoted hex sha256 of the bytes served.
+    expected = hashlib.sha256(tmp_zones_file.read_bytes()).hexdigest()
+    assert response.headers["etag"] == f'"{expected}"'
 
 
 def test_zones_json_returns_last_modified(allow_all_client, tmp_zones_file):
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 200
-    lm = response.headers.get("last-modified")
-    assert lm is not None
-    # RFC 7231 date: "Sun, 06 Nov 1994 08:49:37 GMT" — just sanity-check
-    # the shape, exact value depends on the tmp_zones_file fixture mtime.
-    assert lm.endswith("GMT")
-    assert "," in lm
+    # RFC 7231 IMF-fixdate of the file's mtime, e.g. "Sun, 06 Nov 1994 08:49:37 GMT".
+    expected = formatdate(os.stat(tmp_zones_file).st_mtime, usegmt=True)
+    assert response.headers["last-modified"] == expected
+    assert re.fullmatch(r"[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT", expected)
 
 
 def test_zones_json_returns_304_on_matching_if_none_match(allow_all_client, tmp_zones_file):
@@ -1072,7 +1074,7 @@ def test_static_file_blocked_for_unauthorized_client(restricted_client):
 def test_static_traversal_attempt_rejected(allow_all_client):
     # StaticFiles normalises and rejects paths that escape the root directory.
     response = allow_all_client.get("/..%2F..%2Fapp%2Fconst.py")
-    assert response.status_code in (400, 404)
+    assert response.status_code == 404
 
 
 def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, tmp_zones_file):
@@ -1705,10 +1707,15 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
     monkeypatch.setattr(main, "OVERLAY_TIMEOUT_SECONDS", 0.2)
+    release = threading.Event()
+    stalled_returned = threading.Event()
 
     def fake_fetch(entity_id, token):
         if entity_id.endswith("stalled"):
-            time.sleep(1.0)
+            # Held until the test has its response: if the route waited for
+            # this fetch, the response could only come after it returned.
+            release.wait(timeout=10)
+            stalled_returned.set()
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
@@ -1720,32 +1727,37 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
             }
         )
     )
-    started = time.monotonic()
-    body = client.get("/trackers.json").json()
-    assert time.monotonic() - started < 0.8
+    try:
+        body = client.get("/trackers.json").json()
+        assert not stalled_returned.is_set(), "the response waited for the stalled fetch"
+    finally:
+        release.set()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
     assert body["unavailable"] == ["device_tracker.stalled"]
 
 
 def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
-    """25 entities at 50 ms each take ~1.25 s sequentially; the deadline only
-    holds if they overlap. Keeps the response order of the option."""
+    """Every fetch waits at a barrier that only a full pool of concurrent
+    fetches can pass, so a sequential gather reports them all unavailable.
+    Keeps the response order of the option."""
     import main
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    barrier = threading.Barrier(main.OVERLAY_FETCH_WORKERS, timeout=2)
 
     def fake_fetch(entity_id, token):
-        time.sleep(0.05)
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            return None
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    entities = [f"device_tracker.t{i:02d}" for i in range(25)]
+    entities = [f"device_tracker.t{i:02d}" for i in range(2 * main.OVERLAY_FETCH_WORKERS)]
     client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
-    started = time.monotonic()
     body = client.get("/trackers.json").json()
-    assert time.monotonic() - started < 0.6
-    assert [t["entity_id"] for t in body["trackers"]] == entities
     assert body["unavailable"] == []
+    assert [t["entity_id"] for t in body["trackers"]] == entities
 
 
 def test_trackers_json_caps_fetches_in_flight_across_all_polls(app_factory, monkeypatch):
@@ -1814,6 +1826,56 @@ def test_fetch_state_parses_a_good_response(monkeypatch):
     assert captured["url"] == f"{main.SUPERVISOR_API}/states/device_tracker.a"
     assert captured["auth"] == "Bearer tok"
     assert captured["timeout"] == main.OVERLAY_TIMEOUT_SECONDS
+
+
+class _Body(io.BytesIO):
+    """A urlopen response: a readable body that is its own context manager."""
+
+
+def _http_error(code):
+    return urllib.error.HTTPError("http://supervisor", code, "err", {}, io.BytesIO(b"{}"))
+
+
+# What the Supervisor proxy can answer for one entity, by the entity's name.
+_FETCH_FAILURES = {
+    "unauthorised": _http_error(401),
+    "server_error": _http_error(500),
+    "not_json": b"<html>Bad gateway</html>",
+    "timed_out": TimeoutError("timed out"),
+}
+
+
+def _fake_urlopen(req, timeout=None):
+    name = req.full_url.rsplit(".", 1)[1]
+    outcome = _FETCH_FAILURES.get(name)
+    if isinstance(outcome, BaseException):
+        raise outcome
+    if outcome is None:
+        outcome = json.dumps(_ha_state(f"device_tracker.{name}", 51.9, -0.6)).encode()
+    return _Body(outcome)
+
+
+@pytest.mark.parametrize("name", list(_FETCH_FAILURES))
+def test_fetch_state_returns_none_on_each_failure(monkeypatch, name):
+    import main
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
+    assert main._fetch_state(f"device_tracker.{name}", "tok") is None
+
+
+def test_trackers_json_survives_every_fetch_failure(app_factory, monkeypatch):
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
+    failing = [f"device_tracker.{name}" for name in _FETCH_FAILURES]
+    client = TestClient(
+        app_factory({"allow_all_ips": True, "overlay_entities": [*failing, "device_tracker.ok"]})
+    )
+    r = client.get("/trackers.json")
+    assert r.status_code == 200
+    assert [t["entity_id"] for t in r.json()["trackers"]] == ["device_tracker.ok"]
+    assert r.json()["unavailable"] == failing
 
 
 def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file):
