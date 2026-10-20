@@ -466,13 +466,10 @@ def _browser_cross_origin(request: Request) -> bool:
     return site is not None and site not in _SAVE_FETCH_SITES
 
 
-def _gate(
-    options: dict, request: Request, label: str, respond=JSONResponse, check_origin=True
-) -> Response | None:
+def _gate(options: dict, request: Request, label: str, check_origin=True) -> Response | None:
     """The refusal for a request to a gated route, or None to serve it.
 
-    ``label`` names the route in the log; ``respond`` builds the 429, so a
-    route that must not be cached can say so.
+    ``label`` names the route in the log.
     """
     client_host = request.client.host or "unknown"
     if _rate_limit_exceeded(request):
@@ -484,7 +481,12 @@ def _gate(
             _AUTH_FAILURE_LIMIT,
             _AUTH_FAILURE_WINDOW_SECONDS,
         )
-        return respond({"error": "too many failed attempts"}, status_code=429)
+        # no-store: a cached 429 would outlive the window it reports.
+        return JSONResponse(
+            {"error": "too many failed attempts"},
+            status_code=429,
+            headers={"Cache-Control": "no-store"},
+        )
     # Checked before the token, so a browser-sent cross-site request is
     # refused whatever it carries. Not counted as a failure: the client did
     # not choose to send it, and counting would let any web page lock the
@@ -752,7 +754,7 @@ def trackers_json_generator(options: dict):
     async def trackers_json(request: Request) -> Response:
         # Same gate as /zones.json — this returns positions, so it must not
         # be reachable on terms the zones file isn't.
-        refusal = _gate(options, request, "/trackers.json read", respond=_uncached)
+        refusal = _gate(options, request, "/trackers.json read")
         if refusal is not None:
             return refusal
 

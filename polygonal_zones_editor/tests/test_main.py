@@ -1851,13 +1851,8 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     assert r.json() == {"error": "too many failed attempts"}
 
 
-@pytest.mark.parametrize(
-    ("path", "cache_control"),
-    [("/save_zones", "no-cache"), ("/zones.json", "no-cache"), ("/trackers.json", "no-store")],
-)
-def test_rate_limit_refusal_is_logged_on_every_gated_route(
-    app_factory, caplog, path, cache_control
-):
+@pytest.mark.parametrize("path", ["/save_zones", "/zones.json", "/trackers.json", "/"])
+def test_rate_limit_refusal_is_logged_on_every_gated_route(app_factory, caplog, path):
     import logging
 
     import main
@@ -1869,7 +1864,8 @@ def test_rate_limit_refusal_is_logged_on_every_gated_route(
         r = client.request("POST" if path == "/save_zones" else "GET", path, json={})
     assert r.status_code == 429
     assert r.json() == {"error": "too many failed attempts"}
-    assert r.headers.get("cache-control") == cache_control
+    # A cached 429 would keep refusing after the window has passed.
+    assert r.headers.get("cache-control") == "no-store"
     assert f"Rate limit hit on {path} for testclient" in caplog.text
 
 
