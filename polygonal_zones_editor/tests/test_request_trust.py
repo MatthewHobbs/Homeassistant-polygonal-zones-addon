@@ -463,14 +463,9 @@ def test_host_bit_entry_is_still_flagged(caplog):
     assert sum("host bits set" in w for w in warnings) == 1
 
 
-@pytest.mark.parametrize(
-    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
-)
-def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
-    # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse
-    # reads them as a fragment or query and sees an exempt path. The test
-    # client would normalise the dots away, so the scope is sent directly.
-    app = boot({"save_token": TOKEN})
+def _send_raw(app, path):
+    """The response status for ``path`` sent as a raw ASGI scope, which the
+    test client would normalise."""
     sent = []
 
     async def receive():
@@ -494,7 +489,28 @@ def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
         "server": ("addon", 8000),
     }
     asyncio.run(app(scope, receive, send))
-    assert sent[0]["status"] == 403
+    return sent[0]["status"]
+
+
+@pytest.mark.parametrize(
+    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
+)
+def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
+    # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse
+    # reads them as a fragment or query and sees an exempt path.
+    assert _send_raw(boot({"save_token": TOKEN}), path) == 403
+
+
+def test_a_decoded_newline_in_the_path_cannot_forge_a_log_line(boot, caplog):
+    # uvicorn decodes %0a into scope["path"], so GET /%0aFAKE arrives as this.
+    app = boot({"save_token": TOKEN})
+    with caplog.at_level(logging.WARNING):
+        statuses = [_send_raw(app, "/\nFAKE") for _ in range(11)]
+    assert statuses[-1] == 429
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("Rejected /") for m in messages)
+    assert any(m.startswith("Rate limit hit on /") for m in messages)
+    assert not any("\n" in m or "\r" in m for m in messages)
 
 
 def test_cross_site_static_loads_never_test_a_token_or_spend_budget(boot):

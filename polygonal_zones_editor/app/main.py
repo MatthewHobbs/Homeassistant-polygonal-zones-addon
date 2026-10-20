@@ -195,7 +195,9 @@ class AuthoriseMiddleware(BaseHTTPMiddleware):
         # into it, and a URL re-parse would read "/healthz%23/../x" as /healthz.
         path = request.scope["path"]
         if path not in AUTHZ_EXEMPT_PATHS:
-            refusal = _gate(self.options, request, path, check_origin=not allowed_ip(request))
+            # Escaped because uvicorn also decodes %0a, which would forge a log line.
+            label = path.encode("unicode_escape").decode()
+            refusal = _gate(self.options, request, label, check_origin=not allowed_ip(request))
             if refusal is not None:
                 return refusal
         return await call_next(request)
