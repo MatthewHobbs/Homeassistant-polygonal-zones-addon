@@ -601,7 +601,7 @@ def config_json_generator(options: dict):
     async def config_json(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
-                "zone_colour": options.get("zone_colour", "green"),
+                "zone_colour": options.get("zone_colour", "purple"),
                 "theme": _normalised_theme(options),
             }
         )

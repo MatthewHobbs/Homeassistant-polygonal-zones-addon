@@ -931,7 +931,8 @@ def test_index_serves_static_html(ingress_client):
 def test_config_json_default(ingress_client):
     response = ingress_client.get("/config.json")
     assert response.status_code == 200
-    assert response.json() == {"zone_colour": "green", "theme": "auto"}
+    # config.yaml's default, so an options.json without the key looks the same.
+    assert response.json() == {"zone_colour": "purple", "theme": "auto"}
 
 
 def test_config_json_respects_option(app_factory):
