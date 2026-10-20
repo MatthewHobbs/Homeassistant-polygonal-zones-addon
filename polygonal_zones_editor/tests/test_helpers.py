@@ -142,6 +142,25 @@ def test_atomic_write_json_writes_new_file(tmp_path):
     assert json.loads(target.read_text()) == payload
 
 
+def test_atomic_write_json_returns_the_bytes_it_wrote(tmp_path):
+    import helpers
+
+    target = tmp_path / "zones.json"
+    assert helpers.atomic_write_json(str(target), {"a": [1, 2.5]}) == target.read_bytes()
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_atomic_write_json_refuses_non_finite_numbers_without_touching_disk(tmp_path, value):
+    import helpers
+
+    target = tmp_path / "zones.json"
+    target.write_text("{}")
+    with pytest.raises(ValueError):
+        helpers.atomic_write_json(str(target), {"properties": {"w": value}})
+    assert [p.name for p in tmp_path.iterdir()] == ["zones.json"]
+    assert target.read_text() == "{}"
+
+
 def test_atomic_write_json_replaces_existing_file(tmp_path):
     import helpers
 
@@ -232,8 +251,8 @@ def test_atomic_write_json_fsyncs_parent_directory(tmp_path, monkeypatch):
 
 
 def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path, monkeypatch):
-    """Simulate a crash mid-write: json.dump raises after the temp file is
-    opened but before the rename happens. The destination must be untouched
+    """Simulate a crash mid-write: fsync raises after the temp file is
+    written but before the rename happens. The destination must be untouched
     and no stray temp file must remain."""
     import helpers
 
@@ -244,7 +263,7 @@ def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path
     def boom(*_args, **_kwargs):
         raise RuntimeError("simulated crash mid-write")
 
-    monkeypatch.setattr(helpers.json, "dump", boom)
+    monkeypatch.setattr(helpers.os, "fsync", boom)
 
     with pytest.raises(RuntimeError, match="simulated crash"):
         helpers.atomic_write_json(str(target), {"anything": True})

@@ -577,6 +577,43 @@ def test_save_zones_rejects_non_finite_coordinate(ingress_client, tmp_zones_file
     assert "must be finite" in r.json()["detail"]
 
 
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_save_zones_refuses_a_non_finite_number_anywhere(ingress_client, tmp_zones_file, constant):
+    # Python's parser accepts these, but the editor's JSON.parse cannot load them back.
+    original = tmp_zones_file.read_text()
+    raw = (
+        b'{"type":"FeatureCollection","features":[{"type":"Feature",'
+        b'"properties":{"name":"x","weight":' + constant + b"},"
+        b'"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}'
+    )
+    r = ingress_client.post(
+        "/save_zones", content=raw, headers={"content-type": "application/json"}
+    )
+    assert r.status_code == 422
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_etag_is_the_hash_of_the_bytes_written(ingress_client, tmp_zones_file, monkeypatch):
+    # The file vanishing straight after the write must not turn the ETag into null.
+    import main
+
+    real_write = main.atomic_write_json
+    written = {}
+
+    def write_then_lose_it(path, data):
+        result = real_write(path, data)
+        written["bytes"] = tmp_zones_file.read_bytes()
+        tmp_zones_file.unlink()
+        return result
+
+    monkeypatch.setattr(main, "atomic_write_json", write_then_lose_it)
+    r = ingress_client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 200
+    expected = f'"{hashlib.sha256(written["bytes"]).hexdigest()}"'
+    assert r.json()["etag"] == expected
+    assert r.headers["etag"] == expected
+
+
 def test_save_zones_rejects_vertex_cap_breach(ingress_client, tmp_zones_file):
     """Per-feature vertex cap. Build a single Polygon with 1001 vertices —
     the first-last-equal close duplicates one position, so generate 1000

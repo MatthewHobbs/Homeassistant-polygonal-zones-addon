@@ -572,17 +572,19 @@ def save_zones_generator(options: dict):
         # accepted the payload. Rejected payloads aren't mutated.
         _normalise_feature_collection(geo_json)
         try:
-            atomic_write_json(ZONES_FILE, geo_json)
+            written = atomic_write_json(ZONES_FILE, geo_json)
+        except ValueError:
+            return JSONResponse(
+                {"error": "invalid GeoJSON", "detail": "NaN and Infinity are not valid JSON"},
+                status_code=422,
+            )
         except OSError:
             _LOGGER.exception("Failed to write %s", ZONES_FILE)
             return JSONResponse({"error": "write failed"}, status_code=500)
 
-        new_etag = _current_zones_etag()
+        new_etag = _etag_for_bytes(written)
         _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
-        return JSONResponse(
-            {"status": "ok", "etag": new_etag},
-            headers={"ETag": new_etag} if new_etag else {},
-        )
+        return JSONResponse({"status": "ok", "etag": new_etag}, headers={"ETag": new_etag})
 
     return save_zones
 
