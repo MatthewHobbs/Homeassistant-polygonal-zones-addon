@@ -209,7 +209,6 @@ class ZoneEntry extends HTMLElement {
             detail: {
                 editing: !editing,
                 name: name,
-                oldName: this.getAttribute('name'),
                 // Stable per-zone id so the map can match the right layer even
                 // when two zones share a display name (rename targeting bug).
                 id: this.getAttribute('zone-id') || null,

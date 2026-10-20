@@ -56,10 +56,9 @@ function pz_is_latlng(node) {
  * [ring, ring, ...] (first ring outer, the rest holes); a MultiPolygon is
  * [[ring, ...], [ring, ...], ...], one such group per part. Either way, the
  * first ring in a group is that group's outer boundary and every ring after
- * it is a hole *of that same group* — never of any other. Previously every
- * ring was flattened into one list with no such grouping, so a hole added
- * to a zone's area instead of subtracting, and a point inside a hole read as
- * inside the zone (ADR 0002 row 12). */
+ * it is a hole *of that same group* — never of any other. Flattening the
+ * rings into one list would add a hole to a zone's area instead of
+ * subtracting it, and read a point inside a hole as inside the zone. */
 function pz_layer_polygons(layer) {
     if (typeof layer.getLatLngs !== 'function') return [];
     const latlngs = layer.getLatLngs();
@@ -120,12 +119,9 @@ function pz_measure_zone(tracker, layer) {
         }
         const acc = Number.isFinite(accuracyM) && accuracyM > 0 ? accuracyM : 0;
         const m = { inside, edgeDistanceM, withinAccuracy: inside || edgeDistanceM <= acc };
-        // Pre-existing bug, found by adversarial review while this function
-        // was already open for row 12: comparing edgeDistanceM regardless of
-        // `inside` let a closer-but-outside part overturn an already-inside
-        // result from an earlier part. A device inside part 1 must stay
-        // "inside" even if part 2's boundary happens to be nearer — only
-        // compare distances between two candidates that agree on `inside`.
+        // A device inside part 1 must stay "inside" even if part 2's boundary
+        // is nearer, so only compare distances between two candidates that
+        // agree on `inside`.
         if (!best || (m.inside && !best.inside) || (m.inside === best.inside && m.edgeDistanceM < best.edgeDistanceM)) {
             best = m;
         }

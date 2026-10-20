@@ -5,13 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <meta name="referrer" content="strict-origin-when-cross-origin">
-    <!-- Leaflet 1.9.4 and Leaflet.draw 1.0.4 are vendored under
-         app/static/vendor/ so the editor has no runtime CDN dependency.
-         unpkg.com used to be pinned via SRI here; both libs are now
-         served same-origin, so SRI is unnecessary (and would lie — we
-         re-publish the bytes). Version bumps are manual file swaps; the
-         `vendor/<lib>/` path keeps upstream source layout so a future
-         Renovate custom-manager can drive them from one place. -->
+    <!-- Leaflet and Leaflet-Geoman are vendored under app/static/vendor/ so
+         the editor has no runtime CDN dependency. Both are served
+         same-origin, so SRI would add nothing. Version bumps are manual file
+         swaps; the `vendor/<lib>/` path keeps upstream source layout. -->
     <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
     <script src="./vendor/leaflet/leaflet.js"></script>
 

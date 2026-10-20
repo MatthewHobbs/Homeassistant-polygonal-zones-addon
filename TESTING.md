@@ -88,7 +88,7 @@ Only relevant if you enable the LAN port (`Configuration → Network → set a h
 
 ### trusted_proxies validator
 
-- [ ] Set `trusted_proxies: "*"` → restart → addon log contains `Refusing a wildcard trusted_proxies entry`.
+- [ ] Set `trusted_proxies: "*"` → restart → addon log contains `Refusing a trusted_proxies entry that means every address`.
 - [ ] Set `trusted_proxies: "172.30.0.0/16"` → restart → log contains `CIDR covers the HA ingress IP`.
 - [ ] Set `trusted_proxies: "proxy.local"` → restart → log contains `Refusing an unparseable trusted_proxies entry`.
 - [ ] Set `trusted_proxies: "10.0.0.1, 192.168.1.0/24"` → restart → log shows `Honouring X-Forwarded-For from 2 configured proxy/proxies.`
@@ -97,7 +97,7 @@ Only relevant if you enable the LAN port (`Configuration → Network → set a h
 
 - [ ] Install an older version (e.g. `0.2.14`). Draw and save some zones.
 - [ ] Upgrade to the branch under test. Confirm existing zones are preserved and the addon starts clean.
-- [ ] Rollback via the version picker: confirm zones survive the downgrade.
+- [ ] Rollback by restoring the add-on's pre-update partial backup (`ha apps update <slug> --backup`, then restore it; the slug ends in `_polygonal_zones`; `ha apps` lists it): confirm zones survive.
 
 ## When live verification is not required
 

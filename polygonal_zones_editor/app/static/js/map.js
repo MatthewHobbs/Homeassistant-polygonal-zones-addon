@@ -273,28 +273,7 @@ function generate_map(zones_url) {
             try { data = JSON.parse(json); }
             catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
 
-            L.geoJSON(data, {
-                style: () => ({color: window.ZONE_COLOUR}),
-                onEachFeature: (feature, layer) => {
-                    layer.bindPopup(name_popup_element(feature));
-                    editableLayers.addLayer(layer);
-                },
-            })
-
-            render_zone_list();
-            // Only auto-fit to the zones when the user hasn't manually
-            // positioned the viewport before (#130). Otherwise their
-            // remembered center/zoom wins — someone who bounced around
-            // multiple HA installs shouldn't get snapped to the zone
-            // bounding box on every first load.
-            if (editableLayers.getLayers().length > 0) {
-                if (!restoredViewport) {
-                    map.fitBounds(editableLayers.getBounds());
-                    map.setView(editableLayers.getBounds().getCenter(), 13);
-                }
-            } else {
-                create_load_btn();
-            }
+            load_saved_zones(data, restoredViewport);
         })
         .catch(err => {
             console.error('Failed to load zones:', err);
@@ -315,11 +294,10 @@ function generate_map(zones_url) {
 }
 
 function setup_editing(map, editableLayers) {
-    // Geoman replaces Leaflet-Draw here. Only the controls this editor needs
-    // are enabled: zones are polygons, so every other shape is off.
-    // drawRectangle stays on: a rectangle is drawn as an L.Rectangle, which
-    // extends L.Polygon, so toGeoJSON() below emits a plain Polygon
-    // indistinguishable from one drawn point-by-point (ADR 0002 row 11).
+    // Only the controls this editor needs are enabled: zones are polygons, so
+    // every other shape is off. drawRectangle stays on: a rectangle is drawn
+    // as an L.Rectangle, which extends L.Polygon, so toGeoJSON() emits a
+    // plain Polygon indistinguishable from one drawn point-by-point.
     map.pm.setGlobalOptions({
         allowSelfIntersection: false,
         snappable: true,
@@ -350,8 +328,8 @@ function setup_editing(map, editableLayers) {
         drawText: false,
     });
 
-    // Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman needs more work here
-    // than Leaflet-Draw did, in two different ways:
+    // Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman falls short in two
+    // different ways:
     //
     //  - Its *action* buttons (Finish, Cancel, Remove Last Vertex) carry a
     //    `title` only. Many screen readers — NVDA, VoiceOver on iOS — ignore or
@@ -393,8 +371,8 @@ function setup_editing(map, editableLayers) {
             });
     });
 
-    // Geoman removes one layer per click, so unlike Leaflet-Draw's batched
-    // draw:deleted there is no N-deletions-one-rebuild case to optimise for.
+    // Geoman removes one layer per click, so there is no batch of deletions
+    // to fold into one rebuild.
     map.on('pm:remove', function (e) {
         editableLayers.removeLayer(e.layer);
         render_zone_list();
@@ -437,10 +415,9 @@ function setup_editing(map, editableLayers) {
             }
         };
 
-        // Geoman adds the new shape to the map itself, unlike Leaflet-Draw
-        // which handed over an unattached layer. Take it off the map before
-        // handing it to editableLayers, or it ends up owned by both and a
-        // later group removal leaves an orphan rendering on the map.
+        // Geoman adds the new shape to the map itself. Take it off the map
+        // before handing it to editableLayers, or it ends up owned by both
+        // and a later group removal leaves an orphan rendering on the map.
         map.removeLayer(layer);
         editableLayers.addLayer(layer);
         render_zone_list();
@@ -466,13 +443,9 @@ function edit_zone_event(e) {
     editableLayers.eachLayer(layer => { if (layer.pm) layer.pm.disable(); });
     document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
 
-    let oldName = e.detail.oldName || e.detail.name
-    // Match on the stable id when we have one (two zones can share a display
-    // name); fall back to name for zones from a pre-versioned file with no id.
-    let layer =
-        (e.detail.id &&
-            editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id)) ||
-        editableLayers.getLayers().find(l => l.feature.properties.name === oldName);
+    // Every zone has an id (drawn ones at creation, loaded ones in add_zones),
+    // so the id alone finds it whatever its name.
+    let layer = editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id);
 
     // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
@@ -480,7 +453,10 @@ function edit_zone_event(e) {
         layer.pm.enable({ allowSelfIntersection: false });
     } else {
         // once we stop we will disable editing and save the changes
-        layer.feature.properties.name = e.detail.name;
+        // An empty box leaves the zone unnamed: two zones named "" would be
+        // refused on save as duplicates.
+        if (e.detail.name) layer.feature.properties.name = e.detail.name;
+        else delete layer.feature.properties.name;
         e.target.setAttribute('name', e.detail.name);
         mark_dirty();
     }
@@ -506,7 +482,8 @@ function render_zone_list() {
     editableLayers.eachLayer(layer => {
         // render a zone-entry element and set attribute name
         let zone_entry = document.createElement('zone-entry');
-        zone_entry.setAttribute('name', layer.feature.properties.name);
+        // A zone may have no name; an absent attribute value would read "undefined".
+        zone_entry.setAttribute('name', layer.feature.properties.name ?? '');
         // Stable id (if present) so edit events can target the exact layer even
         // when display names collide.
         if (layer.feature.properties.id) {
@@ -552,10 +529,8 @@ function save_zones() {
     }
 
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
-    // round-trip. The previous hand-assembly read _latlngs[0] only, which
-    // silently converted MultiPolygon zones (loaded from zones.json or via
-    // bulk-load) back into a single-ring Polygon — losing every ring
-    // beyond the first.
+    // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
+    // a single-ring Polygon, losing every ring beyond the first.
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
@@ -598,11 +573,9 @@ function save_zones() {
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
             mark_clean();
-            // Success auto-clears at 2s (same as before). #123 only changed
-            // the error paths below — they used to auto-clear in 2s too,
-            // which was too short for a user not looking at the button
-            // (especially on mobile). Error state now persists until the
-            // user's next save click, handled at the top of save_zones().
+            // Success auto-clears at 2s. Errors below persist until the next
+            // save click (top of save_zones()): 2s is too short for a user
+            // not looking at the button, especially on mobile.
             setTimeout(() => {
                 elem.classList.remove('success');
                 if (status && status.textContent === 'Zones saved.') status.textContent = '';
@@ -637,6 +610,63 @@ function show_transient_error(message) {
     setTimeout(() => el.remove(), 5000);
 }
 
+/* Show the saved zones from the first load. They join any zone drawn while
+ * the fetch was in flight rather than replacing it. */
+function load_saved_zones(data, restoredViewport) {
+    const {skipped} = add_zones(data, false);
+    render_zone_list();
+    if (skipped) {
+        show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
+    }
+    if (editableLayers.getLayers().length > 0) {
+        // A remembered view (#130) wins over centring on the zones.
+        if (!restoredViewport) map.setView(editableLayers.getBounds().getCenter(), 13);
+    } else {
+        create_load_btn();
+    }
+}
+
+/* Add the polygon zones in `data`; return {count, skipped}. Layers are built
+ * before anything changes. With `replace`, anything that is not a polygon
+ * throws and leaves the editor as it was, and the current zones are cleared
+ * only when there is something to replace them with. Without it (the first
+ * load), zones are added beside any already drawn and anything else is
+ * skipped and counted. A zone needs no name: the server accepts unnamed ones,
+ * and dropping them here would delete them on the next save. */
+function add_zones(data, replace) {
+    const layers = [];
+    L.geoJSON(data, {
+        style: () => ({color: window.ZONE_COLOUR}),
+        onEachFeature: (feature, layer) => {
+            // GeoJSON allows null properties; the editor reads and writes them.
+            if (!feature.properties) feature.properties = {};
+            // Every zone gets an id, so its list entry finds it even when names
+            // are missing or repeated. The server keeps an id it is given.
+            if (!feature.properties.id) feature.properties.id = new_zone_id();
+            layer.bindPopup(name_popup_element(feature));
+            layers.push(layer);
+        },
+    });
+    // Polygon covers MultiPolygon too; the server refuses anything else.
+    const zones = layers.filter(layer => layer instanceof L.Polygon);
+    const skipped = layers.length - zones.length;
+    if (replace) {
+        if (skipped) throw new Error('not polygon zones');
+        // The server takes a name that is text, null or absent; refuse anything
+        // else now rather than at save.
+        if (zones.some(layer => {
+            const name = layer.feature.properties.name;
+            return name != null && typeof name !== 'string';
+        })) {
+            throw new Error('zone name is not text');
+        }
+        if (!zones.length) return {count: 0, skipped: 0};
+        editableLayers.clearLayers();
+    }
+    zones.forEach(layer => editableLayers.addLayer(layer));
+    return {count: zones.length, skipped};
+}
+
 function load_bulk_json() {
     // open a file dialog
     let input = document.createElement('input');
@@ -652,23 +682,20 @@ function load_bulk_json() {
                 show_transient_error('The selected file is not valid JSON.');
                 return;
             }
-            editableLayers.clearLayers();
-            L.geoJSON(data, {
-                style: () => ({color: window.ZONE_COLOUR}),
-                onEachFeature: (feature, layer) => {
-                    layer.bindPopup(name_popup_element(feature));
-                    editableLayers.addLayer(layer);
-                },
-            })
-            map.fitBounds(editableLayers.getBounds());
+            let count;
+            try { ({count} = add_zones(data, true)); }
+            catch (err) {
+                show_transient_error('The selected file is not GeoJSON polygon zones.');
+                return;
+            }
+            if (!count) {
+                show_transient_error('The selected file has no zones in it.');
+                return;
+            }
             render_zone_list();
             mark_dirty();
-            if (editableLayers.getLayers().length > 0) {
-                map.fitBounds(editableLayers.getBounds());
-                map.setView(editableLayers.getBounds().getCenter(), 13);
-
-                delete_load_btn();
-            }
+            map.setView(editableLayers.getBounds().getCenter(), 13);
+            delete_load_btn();
         };
         reader.readAsText(file);
     });

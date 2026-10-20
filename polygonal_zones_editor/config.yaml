@@ -1,9 +1,9 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.5.5"
+version: "0.5.6"
 # Oldest Core this add-on is offered to (ADR 0001 rows 10 to 12). The
 # Supervisor pilot tests this exact Core, and lint.yml's ha-floor job holds it
-# to the global rule: never newer than the .1 of the month before current stable.
+# to the bound in ADR 0001 row 12: never newer than the .1 of the month before current stable.
 homeassistant: "2026.8.1"
 slug: "polygonal_zones"
 url: "https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/tree/main/polygonal_zones_editor"
@@ -39,10 +39,10 @@ ingress_port: 8000
 ports:
   8000/tcp: null
 
-# Read-only access to Home Assistant's state API, used by /trackers.json to
-# plot live tracker positions over the map. Only entities named in
-# `overlay_entities` are ever requested, and that list is empty by default —
-# with it empty the add-on asks Home Assistant for nothing at all.
+# Home Assistant API access, granted at install and not read-only. The add-on
+# uses it only for /trackers.json, issuing GET /states/<entity_id> for each
+# entity named in `overlay_entities`; that list is empty by default, and with
+# it empty the add-on asks Home Assistant for nothing at all.
 homeassistant_api: true
 
 options:

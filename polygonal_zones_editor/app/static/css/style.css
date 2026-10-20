@@ -71,7 +71,7 @@
 /* Leaflet's own control icons are dark-on-light sprites, and Geoman's toolbar
    buttons are dark inline SVG on a white button — both need inverting on a
    dark ground, which a colour variable can't express. Geoman's container is
-   .leaflet-pm-toolbar (the leaflet-draw selector this replaced is gone). */
+   .leaflet-pm-toolbar. */
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .leaflet-pm-toolbar a,
     :root:not([data-theme="light"]) .leaflet-bar a {
@@ -119,20 +119,15 @@ body {
     color: var(--text-color);
 }
 
-/* Layout is keyed off data-sidebar on .body — owned by
- * polygonal_zones_editor/app/static/js/ui-state.js. The default value
- * is hardcoded in index.html; #29 adds a toggle that flips it to
- * "collapsed" and #30 adds media-query-driven "drawer" behaviour. Both
- * rules below are scaffolding in this refactor — nothing else sets the
- * attribute to anything other than "open".
+/* Layout is keyed off data-sidebar ("open" or "collapsed") on .body, written
+ * only by js/ui-state.js. The default, "open", is set in index.html.
  */
 .body {
     display: grid;
     /* Animate the column transition so map <-> sidebar swap is smooth.
-     * ui-state.js fires pz:map-resized after the transition settles so
-     * Leaflet recomputes its container size. Respect
-     * prefers-reduced-motion: no transition, map resize on the next tick
-     * (also handled in ui-state.js). */
+     * ui-state.js has Leaflet recompute its container size once the
+     * transition settles. Respect prefers-reduced-motion: no transition,
+     * map resize on the next tick (also handled in ui-state.js). */
     transition: grid-template-columns 0.3s ease;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -149,10 +144,6 @@ body {
      * toggle; it's just hidden with display: none inside this rule
      * (below). */
     grid-template-columns: 1fr 0;
-}
-
-.body[data-sidebar="drawer"] {
-    /* wired in #30 */
 }
 
 .body[data-sidebar="collapsed"] .sidebar {
@@ -374,7 +365,7 @@ body {
 
 /* Transient error toast (e.g. invalid bulk JSON). Top-anchored with a z-index
    above the mobile bottom-sheet sidebar (1100) so the message is never hidden
-   behind the drawer on narrow viewports. */
+   behind the sidebar on narrow viewports. */
 .transient-error {
     position: fixed;
     top: 10px;
@@ -393,16 +384,13 @@ body {
 
 /* Mobile / narrow viewport. A fixed 300px sidebar leaves the map unusable on a
    phone, so below 600px the sidebar becomes a bottom sheet over a full-width
-   map. Overrides the desktop grid regardless of the data-sidebar state (except
-   "collapsed", which still hides it). */
+   map. Overrides the desktop grid when open; "collapsed" still hides it. */
 @media (max-width: 600px) {
-    .body[data-sidebar="open"],
-    .body[data-sidebar="drawer"] {
+    .body[data-sidebar="open"] {
         grid-template-columns: 1fr;
     }
 
-    .body[data-sidebar="open"] .sidebar,
-    .body[data-sidebar="drawer"] .sidebar {
+    .body[data-sidebar="open"] .sidebar {
         position: fixed;
         left: 0;
         right: 0;

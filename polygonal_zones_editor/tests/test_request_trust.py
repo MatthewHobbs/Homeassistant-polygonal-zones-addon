@@ -157,10 +157,10 @@ def test_lifespan_passes_through_the_peer_layer(tmp_zones_file):
 def open_client(tmp_zones_file):
     import main
 
-    main._save_failures.clear()
+    main._auth_failures.clear()
     app, _ = main.generate_app({"allow_all_ips": True})
     yield TestClient(app)
-    main._save_failures.clear()
+    main._auth_failures.clear()
 
 
 def test_save_refuses_non_json_media_type(open_client, tmp_zones_file):
@@ -225,16 +225,16 @@ def test_save_accepts_same_origin_and_user_initiated(open_client, site):
 def test_cross_site_refusal_ignores_a_valid_token_and_spends_no_budget(tmp_zones_file):
     import main
 
-    main._save_failures.clear()
+    main._auth_failures.clear()
     app, _ = main.generate_app({"save_token": TOKEN})
     client = TestClient(app)
     headers = {"Sec-Fetch-Site": "cross-site", "X-Save-Token": TOKEN}
-    for _ in range(main._SAVE_FAILURE_LIMIT + 1):
+    for _ in range(main._AUTH_FAILURE_LIMIT + 1):
         assert client.post("/save_zones", json=_valid_payload(), headers=headers).status_code == 403
     # Refusals of browser cross-site requests must not lock the client out.
     r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": TOKEN})
     assert r.status_code == 200
-    main._save_failures.clear()
+    main._auth_failures.clear()
 
 
 # --- Startup log --------------------------------------------------------------
@@ -377,20 +377,63 @@ def test_forged_ingress_failures_cannot_rate_limit_real_ingress(boot, path):
 def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     import main
 
-    main._save_failures.clear()
+    main._auth_failures.clear()
     app, _ = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
     client = TestClient(app, client=HOST_IN_PROXY_RANGE)
-    monkeypatch.setattr(main, "_SAVE_FAILURE_MAX_KEYS", 5)
+    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 5)
     clock = [1_000_000.0]
     monkeypatch.setattr(main.time, "time", lambda: clock[0])
     for i in range(1, 30):
         client.get("/zones.json", headers={"X-Forwarded-For": f"192.0.2.{i}"})
-    assert len(main._save_failures) == 29
+    assert len(main._auth_failures) == 29
     clock[0] += 61
     client.get("/zones.json", headers={"X-Forwarded-For": "192.0.2.200"})
     # The 29 expired clients are gone; only the newest failure remains.
-    assert list(main._save_failures) == ["192.0.2.200"]
-    main._save_failures.clear()
+    assert list(main._auth_failures) == ["192.0.2.200"]
+    main._auth_failures.clear()
+
+
+def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkeypatch):
+    import main
+
+    main._auth_failures.clear()
+    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 2)
+    monkeypatch.setattr(main, "_last_sweep", 0.0)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+    sweeps = []
+    real_prune = main._prune
+    monkeypatch.setattr(
+        main, "_prune", lambda key, cutoff: sweeps.append(clock[0]) or real_prune(key, cutoff)
+    )
+
+    for i in range(50):
+        main._record_auth_failure(request_factory(f"192.0.2.{i}"))
+    # Past the key limit from the fourth failure on, but swept once: one pass
+    # over the three keys held at that point.
+    assert sweeps == [1_000_000.0] * 3
+
+    clock[0] += 0.5
+    main._record_auth_failure(request_factory("192.0.2.200"))
+    assert len(sweeps) == 3
+
+    clock[0] += 0.5
+    main._record_auth_failure(request_factory("192.0.2.201"))
+    assert sweeps[3:] == [1_000_001.0] * 51
+    main._auth_failures.clear()
+
+
+def test_failure_record_sweep_survives_the_clock_stepping_back(request_factory, monkeypatch):
+    import main
+
+    main._auth_failures.clear()
+    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 0)
+    monkeypatch.setattr(main.time, "time", lambda: 1_000_000.0)
+    monkeypatch.setattr(main, "_last_sweep", 1_000_000.0 + 3600)
+    main._auth_failures["192.0.2.1"].append(1_000_000.0 - 120)  # expired
+    main._record_auth_failure(request_factory("192.0.2.2"))
+    assert list(main._auth_failures) == ["192.0.2.2"]
+    main._auth_failures.clear()
 
 
 def test_real_ingress_with_forwarded_header_is_still_ingress(boot):
@@ -424,3 +467,33 @@ def test_host_bit_cidr_normalisation_is_logged(boot, caplog):
     with caplog.at_level(logging.WARNING):
         boot({"trusted_proxies": "192.168.1.5/24"})
     assert "host bits set" in caplog.text
+
+
+def _parse_warnings(caplog, trusted_proxies):
+    import main
+
+    with caplog.at_level(logging.WARNING):
+        kept = main._parse_trusted_proxies({"trusted_proxies": trusted_proxies})
+    return kept, [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_each_range_in_trusted_proxies_warns_once(caplog):
+    kept, warnings = _parse_warnings(
+        caplog, "10.0.0.0/24, 192.168.1.1, 10.1.0.1/32, 2001:db8::/32, 2001:db8::1/128"
+    )
+    assert kept == ["10.0.0.0/24", "192.168.1.1", "10.1.0.1/32", "2001:db8::/32", "2001:db8::1/128"]
+    ranges = [w for w in warnings if "every address in the range" in w]
+    assert len(ranges) == 2
+    # Constant text: the entry itself is never logged.
+    assert not any("10.0.0.0" in w or "2001:db8" in w for w in warnings)
+
+
+def test_non_canonical_ipv6_spelling_is_not_a_host_bit_entry(caplog):
+    _, warnings = _parse_warnings(caplog, "2001:DB8::/32")
+    assert not any("host bits set" in w for w in warnings)
+
+
+def test_host_bit_entry_is_still_flagged(caplog):
+    kept, warnings = _parse_warnings(caplog, "192.168.1.5/24")
+    assert kept == ["192.168.1.0/24"]
+    assert sum("host bits set" in w for w in warnings) == 1

@@ -27,6 +27,7 @@ import uvicorn
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from const import (
+    ALLOWED_IPS,
     DATA_FOLDER,
     DEFAULT_TRACKER_REFRESH_SECONDS,
     MAX_OVERLAY_ENTITIES,
@@ -55,12 +56,9 @@ from helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 # Paths that bypass the IP allowlist middleware. /healthz is exempt so the
-# Docker HEALTHCHECK works. /save_zones runs its own authorisation logic
-# (allowing token-bearing requests through even when allow_all_ips is off),
-# so it bypasses the coarse middleware too. /zones.json mirrors /save_zones
-# now that reads are also token-gated — a user setting save_token without
-# allow_all_ips: true expects the token to unlock BOTH LAN reads and LAN
-# writes, same as on /save_zones.
+# Docker HEALTHCHECK works. The other three run their own gate (_gate), which
+# lets a request carrying save_token through even when allow_all_ips is off:
+# a user who sets the token expects it to unlock LAN reads and writes alike.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
 
 # Rate limit on authorisation failures across the three gated routes.
@@ -68,12 +66,15 @@ AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trac
 # Only failures count. A request whose TCP peer is ingress is never limited,
 # so failures recorded against a forwarded "172.30.32.2" cannot lock the HA
 # UI out. Behind a trusted proxy the budget is per forwarded client.
-_SAVE_FAILURE_LIMIT = 10
-_SAVE_FAILURE_WINDOW_SECONDS = 60
-# Above this many tracked clients, expired entries are swept on each failure,
-# so forwarded addresses that are never seen again don't accumulate.
-_SAVE_FAILURE_MAX_KEYS = 1024
-_save_failures: dict[str, deque] = defaultdict(deque)
+_AUTH_FAILURE_LIMIT = 10
+_AUTH_FAILURE_WINDOW_SECONDS = 60
+# Above this many tracked clients, expired entries are swept, so forwarded
+# addresses that are never seen again don't accumulate. At most one sweep a
+# second: a flood of failures would otherwise walk every key on each one.
+_AUTH_FAILURE_MAX_KEYS = 1024
+_SWEEP_INTERVAL_SECONDS = 1.0
+_auth_failures: dict[str, deque] = defaultdict(deque)
+_last_sweep = 0.0
 
 
 def _failure_key(request: Request) -> str:
@@ -83,13 +84,13 @@ def _failure_key(request: Request) -> str:
 
 
 def _prune(key: str, cutoff: float) -> int:
-    failures = _save_failures.get(key)
+    failures = _auth_failures.get(key)
     if failures is None:
         return 0
     while failures and failures[0] < cutoff:
         failures.popleft()
     if not failures:
-        del _save_failures[key]
+        del _auth_failures[key]
         return 0
     return len(failures)
 
@@ -98,17 +99,23 @@ def _rate_limit_exceeded(request: Request) -> bool:
     """Whether this request's client has used its failure budget."""
     if allowed_ip(request):
         return False
-    cutoff = time.time() - _SAVE_FAILURE_WINDOW_SECONDS
-    return _prune(_failure_key(request), cutoff) >= _SAVE_FAILURE_LIMIT
+    cutoff = time.time() - _AUTH_FAILURE_WINDOW_SECONDS
+    return _prune(_failure_key(request), cutoff) >= _AUTH_FAILURE_LIMIT
 
 
-def _record_save_failure(request: Request) -> None:
+def _record_auth_failure(request: Request) -> None:
+    global _last_sweep
     now = time.time()
-    if len(_save_failures) > _SAVE_FAILURE_MAX_KEYS:
-        cutoff = now - _SAVE_FAILURE_WINDOW_SECONDS
-        for key in list(_save_failures):
+    # abs(): the wall clock can step backwards, which must not stall sweeps.
+    if (
+        len(_auth_failures) > _AUTH_FAILURE_MAX_KEYS
+        and abs(now - _last_sweep) >= _SWEEP_INTERVAL_SECONDS
+    ):
+        _last_sweep = now
+        cutoff = now - _AUTH_FAILURE_WINDOW_SECONDS
+        for key in list(_auth_failures):
             _prune(key, cutoff)
-    _save_failures[_failure_key(request)].append(now)
+    _auth_failures[_failure_key(request)].append(now)
 
 
 def _etag_for_bytes(body: bytes) -> str:
@@ -129,8 +136,8 @@ def _current_zones_etag() -> str | None:
         return None
 
 
-def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
-    """Decide whether a /save_zones request is allowed.
+def authorise(options: dict, request: Request) -> tuple[bool, str | None]:
+    """Decide whether a request to one of the three gated routes is allowed.
 
     Returns ``(allowed, reason)``. ``reason`` is one of ``"token_missing"``,
     ``"token_wrong"`` or ``"not_allowed"`` — for logging only (ADR 0002 row
@@ -138,10 +145,10 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     cannot infer from the response alone whether a token is even configured.
 
     Order:
-      1. Ingress (172.30.32.2) is always allowed — the HA UI uses it.
+      1. Ingress is always allowed — the HA UI uses it.
       2. If ``save_token`` is configured, require a constant-time-equal
-         ``X-Save-Token`` header. allow_all_ips no longer matters when a
-         token is set; the token is the stronger signal.
+         ``X-Save-Token`` header, whatever allow_all_ips says: the token is
+         the stronger signal.
       3. Otherwise fall back to allow_all_ips.
     """
     if allowed_ip(request):
@@ -151,35 +158,6 @@ def authorise_save(options: dict, request: Request) -> tuple[bool, str | None]:
     if save_token:
         # Strip both stored and provided — symmetric handling so a trailing
         # whitespace in either doesn't silently break a correct token match.
-        provided = request.headers.get("x-save-token", "").strip()
-        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
-            return True, None
-        return False, "token_missing" if not provided else "token_wrong"
-
-    if allow_all_ips(options):
-        return True, None
-
-    return False, "not_allowed"
-
-
-def authorise_read(options: dict, request: Request) -> tuple[bool, str | None]:
-    """Decide whether a GET /zones.json request is allowed.
-
-    Full mirror of ``authorise_save``: ingress → token → allow_all_ips →
-    deny. Previously reads were gated only by the IPAllowMiddleware, which
-    meant save_token didn't unlock LAN reads the way it unlocks LAN writes
-    — a user who set save_token and left allow_all_ips off couldn't read
-    zones.json on LAN even with the correct token. That asymmetry made
-    the reading path harder to reason about than the write path.
-
-    /zones.json is now in AUTHZ_EXEMPT_PATHS, so the middleware lets every
-    request through and this function is the sole read gate.
-    """
-    if allowed_ip(request):
-        return True, None
-
-    save_token = (options.get("save_token") or "").strip()
-    if save_token:
         provided = request.headers.get("x-save-token", "").strip()
         if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
             return True, None
@@ -243,10 +221,9 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
 
 # Content-Security-Policy tailored to the addon's frontend.
 #
-# Leaflet and Leaflet-Draw are vendored under app/static/vendor/ (0.2.32,
-# #122) so script-src / style-src / img-src no longer need unpkg.com.
-# script-src dropped 'unsafe-inline' along with the Save button's inline
-# onclick (#128) — the only inline script-src user that remained.
+# Leaflet and Leaflet-Geoman are vendored under app/static/vendor/, so
+# script-src and style-src need no CDN. The editor has no inline script, so
+# script-src needs no 'unsafe-inline'.
 #
 # style-src KEEPS 'unsafe-inline': Leaflet injects runtime inline styles
 # for tile positioning (transform translate3d on every tile); without
@@ -258,10 +235,9 @@ class IPAllowMiddleware(BaseHTTPMiddleware):
 # Imagery) plus data:/blob: for Leaflet's inline-rendered markers.
 #
 # frame-ancestors permits HA ingress (same-origin under HA's web frontend,
-# covered by 'self') and Nabu Casa remote. The prior *.home-assistant.io
-# entry was a typo — that's HA's marketing / docs domain, not any
-# iframe-embedding origin, and allowing it widened the clickjacking
-# surface to anyone hosting on a home-assistant.io subdomain.
+# covered by 'self') and Nabu Casa remote. Not *.home-assistant.io: that is
+# HA's docs domain, not an embedding origin, and listing it would let any
+# page hosted there frame the editor.
 _CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -506,38 +482,48 @@ def _browser_cross_origin(request: Request) -> bool:
     return site is not None and site not in _SAVE_FETCH_SITES
 
 
+def _gate(options: dict, request: Request, label: str, respond=JSONResponse) -> Response | None:
+    """The refusal for a request to a gated route, or None to serve it.
+
+    ``label`` names the route in the log; ``respond`` builds the 429, so a
+    route that must not be cached can say so.
+    """
+    client_host = request.client.host or "unknown"
+    if _rate_limit_exceeded(request):
+        _LOGGER.warning(
+            "Rate limit hit on %s for %s (%d failures in %ds). "
+            "Further attempts refused for the remainder of the window.",
+            request.url.path,
+            client_host,
+            _AUTH_FAILURE_LIMIT,
+            _AUTH_FAILURE_WINDOW_SECONDS,
+        )
+        return respond({"error": "too many failed attempts"}, status_code=429)
+    # Checked before the token, so a browser-sent cross-site request is
+    # refused whatever it carries. Not counted as a failure: the client did
+    # not choose to send it, and counting would let any web page lock the
+    # user's own browser out.
+    if _browser_cross_origin(request):
+        _LOGGER.warning("Rejected %s from %s: not a same-origin request", label, client_host)
+        return _auth_rejection_response()
+    ok, reason = authorise(options, request)
+    if not ok:
+        _record_auth_failure(request)
+        _LOGGER.warning(
+            "Rejected %s from %s: %s",
+            label,
+            client_host,
+            _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
+        )
+        return _auth_rejection_response()
+    return None
+
+
 def save_zones_generator(options: dict):
     async def save_zones(request: Request):
-        client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(request):
-            _LOGGER.warning(
-                "Rate limit hit on /save_zones for %s (%d failures in %ds). "
-                "Further attempts refused for the remainder of the window.",
-                client_host,
-                _SAVE_FAILURE_LIMIT,
-                _SAVE_FAILURE_WINDOW_SECONDS,
-            )
-            return JSONResponse(
-                {"error": "too many failed attempts"},
-                status_code=429,
-            )
-        # Checked before the token, so a browser-sent cross-site request is
-        # refused whatever it carries. Not counted as a failure: the client
-        # did not choose to send it, and counting would let any web page lock
-        # the user's own browser out.
-        if _browser_cross_origin(request):
-            _LOGGER.warning("Rejected /save_zones from %s: not a same-origin request", client_host)
-            return _auth_rejection_response()
-
-        ok, reason = authorise_save(options, request)
-        if not ok:
-            _record_save_failure(request)
-            _LOGGER.warning(
-                "Rejected /save_zones from %s: %s",
-                client_host,
-                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-            )
-            return _auth_rejection_response()
+        refusal = _gate(options, request, "/save_zones")
+        if refusal is not None:
+            return refusal
 
         # A cross-site HTML form can only send form or text/plain bodies, so
         # requiring JSON refuses those even from browsers without Sec-Fetch.
@@ -776,29 +762,12 @@ def trackers_json_generator(options: dict):
     def _uncached(body: dict, status_code: int = 200) -> JSONResponse:
         return JSONResponse(body, status_code=status_code, headers={"Cache-Control": "no-store"})
 
-    async def trackers_json(request: Request) -> JSONResponse:
-        # Same read gate as /zones.json — this returns positions, so it must
-        # not be reachable on terms the zones file isn't.
-        client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(request):
-            return _uncached({"error": "too many failed attempts"}, status_code=429)
-        if _browser_cross_origin(request):
-            # Refused before the token is looked at, and not counted: a page
-            # can make the visitor's browser send this, so it must neither
-            # test a token nor spend the visitor's failure budget.
-            _LOGGER.warning(
-                "Rejected /trackers.json read from %s: not a same-origin request", client_host
-            )
-            return _auth_rejection_response()
-        ok, reason = authorise_read(options, request)
-        if not ok:
-            _record_save_failure(request)
-            _LOGGER.warning(
-                "Rejected /trackers.json read from %s: %s",
-                client_host,
-                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-            )
-            return _auth_rejection_response()
+    async def trackers_json(request: Request) -> Response:
+        # Same gate as /zones.json — this returns positions, so it must not
+        # be reachable on terms the zones file isn't.
+        refusal = _gate(options, request, "/trackers.json read", respond=_uncached)
+        if refusal is not None:
+            return refusal
 
         entities = overlay_entities(options)
         if not entities:
@@ -853,38 +822,11 @@ def trackers_json_generator(options: dict):
 
 def zones_json_generator(options: dict):
     async def zones_json(request: Request) -> Response:
-        # When save_token is set, non-ingress reads require the same
-        # X-Save-Token as writes. Shares the rate-limit bucket with
-        # /save_zones so an attacker can't rotate between GET and POST
-        # to double their guess budget.
-        client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(request):
-            _LOGGER.warning(
-                "Rate limit hit on /zones.json for %s (%d failures in %ds). "
-                "Further attempts refused for the remainder of the window.",
-                client_host,
-                _SAVE_FAILURE_LIMIT,
-                _SAVE_FAILURE_WINDOW_SECONDS,
-            )
-            return JSONResponse(
-                {"error": "too many failed attempts"},
-                status_code=429,
-            )
-        if _browser_cross_origin(request):
-            # As for /trackers.json: refused before the token, never counted.
-            _LOGGER.warning(
-                "Rejected /zones.json read from %s: not a same-origin request", client_host
-            )
-            return _auth_rejection_response()
-        ok, reason = authorise_read(options, request)
-        if not ok:
-            _record_save_failure(request)
-            _LOGGER.warning(
-                "Rejected /zones.json read from %s: %s",
-                client_host,
-                _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-            )
-            return _auth_rejection_response()
+        # Shares the failure bucket with /save_zones, so an attacker can't
+        # rotate between GET and POST to double their guess budget.
+        refusal = _gate(options, request, "/zones.json read")
+        if refusal is not None:
+            return refusal
 
         # Pass the file bytes through verbatim — atomic_write_json guarantees
         # the file is always valid JSON, so re-parsing and re-serialising via
@@ -923,27 +865,18 @@ def zones_json_generator(options: dict):
             if etag in candidates or "*" in candidates:
                 return Response(status_code=304, headers=base_headers)
 
-        return Response(
-            content=body,
-            media_type="application/json",
-            headers={
-                **base_headers,
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        )
+        return Response(content=body, media_type="application/json", headers=base_headers)
 
     return zones_json
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
     # Verify the zones file is accessible — /healthz drives the Docker
-    # HEALTHCHECK which drives Supervisor's container-restart signal. A
-    # process-alive-only check would leave users in a broken-but-"running"
-    # state when zones.json becomes unreadable.
-    try:
-        os.stat(ZONES_FILE)
-    except OSError:
+    # HEALTHCHECK, so an unreadable zones.json marks the container unhealthy
+    # rather than leaving it broken but reported as running.
+    # Readability for this process, not mere existence: a file left owned by
+    # another user must count as broken too.
+    if not os.access(ZONES_FILE, os.R_OK):
         return PlainTextResponse("zones file unreadable", status_code=503)
     return PlainTextResponse("ok")
 
@@ -1003,63 +936,49 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
     return TransportPeerMiddleware(app), log_config
 
 
-# Values that, when handed to uvicorn's forwarded_allow_ips, would let any
-# on-path attacker forge X-Forwarded-For: 172.30.32.2 and be treated as the
-# HA ingress sidecar by allowed_ip(). We drop these with a logged error
-# rather than failing startup so a typo can't lock a user out.
-#
-# Split into two categories so each branch can log a constant string with
-# no interpolation — CodeQL's taint analysis otherwise flags %s-logging of
-# any value derived from the options dict (which also carries save_token).
-_TRUSTED_PROXIES_WILDCARDS = frozenset({"*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"})
-_INGRESS_IP_STR = "172.30.32.2"
-
-
-_INGRESS_IP_OBJ = ipaddress.ip_address(_INGRESS_IP_STR)
+# Ingress is decided by the TCP peer (TransportPeerMiddleware), never by a
+# forwarded header, so no trusted_proxies entry can make a request ingress.
+# What a trusted proxy decides is which client a request is logged and
+# rate-limited as. These entries are dropped, with a logged error rather than
+# a failed startup so a typo can't lock a user out:
+#   - wildcards, which would let every client name its own address and so
+#     escape the per-client failure limit;
+#   - the ingress IP or any range covering it: ingress is HA's own proxy and
+#     needs no listing, and a range that wide trusts every other host on the
+#     Supervisor network to name any client it likes.
+# Every message is a constant string: CodeQL flags %s-logging of any value
+# derived from the options dict, which also carries save_token.
+_INGRESS_IPS = tuple(ipaddress.ip_address(ip) for ip in ALLOWED_IPS)
 
 
 def _parse_trusted_proxies(options: dict) -> list[str]:
-    """Parse + validate the trusted_proxies option.
-
-    Rejects, with a logged error, any entry that would let an on-path
-    attacker forge X-Forwarded-For: 172.30.32.2 and be treated as the
-    HA ingress sidecar by allowed_ip(). Each rejection logs a constant
-    string (no value interpolation) so CodeQL's taint analysis doesn't
-    flag the options-derived value.
-
-    Rejection criteria (any one disqualifies):
-      1. Literal wildcards (*, 0.0.0.0, 0.0.0.0/0, ::, ::/0).
-      2. The ingress IP itself.
-      3. Unparseable as an IP or CIDR (hostnames, garbage).
-      4. A CIDR that contains the ingress IP (e.g. 172.30.0.0/16,
-         0.0.0.0/8, 172.30.32.2/24) — closes the "supernet bypass"
-         vector a naive literal match would miss.
-    """
+    """Parse and validate the trusted_proxies option; return what uvicorn gets."""
     raw = options.get("trusted_proxies", "") or ""
     entries = [p.strip() for p in raw.split(",") if p.strip()]
     safe = []
     for entry in entries:
-        if entry in _TRUSTED_PROXIES_WILDCARDS:
-            _LOGGER.error(
-                "Refusing a wildcard trusted_proxies entry (one of "
-                "*, 0.0.0.0, 0.0.0.0/0, ::, ::/0). It would let any "
-                "client forge X-Forwarded-For and bypass the ingress-IP "
-                "check on /save_zones. Dropping this entry; fix the "
-                "option in the addon configuration."
-            )
-            continue
-        if entry == _INGRESS_IP_STR:
-            _LOGGER.error(
-                "Refusing the HA ingress IP (172.30.32.2) as a "
-                "trusted_proxies entry. It would let any client forge "
-                "X-Forwarded-For and bypass the ingress-IP check on "
-                "/save_zones. Dropping this entry; fix the option in "
-                "the addon configuration."
-            )
-            continue
         try:
             net = ipaddress.ip_network(entry, strict=False)
+            iface_ip = ipaddress.ip_interface(entry).ip
         except ValueError:
+            net = iface_ip = None
+        # Every spelling of "all addresses": a /0 network (::/0, 0::/0,
+        # 0.0.0.0/0, ...) or the bare unspecified address (0.0.0.0, ::).
+        if entry == "*" or (
+            net is not None
+            and (
+                net.prefixlen == 0
+                or (net.num_addresses == 1 and net.network_address.is_unspecified)
+            )
+        ):
+            _LOGGER.error(
+                "Refusing a trusted_proxies entry that means every address "
+                "(such as *, 0.0.0.0/0 or ::/0). It would let any client "
+                "choose the address it is logged and rate-limited as. "
+                "Dropping this entry; fix the option in the addon configuration."
+            )
+            continue
+        if net is None:
             _LOGGER.error(
                 "Refusing an unparseable trusted_proxies entry "
                 "(expected an IPv4/IPv6 address or CIDR). Dropping "
@@ -1067,23 +986,27 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
                 "configuration."
             )
             continue
-        # If the entry is an IPv4 network that contains the ingress IP,
-        # it's a supernet bypass (e.g. 172.30.0.0/16 covers the ingress
-        # IP 172.30.32.2). Reject. IPv6 networks can't contain an IPv4
-        # address so no check is needed there.
-        if isinstance(net, ipaddress.IPv4Network) and _INGRESS_IP_OBJ in net:
+        # A bare address parses as a /32, so this also catches the ingress
+        # IP listed on its own.
+        if any(ip in net for ip in _INGRESS_IPS):
             _LOGGER.error(
-                "Refusing a trusted_proxies entry whose CIDR covers "
-                "the HA ingress IP. It would let any client forge "
-                "X-Forwarded-For and bypass the ingress-IP check on "
-                "/save_zones. Dropping this entry; fix the option in "
-                "the addon configuration."
+                "Refusing a trusted_proxies entry whose CIDR covers the HA "
+                "ingress IP (172.30.32.2). Ingress is recognised by its own "
+                "connection and needs no listing, and a range this wide "
+                "trusts other hosts on the Supervisor network. Dropping this "
+                "entry; fix the option in the addon configuration."
             )
             continue
+        if net.prefixlen < net.max_prefixlen:
+            _LOGGER.warning(
+                "A trusted_proxies entry is a range: every address in the range "
+                "is believed about which client it forwards for. List each "
+                "proxy's own IP instead."
+            )
         # uvicorn parses CIDRs strictly, so a host-bit entry such as
         # 192.168.1.5/24 would silently trust nothing; hand it the network,
-        # and say so, since that trusts the whole range.
-        if "/" in entry and str(net) != entry:
+        # and say so.
+        if "/" in entry and iface_ip != net.network_address:
             _LOGGER.warning(
                 "A trusted_proxies entry has host bits set and is applied as "
                 "its whole network. List each proxy's own IP instead."
@@ -1180,10 +1103,5 @@ if __name__ == "__main__":  # pragma: no cover
     # generate_app applies trusted_proxies itself, inside the layer that
     # records the TCP peer; uvicorn's own proxy handling (on by default)
     # would rewrite the client before that record is taken.
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_config=log_config,
-        proxy_headers=False,
-    )
+    # Port 8000 is what config.yaml's ingress_port and the HEALTHCHECK expect.
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=log_config, proxy_headers=False)

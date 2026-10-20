@@ -1,6 +1,11 @@
 from collections import Counter
+from email.utils import formatdate
+import hashlib
+import io
 import json
-import sys
+import os
+import re
+import threading
 import time
 import urllib.error
 
@@ -14,16 +19,13 @@ def reset_save_rate_limit():
     failures leak between tests and later suites spuriously hit 429."""
     import main
 
-    main._save_failures.clear()
+    main._auth_failures.clear()
     yield
-    main._save_failures.clear()
+    main._auth_failures.clear()
 
 
 @pytest.fixture
-def app_factory(tmp_zones_file, monkeypatch):
-    # Keep sys.argv clean so allow_all_ips doesn't flip via CLI flags.
-    monkeypatch.setattr(sys, "argv", ["main.py"])
-
+def app_factory(tmp_zones_file):
     import main
 
     def _build(options=None):
@@ -81,22 +83,21 @@ def test_zones_json_passes_file_bytes_through(allow_all_client, tmp_zones_file):
 def test_zones_json_returns_etag(allow_all_client, tmp_zones_file):
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 200
-    etag = response.headers.get("etag")
-    assert etag is not None
-    # Strong validator: quoted hex sha256.
-    assert etag.startswith('"') and etag.endswith('"')
-    assert len(etag) == 64 + 2  # sha256 hex + quotes
+    # Strong validator: the quoted hex sha256 of the bytes served.
+    expected = hashlib.sha256(tmp_zones_file.read_bytes()).hexdigest()
+    assert response.headers["etag"] == f'"{expected}"'
 
 
 def test_zones_json_returns_last_modified(allow_all_client, tmp_zones_file):
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 200
-    lm = response.headers.get("last-modified")
-    assert lm is not None
-    # RFC 7231 date: "Sun, 06 Nov 1994 08:49:37 GMT" — just sanity-check
-    # the shape, exact value depends on the tmp_zones_file fixture mtime.
-    assert lm.endswith("GMT")
-    assert "," in lm
+    # RFC 7231 IMF-fixdate of the file's mtime, e.g. "Sun, 06 Nov 1994 08:49:37 GMT".
+    expected = formatdate(os.stat(tmp_zones_file).st_mtime, usegmt=True)
+    assert response.headers["last-modified"] == expected
+    assert re.fullmatch(
+        r"[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT",
+        response.headers["last-modified"],
+    )
 
 
 def test_zones_json_returns_304_on_matching_if_none_match(allow_all_client, tmp_zones_file):
@@ -194,8 +195,9 @@ def test_save_without_if_match_still_works(allow_all_client, tmp_zones_file):
 def test_zones_json_sets_cache_headers(allow_all_client):
     response = allow_all_client.get("/zones.json")
     assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-    assert response.headers["pragma"] == "no-cache"
-    assert response.headers["expires"] == "0"
+    # Cache-Control: no-store already says it; the HTTP/1.0 headers add nothing.
+    assert "pragma" not in response.headers
+    assert "expires" not in response.headers
 
 
 def test_zones_json_no_wildcard_cors(allow_all_client):
@@ -216,10 +218,10 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert "etag" in body  # new in 0.2.11
-    # As of 0.2.33 the server stamps schema_version and backfills
-    # properties.id on write, so the persisted file is a normalised
-    # superset of the incoming payload rather than byte-identical.
+    assert "etag" in body
+    # The server stamps schema_version and backfills properties.id on write,
+    # so the persisted file is a normalised superset of the incoming payload
+    # rather than byte-identical.
     stored = json.loads(tmp_zones_file.read_text())
     assert stored["type"] == payload["type"]
     assert len(stored["features"]) == len(payload["features"])
@@ -237,8 +239,8 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
 
 
 def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_file):
-    """When the client supplies a stable properties.id (Leaflet-draw path
-    where the editor generates a client-side UUID), the server must
+    """When the client supplies a stable properties.id (a drawn zone, for
+    which the editor generates a client-side UUID), the server must
     round-trip it verbatim rather than overwriting with a fresh one —
     otherwise automations bound to the id would break on every save."""
     stable_id = "aaaa1111bbbb2222cccc3333dddd4444"
@@ -764,9 +766,8 @@ def test_save_token_required_when_set_and_lan_request(app_factory, tmp_zones_fil
 
 
 def test_save_token_strips_whitespace_symmetrically(app_factory, tmp_zones_file):
-    """Both stored and provided tokens are stripped before compare.
-    Previously only the stored token was stripped, so a trailing space
-    in the X-Save-Token header would fail an otherwise-correct token."""
+    """Both stored and provided tokens are stripped before compare, so a
+    trailing space in the X-Save-Token header can't fail a correct token."""
     app = app_factory({"save_token": "sekrit"})
     client = TestClient(app)
     # Trailing whitespace on the provided token should be tolerated.
@@ -796,10 +797,8 @@ def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
 
 def test_zones_json_requires_token_when_set_and_lan_request(app_factory, tmp_zones_file):
     """When save_token is set, non-ingress GET /zones.json requests must
-    present the same X-Save-Token as /save_zones. Previously (before
-    #113) /zones.json was reachable on LAN without a token once
-    allow_all_ips was on — zone geometry was less protected than the
-    less-sensitive write action."""
+    present the same X-Save-Token as /save_zones, so zone geometry is never
+    less protected than the write action."""
     app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
     client = TestClient(app)
 
@@ -951,10 +950,9 @@ def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
 def test_index_serves_static_html(allow_all_client):
     response = allow_all_client.get("/")
     assert response.status_code == 200
-    # index.html is now served by StaticFiles (html=True) — no template
-    # rendering, no per-request file open.
+    # index.html is served as a static file, not a template: the colour
+    # comes from /config.json, so no placeholder may survive in the page.
     assert "<title>Polygonal zones: Edit zones</title>" in response.text
-    # Placeholder must be gone now that ZONE_COLOUR comes from /config.json.
     assert "{{ ZONE_COLOUR }}" not in response.text
     assert "ZONE_COLOUR" not in response.text
 
@@ -1028,17 +1026,16 @@ def test_security_headers_applied(allow_all_client):
     # so we don't have to update every test when a directive is tuned.
     assert "default-src 'self'" in csp
     # frame-ancestors: only 'self' (for HA ingress same-origin) plus Nabu
-    # Casa remote access. *.home-assistant.io was removed in 0.2.32 (#128)
-    # — it was HA's marketing domain, not an iframe-embedding origin.
+    # Casa remote access; *.home-assistant.io is HA's docs domain, not an
+    # iframe-embedding origin.
     assert "frame-ancestors 'self' https://*.ui.nabu.casa" in csp
     assert "https://*.home-assistant.io" not in csp
-    # 'unsafe-inline' removed from script-src in 0.2.32 (#128) after the
-    # Save button's inline onclick moved to addEventListener. style-src
-    # still needs it for Leaflet's injected tile transforms.
+    # The editor has no inline script, so script-src needs no
+    # 'unsafe-inline'. style-src still needs it for Leaflet's injected tile
+    # transforms.
     assert "script-src 'self';" in csp
     assert "'unsafe-inline'" not in csp.split("style-src")[0]
-    # unpkg.com dropped once Leaflet + Leaflet-Draw went self-hosted in
-    # 0.2.32 (#122). Guard against anyone re-adding a CDN dep silently.
+    # The map libraries are vendored; guard against a CDN dep creeping back.
     assert "unpkg.com" not in csp
     assert "object-src 'none'" in csp
     # OSM, CARTO, and Esri World Imagery tile hosts must remain in img-src
@@ -1080,15 +1077,14 @@ def test_static_file_blocked_for_unauthorized_client(restricted_client):
 def test_static_traversal_attempt_rejected(allow_all_client):
     # StaticFiles normalises and rejects paths that escape the root directory.
     response = allow_all_client.get("/..%2F..%2Fapp%2Fconst.py")
-    assert response.status_code in (400, 404)
+    assert response.status_code == 404
 
 
 def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, tmp_zones_file):
     """The companion integration's first action on every poll is
     json.loads(body) + a type check. Byte-identity passthrough isn't
     enough — the response must remain parseable GeoJSON with the right
-    Content-Type. Previously only byte-identity and empty-file shape
-    were tested.
+    Content-Type.
     """
     payload = _valid_payload(name="Home")
     r = allow_all_client.post("/save_zones", json=payload)
@@ -1104,8 +1100,8 @@ def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, t
 
 
 def test_zones_json_returns_503_when_file_unreadable(allow_all_client, tmp_zones_file):
-    """Unguarded open() previously produced a 500 with no log line. Now
-    returns 503 with a JSON body."""
+    """An unreadable file is a 503 with a JSON body and a log line, not a
+    bare 500."""
     tmp_zones_file.unlink()
     response = allow_all_client.get("/zones.json")
     assert response.status_code == 503
@@ -1113,9 +1109,9 @@ def test_zones_json_returns_503_when_file_unreadable(allow_all_client, tmp_zones
 
 
 def test_healthz_returns_503_when_zones_missing(restricted_client, tmp_zones_file):
-    """Healthcheck now reflects zones-file readability so the Docker
+    """Healthcheck reflects zones-file readability so the Docker
     HEALTHCHECK surfaces a broken state instead of staying green while
-    /zones.json 500s."""
+    /zones.json fails."""
     tmp_zones_file.unlink()
     r = restricted_client.get("/healthz")
     assert r.status_code == 503
@@ -1160,7 +1156,7 @@ def test_save_zones_rate_limit_window_expires(app_factory, tmp_zones_file, monke
     assert r.status_code == 429
 
     # Advance time beyond the window.
-    t[0] += main._SAVE_FAILURE_WINDOW_SECONDS + 1
+    t[0] += main._AUTH_FAILURE_WINDOW_SECONDS + 1
 
     # Now a request with the correct token should succeed, and the old
     # failures should have been popped during the check.
@@ -1255,10 +1251,9 @@ def test_parse_trusted_proxies_handles_empty_and_list(app_factory):
     ],
 )
 def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dangerous):
-    """Wildcards and the ingress IP must never be handed to uvicorn's
-    forwarded_allow_ips — doing so lets any on-path attacker forge
-    X-Forwarded-For: 172.30.32.2 and bypass the ingress-IP check on
-    /save_zones. The parser drops them and logs an error."""
+    """Wildcards and the ingress IP are never trusted as proxies: a wildcard
+    lets any client choose the address it is rate-limited as. The parser
+    drops them and logs an error."""
     import logging
 
     import main
@@ -1267,7 +1262,9 @@ def test_parse_trusted_proxies_drops_dangerous_values(app_factory, caplog, dange
         result = main._parse_trusted_proxies({"trusted_proxies": dangerous})
 
     assert result == []
-    assert any(dangerous in rec.message for rec in caplog.records)
+    # The message names the rule that fired, not just any rule.
+    expected = "covers the HA ingress IP" if dangerous == "172.30.32.2" else "means every address"
+    assert any(expected in rec.message for rec in caplog.records)
 
 
 def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplog):
@@ -1298,10 +1295,8 @@ def test_parse_trusted_proxies_drops_dangerous_and_keeps_safe(app_factory, caplo
 )
 def test_parse_trusted_proxies_drops_ingress_supernets(app_factory, caplog, supernet):
     """A CIDR that contains the ingress IP (172.30.32.2) is the same
-    mistake as listing the ingress IP directly — the attacker forges
-    XFF from any IP inside the range. Previously only exact-string
-    matches were blocked; ipaddress-based containment check catches
-    the supernet bypass."""
+    mistake as listing the ingress IP directly: a containment check, not a
+    string match, so every supernet is caught."""
     import logging
 
     import main
@@ -1331,9 +1326,9 @@ def test_parse_trusted_proxies_accepts_non_ingress_cidrs(app_factory, caplog):
 
 
 def test_parse_trusted_proxies_rejects_unparseable_entries(app_factory, caplog):
-    """Hostnames and garbage strings are rejected with a typed error —
-    previously they'd silently slip through to uvicorn's
-    forwarded_allow_ips, where behaviour is undefined."""
+    """Hostnames and garbage strings are rejected with a logged error rather
+    than handed to uvicorn's forwarded_allow_ips, where behaviour is
+    undefined."""
     import logging
 
     import main
@@ -1717,10 +1712,15 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
     monkeypatch.setattr(main, "OVERLAY_TIMEOUT_SECONDS", 0.2)
+    release = threading.Event()
+    stalled_returned = threading.Event()
 
     def fake_fetch(entity_id, token):
         if entity_id.endswith("stalled"):
-            time.sleep(1.0)
+            # Held until the test has its response: if the route waited for
+            # this fetch, the response could only come after it returned.
+            release.wait(timeout=10)
+            stalled_returned.set()
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
@@ -1732,32 +1732,37 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
             }
         )
     )
-    started = time.monotonic()
-    body = client.get("/trackers.json").json()
-    assert time.monotonic() - started < 0.8
+    try:
+        body = client.get("/trackers.json").json()
+        assert not stalled_returned.is_set(), "the response waited for the stalled fetch"
+    finally:
+        release.set()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
     assert body["unavailable"] == ["device_tracker.stalled"]
 
 
 def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
-    """25 entities at 50 ms each take ~1.25 s sequentially; the deadline only
-    holds if they overlap. Keeps the response order of the option."""
+    """Every fetch waits at a barrier that only a full pool of concurrent
+    fetches can pass, so a sequential gather reports them all unavailable.
+    Keeps the response order of the option."""
     import main
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    barrier = threading.Barrier(main.OVERLAY_FETCH_WORKERS, timeout=2)
 
     def fake_fetch(entity_id, token):
-        time.sleep(0.05)
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            return None
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    entities = [f"device_tracker.t{i:02d}" for i in range(25)]
+    entities = [f"device_tracker.t{i:02d}" for i in range(2 * main.OVERLAY_FETCH_WORKERS)]
     client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
-    started = time.monotonic()
     body = client.get("/trackers.json").json()
-    assert time.monotonic() - started < 0.6
-    assert [t["entity_id"] for t in body["trackers"]] == entities
     assert body["unavailable"] == []
+    assert [t["entity_id"] for t in body["trackers"]] == entities
 
 
 def test_trackers_json_caps_fetches_in_flight_across_all_polls(app_factory, monkeypatch):
@@ -1828,6 +1833,56 @@ def test_fetch_state_parses_a_good_response(monkeypatch):
     assert captured["timeout"] == main.OVERLAY_TIMEOUT_SECONDS
 
 
+class _Body(io.BytesIO):
+    """A urlopen response: a readable body that is its own context manager."""
+
+
+def _http_error(code):
+    return urllib.error.HTTPError("http://supervisor", code, "err", {}, io.BytesIO(b"{}"))
+
+
+# What the Supervisor proxy can answer for one entity, by the entity's name.
+_FETCH_FAILURES = {
+    "unauthorised": _http_error(401),
+    "server_error": _http_error(500),
+    "not_json": b"<html>Bad gateway</html>",
+    "timed_out": TimeoutError("timed out"),
+}
+
+
+def _fake_urlopen(req, timeout=None):
+    name = req.full_url.rsplit(".", 1)[1]
+    outcome = _FETCH_FAILURES.get(name)
+    if isinstance(outcome, BaseException):
+        raise outcome
+    if outcome is None:
+        outcome = json.dumps(_ha_state(f"device_tracker.{name}", 51.9, -0.6)).encode()
+    return _Body(outcome)
+
+
+@pytest.mark.parametrize("name", list(_FETCH_FAILURES))
+def test_fetch_state_returns_none_on_each_failure(monkeypatch, name):
+    import main
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
+    assert main._fetch_state(f"device_tracker.{name}", "tok") is None
+
+
+def test_trackers_json_survives_every_fetch_failure(app_factory, monkeypatch):
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
+    failing = [f"device_tracker.{name}" for name in _FETCH_FAILURES]
+    client = TestClient(
+        app_factory({"allow_all_ips": True, "overlay_entities": [*failing, "device_tracker.ok"]})
+    )
+    r = client.get("/trackers.json")
+    assert r.status_code == 200
+    assert [t["entity_id"] for t in r.json()["trackers"]] == ["device_tracker.ok"]
+    assert r.json()["unavailable"] == failing
+
+
 def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file):
     """A failed /trackers.json read counts toward the same per-IP bucket as
     /save_zones and /zones.json, and is refused once the bucket is full.
@@ -1847,10 +1902,66 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     import main
 
     # Exhaust the bucket on the write path with wrong-token POSTs.
-    for _ in range(main._SAVE_FAILURE_LIMIT):
+    for _ in range(main._AUTH_FAILURE_LIMIT):
         client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "wrong"})
 
     # Correct token now, but the bucket is full — the overlay is refused too.
     r = client.get("/trackers.json", headers={"X-Save-Token": "sekrit"})
     assert r.status_code == 429
     assert r.json() == {"error": "too many failed attempts"}
+
+
+@pytest.mark.parametrize(
+    ("path", "cache_control"),
+    [("/save_zones", None), ("/zones.json", None), ("/trackers.json", "no-store")],
+)
+def test_rate_limit_refusal_is_logged_on_every_gated_route(
+    app_factory, caplog, path, cache_control
+):
+    import logging
+
+    import main
+
+    client = TestClient(app_factory({"save_token": "sekrit"}))
+    for _ in range(main._AUTH_FAILURE_LIMIT):
+        client.get("/zones.json")
+    with caplog.at_level(logging.WARNING):
+        r = client.request("POST" if path == "/save_zones" else "GET", path, json={})
+    assert r.status_code == 429
+    assert r.json() == {"error": "too many failed attempts"}
+    assert r.headers.get("cache-control") == cache_control
+    assert f"Rate limit hit on {path} for testclient" in caplog.text
+
+
+def test_healthz_returns_503_when_zones_file_cannot_be_read(restricted_client, tmp_zones_file):
+    """A file that exists but can't be opened (ownership drift) is unhealthy too."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads through file modes")
+    tmp_zones_file.chmod(0)
+    try:
+        r = restricted_client.get("/healthz")
+    finally:
+        tmp_zones_file.chmod(0o644)
+    assert r.status_code == 503
+
+
+@pytest.mark.parametrize("entry", ["0::/0", "::0/0", "0.0.0.0/00", "0.0.0.0", "::"])
+def test_parse_trusted_proxies_refuses_any_spelling_of_everything(app_factory, entry, caplog):
+    import logging
+
+    import main
+
+    with caplog.at_level(logging.ERROR):
+        assert main._parse_trusted_proxies({"trusted_proxies": entry}) == []
+    assert any("means every address" in rec.message for rec in caplog.records)
+
+
+def test_save_without_credentials_is_403_not_415(restricted_client):
+    r = restricted_client.post("/save_zones", content=b"{}", headers={"Content-Type": "text/plain"})
+    assert r.status_code == 403
+
+
+def test_parse_trusted_proxies_keeps_a_range_that_starts_at_zero(app_factory):
+    import main
+
+    assert main._parse_trusted_proxies({"trusted_proxies": "0.0.0.0/8"}) == ["0.0.0.0/8"]

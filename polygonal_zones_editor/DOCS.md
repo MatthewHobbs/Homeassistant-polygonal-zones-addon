@@ -2,7 +2,7 @@
 
 Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, name them, and have the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) consume them for location-based automations.
 
-> **Note — 32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for add-ons. The last release of this add-on for those arches is **0.2.25** — from 0.2.26 onward, only `aarch64` and `amd64` images are published. If you're running on a 32-bit host (Raspberry Pi 0/1, 32-bit OS on a Pi 2/3, 32-bit Intel Atom, etc.) either pin to 0.2.25 via the Supervisor version picker or upgrade your host to a 64-bit HA OS installation. Supervisor stops offering updates automatically once the architecture mismatch is detected, so there's no risk of accidentally pulling an incompatible image.
+> **Note — 32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for add-ons. The last release of this add-on for those arches is **0.2.25** — from 0.2.26 onward, only `aarch64` and `amd64` images are published. If you're running on a 32-bit host (Raspberry Pi 0/1, 32-bit OS on a Pi 2/3, 32-bit Intel Atom, etc.), 0.2.25 is the last version you can run; to keep receiving updates, move your host to a 64-bit HA OS installation. Supervisor stops offering updates automatically once the architecture mismatch is detected, so there's no risk of accidentally pulling an incompatible image.
 
 ## What this add-on is good for — and what it isn't
 
@@ -205,13 +205,18 @@ them.
 At most 25 entities are fetched, and anything that is not a valid entity id is
 ignored with a warning in the log rather than silently rewritten.
 
-### Why the add-on now requests `homeassistant_api`
+### The `homeassistant_api` grant
 
-Reading those states needs Home Assistant's state API, so `config.yaml` sets
-`homeassistant_api: true`. That grants the add-on API access in general — this
-add-on uses it *only* to read the entities you list above, and requests nothing
-when the list is empty. If you would rather not grant it, leave
-`overlay_entities` empty; nothing else in the add-on depends on it.
+Reading those states needs Home Assistant's state API, so the add-on's
+manifest (`config.yaml`) sets `homeassistant_api: true`. The grant is part of
+the manifest and applies when the add-on is installed, whatever you configure:
+leaving `overlay_entities` empty does not withhold it, it only means the
+add-on uses none of it.
+
+The grant itself is not read-only: it gives the add-on Home Assistant API
+access in general. What the add-on does with it is narrow: it only ever issues
+`GET /states/<entity_id>` for each entity you list, and nothing at all while
+the list is empty.
 
 ## Integration with the Polygonal Zones HA integration
 
@@ -221,7 +226,7 @@ The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Home
 
 The add-on serves `/zones.json` from local disk; the companion integration reads it on demand. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
 
-- **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails (since 0.2.17 `/healthz` reads the zones file rather than just checking that the process is alive), so Supervisor marks the container unhealthy and restarts it. If the underlying issue is transient (race with a snapshot, filesystem remount), the restart usually resolves it.
+- **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails, because `/healthz` checks that the zones file is readable rather than only that the process is alive, so Docker marks the container unhealthy.
 - **The integration** sees the 503 the next time it tries to read zones (on startup or on a `reload_zones` call). Its default behaviour is to retain its last-known-good state — zone-based automations continue to fire based on the zone definitions it last successfully fetched, rather than silently losing geofencing coverage. If the add-on is down entirely (process gone, port unreachable), the integration surfaces an unavailable state; automations that guard on `zone.* != 'unavailable'` will stop firing until the add-on is back.
 
 **Recovery:**
@@ -271,9 +276,7 @@ Whenever you have changes that haven't been written to disk yet, a small amber d
 
 ### Zones file
 
-The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads this file. See the **Backing up / restoring zones with curl** section for the recommended backup workflow.
-
-**Backup visibility — important for privacy.** Because the zones file lives inside `/data`, it is included in every Home Assistant snapshot / backup that Supervisor takes. That means **deleting a zone from the editor does not remove it from snapshots that were taken before the deletion** — the old geometry is still present in those backup files until you delete the snapshots themselves. Your polygon geometry encodes precise home / workplace / school locations, so if you're removing zones for privacy reasons (after a move, after accidentally drawing over a sensitive area, or in response to a subject-access / deletion request) also purge old snapshots via **Settings → System → Backups → ⋮ → Remove**, and any off-HA backup copies you maintain.
+The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads this file. See the **Backing up / restoring zones with curl** section for the recommended backup workflow, and **Privacy and data** below for what Home Assistant backups keep.
 
 ### Features
 
@@ -307,3 +310,17 @@ The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT
 - Select the zones you want to delete by clicking on them. (Use **Clear All** in the delete toolbar to mark every zone at once.)
 - Press **Save** in the delete toolbar to confirm the removal, or **Cancel** to back out. Note this is the map toolbar's own Save — it only updates the editor.
 - Then press the sidebar **Save** to write the change to disk.
+
+## Privacy and data
+
+**Zones and settings are in every backup.** Your zones are stored at `/data/polygonal_zones/zones.json`. Everything in `/data` is included in every Home Assistant backup that includes this add-on (a full backup, or a partial one with the add-on ticked), and so is the add-on's `options.json`, which holds your `save_token` and your `overlay_entities` list. That means **deleting a zone from the editor does not remove it from backups taken before the deletion** — the old geometry stays in those backup files until you delete the backups themselves. Your polygon geometry encodes precise home, workplace and school locations, so if you're removing zones for privacy reasons (after a move, after accidentally drawing over a sensitive area, or in response to a subject-access or deletion request), also remove old backups via **Settings → System → Backups → ⋮ → Remove**, and any copies you keep outside Home Assistant.
+
+**Map tiles come from a third party.** Your browser fetches the map background directly from the provider of the map style you pick: OpenStreetMap, CARTO, or Esri for satellite imagery. Every tile request tells that provider which area you are looking at and your IP address, and sends your Home Assistant address (for example your `*.ui.nabu.casa` hostname) as the referring site.
+
+**Your browser remembers the last map view.** The editor stores where you last panned and zoomed in your browser's localStorage, under `pz:viewport`, so it reopens there; your map style and sidebar choice are kept the same way (`pz:basemap`, `pz:sidebar`). Nothing of this is sent to the add-on. Clearing the site data for your Home Assistant address removes it.
+
+**Tracker positions are passed through, not kept.** `GET /trackers.json` returns, for each entity in `overlay_entities`, only its entity id, friendly name, state, GPS accuracy, and coordinates rounded to four decimal places (about 11 m). The add-on stores none of it: each request asks Home Assistant afresh. See **Plotting live positions on the map** above.
+
+**Logs.** The add-on log records, among other things, the address of each request it refuses. How long logs are kept is controlled by the Supervisor, not by this add-on.
+
+The companion integration has its own [privacy notes](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/blob/main/docs/privacy.md).
