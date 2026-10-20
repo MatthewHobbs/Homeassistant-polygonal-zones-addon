@@ -27,6 +27,8 @@ Rehearse a release without publishing: **Actions → Release addon → Run workf
 
 A dispatch publishes only when it is run on the `vX.Y.Z` tag itself with **dry_run** unticked; that is the manual equivalent of a tag push. Run on a branch, it never publishes, whatever **dry_run** says.
 
+A pull request that changes `release.yml`, `build.yml`, `test.yml`, `lint.yml` or `scripts/check-published-revision.sh` runs the same dry run against `config.yaml`'s version, so the workflow and its gates are exercised before it merges. **publish** and **release** show as skipped there, so the steps only **publish** uses (GHCR login, attestation) still first run on a tag.
+
 ## Common failures
 
 ### Tests or lint fail after tag push
