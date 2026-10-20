@@ -271,22 +271,22 @@ _LON_MIN, _LON_MAX = -180.0, 180.0
 _LAT_MIN, _LAT_MAX = -90.0, 90.0
 
 
+def _finite_number(value) -> bool:
+    # bool subclasses int, but True is not a coordinate.
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def _validate_position(pos, where: str) -> None:
     """Validate a single GeoJSON position `[lon, lat]` (altitude ignored).
 
     Raises ValueError with a descriptive, index-bearing message on failure.
-    Rejects bool values (which would otherwise pass `isinstance(..., int)`
-    because bool subclasses int in Python), NaN / inf, non-numeric types,
-    and out-of-range WGS84 coordinates.
     """
     if not isinstance(pos, list) or len(pos) < 2:
         raise ValueError(f"{where}: position must be a list of at least 2 numbers")
     lon, lat = pos[0], pos[1]
     for name, value in (("longitude", lon), ("latitude", lat)):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{where}: {name} must be a number")
-        if not math.isfinite(value):
-            raise ValueError(f"{where}: {name} must be finite")
+        if not _finite_number(value):
+            raise ValueError(f"{where}: {name} must be a finite number")
     if not (_LON_MIN <= lon <= _LON_MAX):
         raise ValueError(f"{where}: longitude out of range [-180, 180]")
     if not (_LAT_MIN <= lat <= _LAT_MAX):
@@ -722,14 +722,10 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
     if not isinstance(attrs, dict):
         return None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
-    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-        return None
-    if isinstance(lat, bool) or isinstance(lon, bool):
-        return None
-    if not (math.isfinite(lat) and math.isfinite(lon)):
+    if not (_finite_number(lat) and _finite_number(lon)):
         return None
     acc = attrs.get("gps_accuracy")
-    if isinstance(acc, bool) or not isinstance(acc, (int, float)) or not math.isfinite(acc):
+    if not _finite_number(acc):
         acc = None
     return {
         "entity_id": entity_id,

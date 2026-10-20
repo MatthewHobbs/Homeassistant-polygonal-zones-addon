@@ -411,7 +411,6 @@ def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkey
     main._auth_failures.clear()
 
 
-
 def test_real_ingress_with_forwarded_header_is_still_ingress(boot):
     options = {"trusted_proxies": PROXY_RANGE, "save_token": TOKEN}
     ingress = _served_client(boot, options, (INGRESS, 5000))

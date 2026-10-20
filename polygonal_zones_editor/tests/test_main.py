@@ -490,11 +490,11 @@ def _polygon(coords):
         # subclasses int in Python (True == 1, False == 0 would otherwise pass).
         (
             _feature(_polygon([[[True, 0], [1, 0], [1, 1], [True, 0]]])),
-            "longitude must be a number",
+            "longitude must be a finite number",
         ),
         (
             _feature(_polygon([[["oops", 0], [1, 0], [1, 1], ["oops", 0]]])),
-            "longitude must be a number",
+            "longitude must be a finite number",
         ),
         # MultiPolygon shape
         (
@@ -575,7 +575,7 @@ def test_save_zones_rejects_non_finite_coordinate(ingress_client, tmp_zones_file
         "/save_zones", content=raw, headers={"content-type": "application/json"}
     )
     assert r.status_code == 422
-    assert "must be finite" in r.json()["detail"]
+    assert "longitude must be a finite number" in r.json()["detail"]
 
 
 @pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
