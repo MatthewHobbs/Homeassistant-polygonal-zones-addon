@@ -98,6 +98,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
     const posts = [];
     let reply = { status: 200, etag: null };
     const timers = [];
+    const cleared = [];
     let pendingFile = null;
 
     const layers = [];
@@ -139,6 +140,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
         fetch: (url, opts) => {
             if (url !== './save_zones') return new Promise(() => {});
             posts.push(opts);
+            if (reply.throwSync) throw new TypeError('fetch threw');
             if (reply.hang) {
                 // Like fetch: an already-aborted signal rejects at once.
                 const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
@@ -152,7 +154,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
             });
         },
         setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-        clearTimeout: () => {},
+        clearTimeout: (id) => { cleared.push(id); },
         AbortController,
         console,
         L: { geoJSON, Polygon },
@@ -178,6 +180,9 @@ function loadMap({ noAbortTimeout = false } = {}) {
         status,
         reply: (s, etag = null) => { reply = { status: s, etag }; },
         hang: () => { reply = { hang: true }; },
+        throwSync: () => { reply = { throwSync: true }; },
+        timers,
+        cleared,
         fireSaveTimeout: () => timers.filter((t) => t.ms === 30000).forEach((t) => t.fn()),
         setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
         save: () => vm.runInContext('save_zones', context)(),
@@ -374,6 +379,7 @@ test('save refuses until the saved zones have loaded', async () => {
 
 test('save is allowed after a bulk load even if the first load failed', async () => {
     const m = loadMap();
+    m.setLoadFailed();
     m.bulkLoad(collection(polygon('A')));
     await m.save();
     assert.equal(m.posts.length, 1);
@@ -436,7 +442,7 @@ test('a save that gets no answer times out, says so, and frees Save', async () =
     const pending = m.save();
     m.fireSaveTimeout();
     await pending;
-    assert.equal(m.status.textContent, 'Save timed out. Your changes are not saved; try again.');
+    assert.match(m.status.textContent, /^Save timed out\. It may not have saved/);
     m.reply(200, '"saved"');
     await m.save();
     assert.equal(m.posts.length, 2, 'Save stayed blocked after the timeout');
@@ -485,4 +491,26 @@ test('the not-loaded refusal clears once the zones load', async () => {
     m.loadSaved(JSON.parse(collection(polygon('A'))));
     assert.equal(m.status.textContent, '');
     assert.ok(!m.saveBtn.classList.contains('error'));
+});
+
+test('a new save cancels the previous success timer', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    const id = m.timers.findIndex((t) => t.ms === 2000) + 1;
+    assert.ok(id > 0, 'the success message is not timed');
+    await m.save();
+    assert.ok(m.cleared.includes(id), "the old timer would clear the new save's message");
+});
+
+test('a fetch that throws at once still frees Save', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.throwSync();
+    await m.save();
+    assert.match(m.status.textContent, /^Save failed/);
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.equal(m.posts.length, 2);
 });

@@ -6,8 +6,8 @@
   session's zones.** When another session had saved first, Save was refused,
   but the editor quietly took that session's version as its own, so clicking
   Save again went through and replaced their changes. It now keeps refusing
-  until you reload, and the reason is shown under the Save button, not only
-  to screen readers.
+  until you reload. Every save message (saving, saved, failed, conflict) is
+  now shown under the Save button, not only to screen readers.
 - **Fixed: Save refuses until your saved zones have loaded.** If loading
   `zones.json` failed, or you saved before it finished, the save went out
   unchecked and the file was replaced by whatever was on screen. Save now
@@ -15,7 +15,11 @@
   a file still saves, since replacing the zones is then the point.
 - **Fixed: a double click on Save no longer reports a conflict with itself.**
   Save shows "Saving…" while a save is on its way and ignores further clicks;
-  a save that gets no answer gives up after 30 seconds and says so. A zone
+  a save that gets no answer gives up after 30 seconds and says it may not
+  have saved.
+- **Changed: the editor's page and scripts are served with
+  `Cache-Control: no-cache`,** so browsers check for a newer version on each
+  load instead of reusing an old copy after an update. A zone
   drawn, deleted or renamed while a save is on its way stays marked as
   unsaved instead of being shown as saved.
 

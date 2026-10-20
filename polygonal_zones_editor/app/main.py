@@ -269,6 +269,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Content-Security-Policy"] = _CSP
+        # Revalidate (a cheap 304) rather than reuse by guesswork, so a fixed
+        # editor script reaches browsers on the next load after an update.
+        # Routes that forbid caching set their own header, which wins.
+        response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
 

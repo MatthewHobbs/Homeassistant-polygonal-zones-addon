@@ -645,7 +645,8 @@ function save_zones() {
         elem.classList.remove('success')
         elem.classList.add('error')
         if (status) status.textContent = timed_out
-            ? 'Save timed out. Your changes are not saved; try again.'
+            // The server may still have written: say so rather than "not saved".
+            ? 'Save timed out. It may not have saved; reload to check before saving again.'
             : `Save failed: ${err.message}`;
         // No setTimeout: an intermittent ingress failure flashing red for
         // 2s and disappearing left users unsure whether their zones saved.

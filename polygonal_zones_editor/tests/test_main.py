@@ -1913,7 +1913,7 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
 
 @pytest.mark.parametrize(
     ("path", "cache_control"),
-    [("/save_zones", None), ("/zones.json", None), ("/trackers.json", "no-store")],
+    [("/save_zones", "no-cache"), ("/zones.json", "no-cache"), ("/trackers.json", "no-store")],
 )
 def test_rate_limit_refusal_is_logged_on_every_gated_route(
     app_factory, caplog, path, cache_control
@@ -1965,3 +1965,17 @@ def test_parse_trusted_proxies_keeps_a_range_that_starts_at_zero(app_factory):
     import main
 
     assert main._parse_trusted_proxies({"trusted_proxies": "0.0.0.0/8"}) == ["0.0.0.0/8"]
+
+
+@pytest.mark.parametrize("path", ["/", "/js/map.js", "/css/style.css"])
+def test_static_files_are_revalidated_so_a_client_fix_reaches_browsers(allow_all_client, path):
+    r = allow_all_client.get(path)
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+
+
+def test_routes_that_forbid_caching_keep_their_header(allow_all_client):
+    assert (
+        allow_all_client.get("/zones.json").headers["cache-control"]
+        == "no-cache, no-store, must-revalidate"
+    )
