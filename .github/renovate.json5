@@ -14,9 +14,11 @@
   // which would have Renovate and Dependabot both raising pip PRs.
   "extends": [
     "config:recommended",
-    ":dependencyDashboard",
     ":semanticCommitTypeAll(build)",
   ],
+  // config:recommended turns the dashboard on, so it is switched off here, not just left
+  // out; with it off, Renovate closes its existing dashboard issue on the next run.
+  "dependencyDashboard": false,
   "enabledManagers": ["github-actions", "dockerfile", "custom.regex"],
   "timezone": "Europe/London",
   // Personal repo, worked on at weekends: have the PRs waiting on Saturday morning rather
