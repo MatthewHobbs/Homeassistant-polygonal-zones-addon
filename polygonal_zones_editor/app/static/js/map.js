@@ -308,17 +308,19 @@ function load_zones(zones_url, restoredViewport) {
     return fetch(zones_url, {signal: controller.signal})
         .then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            zones_etag = response.headers.get('ETag');
-            return response.text();
-        })
-        .then(json => {
-            let data;
-            try { data = JSON.parse(json); }
-            catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
-
-            load_saved_zones(data, restoredViewport);
+            return response.text().then(json => {
+                // A bulk load that landed first replaced the saved zones on
+                // purpose; this answer is stale.
+                if (zones_loaded) return;
+                let data;
+                try { data = JSON.parse(json); }
+                catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
+                zones_etag = response.headers.get('ETag');
+                load_saved_zones(data, restoredViewport);
+            });
         })
         .catch(err => {
+            if (zones_loaded) return;
             zones_load_failed = true;
             console.error('Failed to load zones:', err);
             let list = document.querySelector('.zone-list');

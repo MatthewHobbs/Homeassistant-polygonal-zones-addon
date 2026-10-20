@@ -752,6 +752,25 @@ test('a first load shows the saved zones and adopts their ETag', async () => {
     assert.equal(m.posts[0].headers['If-Match'], '"disk"');
 });
 
+test('a first load that lands after a bulk load changes nothing', async () => {
+    const m = loadMap();
+    m.bulkLoad(collection(polygon('B')));
+    m.zonesReply({ text: collection(polygon('A')), etag: '"disk"' });
+    await m.loadZones();
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['B']);
+    await m.save();
+    assert.equal(m.posts[0].headers['If-Match'], undefined, 'the bulk load replaced the saved zones on purpose');
+});
+
+test('a first load that fails after a bulk load leaves the list alone', async () => {
+    const m = loadMap();
+    m.bulkLoad(collection(polygon('B')));
+    m.zonesReply({ reject: true });
+    await m.loadZones();
+    assert.equal(m.zoneList.textContent, '');
+    assert.ok(!m.calls.includes('create_load_btn'));
+});
+
 test('first load gives a zone whose id is not text a fresh one', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(unnamed({ id: 5 }))));
