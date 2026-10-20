@@ -89,56 +89,44 @@ watch_run() {
   fi
 }
 
-# Wait for main HEAD to differ from a known prior SHA (handles replication
-# lag without a fixed sleep). Echoes the new SHA on success.
-wait_for_main_head_change() {
-  local prior="$1"
-  local now
-  for _ in $(seq 1 15); do
-    now=$(gh api "repos/$REPO/commits/main" --jq .sha)
-    if [ "$now" != "$prior" ]; then
-      echo "$now"
-      return 0
-    fi
-    sleep 2
-  done
-  return 1
+# The PR's own squash commit, not main's HEAD: another merge may already have
+# moved main.
+merge_commit_of() {
+  gh -R "$REPO" pr view "$1" --json mergeCommit -q '.mergeCommit.oid // empty'
 }
 
-# Wait for main's config.yaml version to equal $1. Dry-run never merges, so
-# main's version never moves; polling it here would always time out and fail
-# a preview that would otherwise be clean. Skip the wait, not the intent.
-wait_for_main_version() {
-  local expected="$1" seen
-  if [ "$DRY_RUN" = 1 ]; then
-    log "[dry-run] would wait for main's version to reach $expected"
-    return 0
-  fi
-  for _ in $(seq 1 15); do
-    seen=$(read_version_at_ref main)
-    [ "$seen" = "$expected" ] && return 0
-    sleep 2
-  done
-  fail "post-merge-version-mismatch: main=$seen expected=$expected" $EXIT_PREFLIGHT
-}
-
-# Tag a SHA, find the resulting release run, and watch it.
+# Tag PR $2's merge commit v$1, find the resulting release run, and watch it.
 tag_and_watch() {
-  local version="$1" sha="$2" tag="v$1"
-
-  wait_for_main_version "$version"
-
-  say TAGGING "$tag at $sha"
-  if [ "$DRY_RUN" = 0 ]; then
+  local tag="v$1" pr="$2" sha
+  if [ "$DRY_RUN" = 1 ]; then
+    log "[dry-run] would create tag $tag at #$pr's merge commit"
+  else
+    sha=$(merge_commit_of "$pr")
+    [ -n "$sha" ] || fail "merge-commit-unknown: #$pr" $EXIT_TAG
+    say TAGGING "$tag at $sha"
     if ! gh api -X POST "repos/$REPO/git/refs" \
         -f ref="refs/tags/$tag" -f sha="$sha" >/dev/null; then
       fail "tag-push-failed: $tag" $EXIT_TAG
     fi
-  else
-    log "[dry-run] would create tag $tag at $sha"
   fi
-
   watch_for_tag "$tag"
+}
+
+# PR $1 is already merged: tag its merge commit with the version it carries,
+# unless that tag exists, then watch the release run.
+resume_merged() {
+  local pr="$1" sha version
+  sha=$(merge_commit_of "$pr")
+  [ -n "$sha" ] || fail "merge-commit-unknown: #$pr" $EXIT_TAG
+  version=$(read_version_at_ref "$sha")
+  log "merge commit $sha carries $version"
+  if gh api "repos/$REPO/git/ref/tags/v$version" >/dev/null 2>&1; then
+    say RESUMING "v$version (tag already exists)"
+    watch_for_tag "v$version"
+  else
+    log "tag v$version missing; finishing release"
+    tag_and_watch "$version" "$pr"
+  fi
 }
 
 # Locate the release.yml run for $1 and watch it.
@@ -191,16 +179,8 @@ log "main version: $MAIN_VERSION"
 # ───── auto-resume: PR already merged ──────────────────────────────
 
 if [ "$STATE" = "MERGED" ]; then
-  TAG="v$MAIN_VERSION"
-  log "PR already merged; main is at $MAIN_VERSION"
-  if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
-    say RESUMING "$TAG (tag already exists)"
-    watch_for_tag "$TAG"
-    exit 0
-  fi
-  log "tag $TAG missing; finishing release"
-  MERGE_SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
-  tag_and_watch "$MAIN_VERSION" "$MERGE_SHA"
+  log "PR already merged"
+  resume_merged "$PR"
   exit 0
 fi
 
@@ -257,17 +237,12 @@ if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
     $EXIT_PREFLIGHT
 fi
 
-PRE_MERGE_HEAD=$(gh api "repos/$REPO/commits/main" --jq .sha)
-
 say MERGING "#$PR"
 if [ "$DRY_RUN" = 0 ]; then
   gh -R "$REPO" pr merge "$PR" --squash --delete-branch \
     || fail "merge-failed" $EXIT_MERGE
-  MERGE_SHA=$(wait_for_main_head_change "$PRE_MERGE_HEAD") \
-    || fail "post-merge-head-propagation-timeout" $EXIT_PREFLIGHT
 else
   log "[dry-run] would: gh pr merge $PR --squash --delete-branch"
-  MERGE_SHA="<dry-run-merge-sha>"
 fi
 
-tag_and_watch "$PR_VERSION" "$MERGE_SHA"
+tag_and_watch "$PR_VERSION" "$PR"

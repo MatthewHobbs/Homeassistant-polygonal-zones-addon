@@ -84,11 +84,11 @@ Symptom: HA automations no longer fire on zone entry/exit, or a user hitting the
 | Exit | Meaning | What to do |
 |---|---|---|
 | 0 | success | nothing |
-| 1 | unexpected failure (an unguarded command failed) | read the output, fix the cause, re-run; if it failed after the merge, the exit-3 caveat applies |
+| 1 | unexpected failure (an unguarded command failed) | read the output, fix the cause, re-run; a merged PR resumes as for exit 5 |
 | 2 | usage error: missing PR number or unknown flag | re-invoke with a PR number |
-| 3 | pre-flight failed (PR state, checks, mergeability, version mismatch), or after the merge: `post-merge-version-mismatch` or `post-merge-head-propagation-timeout` | before the merge, fix the cause. After the merge the PR is merged but untagged: re-run the script, which resumes by tagging, provided nothing else has merged to `main` since (it tags `main`'s HEAD); otherwise tag the merge commit by hand (see **Manual fallback** in README) |
+| 3 | pre-flight failed (PR state, checks, mergeability, version mismatch) | fix the cause and re-run |
 | 4 | merge failed (unusual after pre-flight passed) | check the GitHub UI |
-| 5 | tag creation failed | re-run; the script resumes if the PR is merged, with the same caveat as exit 3 |
+| 5 | tag creation failed, or the merged PR's merge commit could not be read (`merge-commit-unknown`) | re-run: for a merged PR the script resumes by tagging that PR's merge commit with the version it carries, whatever has merged to `main` since |
 | 6 | release workflow failed | the script only watches the run, so re-running it alone reports the same failure. Fix the run first: re-run its failed jobs (**Partial-matrix publish failure** above), or cut a new patch for a test or lint failure; then re-run the script to watch. If the reason is `release-run-not-found` (`release-run-not-found-for-vX.Y.Z`), a plain re-run picks the run up |
 
 Progress goes to stdout as `STATUS:<TOKEN>` lines, ending in `STATUS:SUCCESS …` on success. A failure prints `STATUS:FAILED <reason>` to stderr; usage errors and unexpected failures print no `STATUS:FAILED` line.
