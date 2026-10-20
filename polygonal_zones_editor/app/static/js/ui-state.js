@@ -19,14 +19,10 @@
         return ROOT ? ROOT.getAttribute('data-sidebar') : null;
     }
 
-    function setSidebarState(state, opts) {
+    function setSidebarState(state) {
         if (!ROOT) return;
-        opts = opts || {};
-        const persist = opts.persist !== false;
         ROOT.setAttribute('data-sidebar', state);
-        if (persist && window.PZStorage) {
-            window.PZStorage.set('pz:sidebar', state);
-        }
+        if (window.PZStorage) window.PZStorage.set('pz:sidebar', state);
         if (!boundMap) return;
 
         // After the CSS grid-column transition settles, ask Leaflet to

@@ -17,20 +17,20 @@ function create_load_btn() {
 }
 
 function delete_load_btn() {
-    // Null-guard: pm:create fires delete_load_btn every time a user draws,
-    // but the load button only exists when the editor started empty. On an
-    // editor that loaded non-empty zones, the button was never created —
-    // querying and calling .remove() on null threw a TypeError mid-draw.
+    // Every draw calls this, and the button exists only while there are no zones.
     document.querySelector('#load-btn')?.remove();
     document.querySelector('#load-text')?.remove();
 }
 
-// Build a DOM node for a Leaflet popup so feature.properties.name is inserted
-// as text, never parsed as HTML. bindPopup(string) would render the string as
-// HTML, which would execute script for a crafted zone name in zones.json.
-function name_popup_element(feature) {
+// A DOM node for a popup or tooltip, so a zone or device name is inserted as
+// text: Leaflet renders a string as HTML, which would run script in a crafted
+// name.
+function text_element(text) {
     let el = document.createElement('span');
-    let name = feature && feature.properties ? feature.properties.name : '';
-    el.textContent = typeof name === 'string' ? name : '';
+    el.textContent = typeof text === 'string' ? text : '';
     return el;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { text_element };
 }

@@ -1,13 +1,14 @@
 // Registry of the Leaflet basemap layers the editor offers. map.js builds its
 // tile layers and the basemap picker from this list, so a provider is added
-// here, plus its tile host in main.py's CSP img-src.
+// here, plus its tile host in main.py's CSP img-src. `label` is the picker's
+// text; the provider is credited in `attribution`.
 (function () {
     const osmAttrib = '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors';
 
     const entries = [
         {
             id: 'osm',
-            label: 'OpenStreetMap',
+            label: 'Street map',
             url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
             attribution: osmAttrib,
             options: {maxZoom: 18},
@@ -15,7 +16,7 @@
         },
         {
             id: 'carto-dark',
-            label: 'CARTO Dark',
+            label: 'Dark',
             url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
             attribution: osmAttrib + ' &copy; <a href="https://carto.com/attributions">CARTO</a>',
             options: {maxZoom: 19, subdomains: 'abcd'},
@@ -28,7 +29,7 @@
             // it never gets picked by getDefaultBasemap's auto resolution —
             // users explicitly opt in via the picker.
             id: 'esri-imagery',
-            label: 'Esri World Imagery',
+            label: 'Satellite',
             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
             options: {maxZoom: 19},

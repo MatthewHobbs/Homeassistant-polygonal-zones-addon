@@ -214,6 +214,7 @@ body {
 #map {
     height: 100vh;
     width: 100%;
+    position: relative;     /* anchor for the tile-error banner */
 }
 
 .sidebar {
@@ -249,9 +250,8 @@ body {
     transition: 0.3s;
 }
 
-/* WCAG AA contrast with white button text: plain `green`/`red` were ~3.4–4.0:1
-   (below 4.5:1). These darker shades clear AA on the button's light + dark
-   backgrounds. */
+/* Darker than plain `green`/`red` (~3.4–4.0:1) so white button text clears
+   WCAG AA's 4.5:1. */
 .save-btn.success {
     background-color: #1a7f37 !important;
 }
@@ -303,7 +303,7 @@ body {
     flex-grow: 1;
 }
 
-/* Basemap picker (#31). Sits above .center / .zone-list inside the sidebar.
+/* Basemap picker. Sits above .center / .zone-list inside the sidebar.
  * Native <select> so it inherits keyboard + screen-reader affordances
  * without any custom a11y plumbing. Styled with the existing input tokens
  * so light/dark parity is free. */
@@ -338,10 +338,6 @@ body {
 /* Tile-error banner. Shown by map.js after 5 consecutive tileerror events
  * on the active basemap; hidden on the next tileload. Absolutely
  * positioned inside #map so it overlays tiles without shifting layout. */
-#map {
-    position: relative;        /* anchor for the banner */
-}
-
 .tile-error-banner {
     position: absolute;
     bottom: 24px;
@@ -355,10 +351,6 @@ body {
     border-radius: 2px;
     font-size: 0.9em;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-}
-
-.tile-error-banner[hidden] {
-    display: none;
 }
 
 /* Transient error toast (e.g. invalid bulk JSON). Top-anchored with a z-index

@@ -223,7 +223,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
-        name_popup_element: (feature) => ({ text: feature.properties.name }),
+        text_element: (text) => ({ text }),
         pz_layer_polygons: () => [{}],
         pz_layer_area_m2: (layer) => layer.area || 0,
         delete_load_btn: () => calls.push('delete_load_btn'),
@@ -389,7 +389,7 @@ test('bulk load accepts a null name, as the server does', () => {
 test('finishing an edit of an unnamed zone with an empty box leaves it unnamed', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(unnamed({ id: 'a' }), unnamed({ id: 'b' }))));
-    for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', oldName: '', id });
+    for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', id });
     assert.deepEqual(m.layers.map((l) => l.feature.properties.id), ['a', 'b'], 'saved ids are kept');
     // Two zones named "" would be refused on save as duplicate names.
     assert.deepEqual(m.layers.map((l) => 'name' in l.feature.properties), [false, false]);
@@ -400,7 +400,7 @@ test('the second of two unnamed zones without ids is the one renamed', () => {
     m.loadSaved(JSON.parse(collection(unnamed(null), unnamed({}))));
     const ids = m.layers.map((l) => l.feature.properties.id);
     assert.ok(ids.every(Boolean) && ids[0] !== ids[1], 'each loaded zone gets its own id');
-    m.editZone({ editing: false, name: 'Shed', oldName: '', id: ids[1] });
+    m.editZone({ editing: false, name: 'Shed', id: ids[1] });
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), [undefined, 'Shed']);
 });
 

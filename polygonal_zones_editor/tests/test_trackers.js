@@ -106,12 +106,9 @@ test('MultiPolygon: a hole in one part never subtracts from, or leaks into, anot
 });
 
 test('MultiPolygon: a point inside one part stays inside even when another part is nearer', () => {
-    // Regression test: comparing edgeDistanceM regardless of `inside` let a
-    // closer-but-outside second part overturn an already-inside result from
-    // the first. The point below sits deep
-    // inside part 1 (OUTER, ~500m from its own edges) but just ~11m outside
-    // part 2's edge — under the bug, part 2's smaller edgeDistanceM won the
-    // comparison and overturned the correct "inside" result from part 1.
+    // The point sits deep inside part 1 (OUTER, ~500m from its own edges) but
+    // just ~11m outside part 2's edge. Comparing edgeDistanceM regardless of
+    // `inside` would let part 2's smaller distance overturn part 1's "inside".
     const part2 = [
         [0.0045, 0.0045],
         [0.02, 0.0045],

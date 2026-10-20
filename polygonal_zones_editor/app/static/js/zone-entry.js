@@ -93,12 +93,7 @@ try {
     ZONE_ENTRY_SHEET = null;
 }
 
-// custom component that will renderder the above template
 class ZoneEntry extends HTMLElement {
-    constructor() {
-        super();
-    }
-
     connectedCallback() {
         this.attachShadow({mode: 'open'});
         if (ZONE_ENTRY_SHEET) this.shadowRoot.adoptedStyleSheets = [ZONE_ENTRY_SHEET];
@@ -146,14 +141,8 @@ class ZoneEntry extends HTMLElement {
                 <div class="edit-zone ${!editing ? 'hidden' : ''}">
                     <div class="properties">
                         <!--
-                            aria-label rather than <label for="…"> because
-                            the shadow-DOM for/id association does not cross
-                            the shadow boundary per spec — a previous
-                            implementation used for="zone-name-input" and
-                            id="zone-name-input" which never associated, and
-                            every zone-entry shared the same id. The visible
-                            "Name" text survives as a styled label element;
-                            screen readers now announce the input correctly.
+                            aria-label rather than <label for="…">: a for/id
+                            pair does not associate across the shadow boundary.
                         -->
                         <label aria-hidden="true">Name</label>
                         <input type="text" aria-label="Zone name">
@@ -186,11 +175,9 @@ class ZoneEntry extends HTMLElement {
 
         let edit_button = document.createElement('button');
         edit_button.classList.add('edit-btn');
-        // "Done" (not "Save") for the per-row commit: it only confirms this
-        // zone's name into the in-memory layer. The sidebar "Save" is the file
-        // write. Sharing the "Save" label made users think the row button
-        // persisted to disk, then leave without the sidebar Save and lose the
-        // rename.
+        // "Done", not "Save": this only applies the name in the editor. A row
+        // button labelled "Save" reads as writing to disk, and the user leaves
+        // without the sidebar Save.
         edit_button.innerText = !editing ? 'Edit' : 'Done';
         edit_button.onclick = this.edit_event_handler.bind(this);
 
@@ -212,8 +199,7 @@ class ZoneEntry extends HTMLElement {
             detail: {
                 editing: !editing,
                 name: name,
-                // Stable per-zone id so the map can match the right layer even
-                // when two zones share a display name (rename targeting bug).
+                // The map finds the layer by id: names may repeat.
                 id: this.getAttribute('zone-id') || null,
             }
         }));

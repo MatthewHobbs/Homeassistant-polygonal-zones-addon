@@ -1,4 +1,4 @@
-// Collapsible sidebar toggle (#29). Thin wiring only — the state
+// Collapsible sidebar toggle. Thin wiring only — the state
 // contract (attribute write + persistence + map.invalidateSize) lives
 // in ui-state.js. This file owns the button: click handler, keyboard
 // accessibility, aria-state mirroring.
