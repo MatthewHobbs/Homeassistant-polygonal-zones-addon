@@ -306,9 +306,9 @@ function load_zones(zones_url, restoredViewport) {
             });
         })
         .catch(err => {
+            console.error('Failed to load zones:', err);
             if (zones_loaded) return;
             zones_load_failed = true;
-            console.error('Failed to load zones:', err);
             let list = document.querySelector('.zone-list');
             if (list) {
                 list.removeAttribute('aria-busy');
@@ -475,11 +475,14 @@ function edit_zone_event(e) {
     // Every zone has an id (drawn ones at creation, loaded ones in add_zones),
     // so the id alone finds it whatever its name.
     let layer = editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id);
+    // The zone was deleted while its row was open.
+    if (!layer) return;
 
     if (e.detail.editing) {
         close_open_edit();
         map.fitBounds(layer.getBounds());
-        layer.pm.enable();
+        // A self-crossing ring is a zone whose inside is ambiguous.
+        layer.pm.enable({ allowSelfIntersection: false });
     } else {
         layer.pm.disable();
         // An empty box leaves the zone unnamed: two zones named "" would be
@@ -592,7 +595,9 @@ function save_zones() {
             // 412 carries the other session's ETag, and adopting it would let
             // the next click overwrite their edits. The body carries it too,
             // for a proxy that strips the header.
-            const new_etag = response.headers.get('ETag') || body?.etag;
+            // The body's value is checked: it ends up in a request header.
+            const body_etag = /^"[0-9a-f]+"$/.test(body?.etag) ? body.etag : null;
+            const new_etag = response.headers.get('ETag') || body_etag;
             if (new_etag) zones_etag = new_etag;
             // An edit made while the request was in flight is still unsaved.
             if (edit_seq === sent_seq) mark_clean();

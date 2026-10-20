@@ -87,7 +87,7 @@ function bounds(layers) {
 class Polygon {
     constructor(feature) {
         this.feature = feature;
-        this.pm = { enabled: false, enable() { this.enabled = true; }, disable() { this.enabled = false; } };
+        this.pm = { enabled: false, enable(opts) { this.enabled = true; this.opts = opts; }, disable() { this.enabled = false; } };
     }
     bindPopup(content) { this.popup = content; return this; }
     getBounds() { return bounds([this]); }
@@ -130,6 +130,7 @@ function geoJSON(data, options) {
 
 function loadMap({ noAbortTimeout = false } = {}) {
     const errors = [];
+    const logged = [];
     const calls = [];
     const elements = { '.zone-list': fakeElement('div'), '.save-btn': fakeElement('button') };
     const status = fakeElement('p');
@@ -216,7 +217,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
         setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
         clearTimeout: (id) => { cleared.push(id); },
         AbortController,
-        console,
+        console: { ...console, error: (...a) => logged.push(a.join(' ')) },
         L: { geoJSON, Polygon },
         crypto: require('node:crypto').webcrypto,
         AbortSignal: noAbortTimeout ? {} : AbortSignal,
@@ -235,6 +236,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
     return {
         layers,
         errors,
+        logged,
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
         zoneList: elements['.zone-list'],
@@ -443,10 +445,20 @@ test('a save adopts the body etag when a proxy strips the ETag header', async ()
     m.loadSaved(JSON.parse(collection(polygon('A'))));
     m.setEtag('"loaded"');
     // main.py's save_zones answers {"status": "ok", "etag": ...}.
-    m.reply(200, null, { status: 'ok', etag: '"saved"' });
+    m.reply(200, null, { status: 'ok', etag: '"5a7ed"' });
     await m.save();
     await m.save();
-    assert.equal(m.posts[1].headers['If-Match'], '"saved"');
+    assert.equal(m.posts[1].headers['If-Match'], '"5a7ed"');
+});
+
+test('a body etag that is not a quoted hex digest is ignored', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(200, null, { status: 'ok', etag: '"x"\r\nX-Evil: 1' });
+    await m.save();
+    await m.save();
+    assert.equal(m.posts[1].headers['If-Match'], '"loaded"');
 });
 
 test('save refuses until the saved zones have loaded', async () => {
@@ -648,6 +660,20 @@ test('opening another zone keeps the name typed in the open one', () => {
     assert.deepEqual(m.layers.map((l) => l.pm.enabled), [false, true]);
 });
 
+test('editing a zone refuses self-crossing edges', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.entries()[0].edit_event_handler();
+    assert.equal(m.layers[0].pm.opts?.allowSelfIntersection, false);
+});
+
+test('an edit event for a zone that is gone does nothing', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    assert.doesNotThrow(() => m.editZone({ editing: true, name: 'X', id: 'gone' }));
+    assert.doesNotThrow(() => m.editZone({ editing: false, name: 'X', id: 'gone' }));
+});
+
 test('drawing a zone while a rename is open keeps the typed name', () => {
     const m = loadMap();
     m.setupEditing();
@@ -780,6 +806,7 @@ test('a first load that fails after a bulk load leaves the list alone', async ()
     await m.loadZones();
     assert.equal(m.zoneList.textContent, '');
     assert.ok(!m.calls.includes('create_load_btn'));
+    assert.equal(m.logged.length, 1, 'the failure was not logged');
 });
 
 test('first load gives a zone whose id is not text a fresh one', () => {
