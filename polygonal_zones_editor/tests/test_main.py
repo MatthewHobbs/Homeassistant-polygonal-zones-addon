@@ -1,6 +1,7 @@
 from collections import Counter
 from email.utils import formatdate
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -1776,6 +1777,8 @@ _FETCH_FAILURES = {
     "server_error": _http_error(500),
     "not_json": b"<html>Bad gateway</html>",
     "timed_out": TimeoutError("timed out"),
+    "bad_status_line": http.client.BadStatusLine("garbage"),
+    "cut_short": http.client.IncompleteRead(b"{", 10),
 }
 
 

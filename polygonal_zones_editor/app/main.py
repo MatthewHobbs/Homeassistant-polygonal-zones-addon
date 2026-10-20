@@ -2,6 +2,7 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from email.utils import formatdate
 import hashlib
+import http.client
 import ipaddress
 import json
 import logging
@@ -10,7 +11,6 @@ import os
 import re
 import secrets
 import time
-import urllib.error
 import urllib.request
 import uuid
 
@@ -700,7 +700,9 @@ def _fetch_state(entity_id: str, token: str) -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as err:
+    # URLError and TimeoutError are OSErrors; HTTPException covers a garbled
+    # or truncated reply.
+    except (OSError, ValueError, http.client.HTTPException) as err:
         # One unreachable or malformed entity must not fail the whole overlay:
         # the map is still useful with the trackers that did resolve.
         _LOGGER.debug("Overlay fetch failed for %s: %s", entity_id, err)
