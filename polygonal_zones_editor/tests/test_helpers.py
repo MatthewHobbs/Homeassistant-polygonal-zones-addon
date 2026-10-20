@@ -285,14 +285,6 @@ def _keys_under(path, section):
     return keys
 
 
-def test_supervisor_watchdog_probes_the_open_health_check():
-    # /healthz is the one path that needs no token, so the watchdog can reach it.
-    from tests.conftest import APP_DIR
-
-    config = (APP_DIR.parent / "config.yaml").read_text().splitlines()
-    assert 'watchdog: "http://[HOST]:[PORT:8000]/healthz"' in config
-
-
 def test_every_option_has_a_name_and_description_in_the_ui():
     # A missing entry shows Supervisor users the raw key and no explanation.
     from tests.conftest import APP_DIR

@@ -117,7 +117,7 @@ def test_trusted_proxy_still_resolves_the_forwarded_client(boot, caplog):
 
     assert r.status_code == 403
     # Rate limiting and logging key on the resolved client, not the proxy.
-    assert "Rejected /zones.json read from 10.9.8.7" in caplog.text
+    assert "Rejected /zones.json from 10.9.8.7" in caplog.text
     assert "192.168.1.50" not in caplog.text
 
     r = client.get("/zones.json", headers={"X-Forwarded-For": "10.9.8.7", "X-Save-Token": TOKEN})
@@ -512,22 +512,26 @@ def test_ingress_loads_the_editor_from_a_cross_site_link(boot):
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "status"),
     [
-        b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},'
-        b'"geometry":{"type":"Polygon","coordinates":[[[1'
-        + b"0" * 400
-        + b",0],[1,0],[1,1],[1"
-        + b"0" * 400
-        + b",0]]]}}]}",
-        b"1" * 5000,
+        (
+            b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},'
+            b'"geometry":{"type":"Polygon","coordinates":[[[1'
+            + b"0" * 400
+            + b",0],[1,0],[1,1],[1"
+            + b"0" * 400
+            + b",0]]]}}]}",
+            422,
+        ),
+        (b"1" * 5000, 400),
+        (b"[" * 100_000, 400),
     ],
-    ids=["huge-int", "too-many-digits"],
+    ids=["huge-int", "too-many-digits", "too-deep"],
 )
-def test_a_save_body_python_cannot_hold_is_refused_not_a_500(boot, body):
+def test_a_save_body_python_cannot_hold_is_refused_not_a_500(boot, body, status):
     client = _served_client(boot, {"save_token": TOKEN}, (INGRESS, 5000))
     r = client.post("/save_zones", content=body, headers={"Content-Type": "application/json"})
-    assert r.status_code in (400, 422)
+    assert r.status_code == status
 
 
 def test_a_refusal_carries_the_security_headers(boot):
@@ -536,3 +540,21 @@ def test_a_refusal_carries_the_security_headers(boot):
     assert r.status_code == 403
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    ("attrs", "accuracy"),
+    [
+        ({"latitude": 10**400, "longitude": 0}, "dropped"),
+        ({"latitude": 91, "longitude": 0}, "dropped"),
+        ({"latitude": 1, "longitude": 2, "gps_accuracy": 10**400}, None),
+    ],
+)
+def test_an_out_of_range_tracker_is_dropped_not_a_crash(attrs, accuracy):
+    import main
+
+    point = main._overlay_point("device_tracker.x", {"attributes": attrs})
+    if accuracy == "dropped":
+        assert point is None
+    else:
+        assert point["gps_accuracy"] is accuracy

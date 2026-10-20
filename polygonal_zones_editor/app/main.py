@@ -474,7 +474,7 @@ def _gate(options: dict, request: Request, label: str, check_origin=True) -> Res
         _LOGGER.warning(
             "Rate limit hit on %s for %s (%d failures in %ds). "
             "Further attempts refused for the remainder of the window.",
-            request.url.path,
+            label,
             client_host,
             _AUTH_FAILURE_LIMIT,
             _AUTH_FAILURE_WINDOW_SECONDS,
@@ -528,8 +528,9 @@ def save_zones_generator(options: dict):
 
         try:
             geo_json = json.loads(body)
-        # ValueError also covers an integer too long to convert.
-        except ValueError:
+        # ValueError also covers an integer too long to convert, and
+        # RecursionError a body nested deeper than the parser goes.
+        except (ValueError, RecursionError):
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
         try:
@@ -722,10 +723,13 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
     if not isinstance(attrs, dict):
         return None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
-    if not (_finite_number(lat) and _finite_number(lon)):
+    # Range-checked before float(), which overflows on a huge int.
+    if not (
+        _finite_number(lat) and _finite_number(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
+    ):
         return None
     acc = attrs.get("gps_accuracy")
-    if not _finite_number(acc):
+    if not (_finite_number(acc) and 0 <= acc <= 1e7):
         acc = None
     return {
         "entity_id": entity_id,
@@ -749,7 +753,7 @@ def trackers_json_generator(options: dict):
     async def trackers_json(request: Request) -> Response:
         # Same gate as /zones.json — this returns positions, so it must not
         # be reachable on terms the zones file isn't.
-        refusal = _gate(options, request, "/trackers.json read")
+        refusal = _gate(options, request, "/trackers.json")
         if refusal is not None:
             return refusal
 
@@ -807,7 +811,7 @@ def zones_json_generator(options: dict):
     async def zones_json(request: Request) -> Response:
         # Shares the failure bucket with /save_zones, so an attacker can't
         # rotate between GET and POST to double their guess budget.
-        refusal = _gate(options, request, "/zones.json read")
+        refusal = _gate(options, request, "/zones.json")
         if refusal is not None:
             return refusal
 

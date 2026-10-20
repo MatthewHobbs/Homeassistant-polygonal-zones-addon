@@ -42,11 +42,10 @@
 - **Fixed: `overlay_entities` has a name and description in the add-on
   configuration,** including that its positions are readable by anyone
   holding the token.
-- **Changed: the Supervisor restarts the add-on when its health check
-  fails,** through the add-on's watchdog while **Watchdog** is switched on
-  in the add-on's **Info** tab. Refusals now carry the security headers,
-  and every `429` is sent with
-  `Cache-Control: no-store`.
+- **Changed: refusals now carry the security headers,** and every `429` is
+  sent with `Cache-Control: no-store`. The documentation now says to switch
+  on **Watchdog** in the add-on's **Info** tab, so the Supervisor restarts
+  the add-on when its health check fails.
 
 ## 0.5.7 — 2026-10-20
 
