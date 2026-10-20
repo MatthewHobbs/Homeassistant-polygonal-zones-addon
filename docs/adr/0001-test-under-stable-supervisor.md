@@ -1,7 +1,7 @@
 # ADR 0001: Test the add-on under the current stable Supervisor and Core
 
 - **Status:** Accepted (2026-09-25)
-- **Context:** my requirement of 2026-09-25 that add-ons are tested against the current general release of Home Assistant, and the RFC that followed (see References). I chose option A.
+- **Context:** my decision of 2026-09-25 that add-ons are tested against the current general release of Home Assistant, and the RFC that followed (see References). I chose option A.
 - **Amended (2026-09-26):** the pilot's first runs on GitHub found that the shipped AppArmor profile fails on modern AppArmor. I fixed that and released it as 0.4.2. The pilot enforces AppArmor after all. See the amendment below.
 - **North star:** every release of this add-on has been installed, configured and used under the current stable Supervisor, with both the current stable Core and the oldest Core it declares, on both architectures my users run, before it ships.
 
@@ -17,10 +17,10 @@ I test the add-on in CI under a real Supervisor on the stable channel, using the
 | 4 | Reuse the existing assertions: the smoke probes, then the Playwright draw-and-save through the ingress URL, which exercises #46's failure mode on the real path | this repo | Done | #52, run 36229742351 |
 | 5 | Run it nightly and on demand, not yet as a required check. After about two weeks, promote it if every failure had a known cause that was not flakiness. Promotion means both a required PR check and a job that `release.yml` runs before publishing, alongside tests, lint and build, because a tag-triggered release never sees a PR check. Promotion is my call, recorded here. Releases stay ungated during the trial (my decision, 2026-09-25) | me | Open | |
 | 6 | Add an AppArmor compile check (`apparmor_parser -Q -K`, as a290 and r5 do). Enforcement stays in TESTING.md's manual HA OS layer until the devcontainer is shown to enforce it. Amended 2026-09-26: it can, and does. See the amendment | this repo | Done | #51 |
-| 7 | Tighten the standalone smoke. Assert `uid=1001(app)`, which CLAUDE.md said it did while `build.yml` only rejected uid 0, and fail on any traceback in the container log | this repo | Done | #51 |
+| 7 | Tighten the standalone smoke. Assert `uid=1001(app)`, which the project docs said it did while `build.yml` only rejected uid 0, and fail on any traceback in the container log | this repo | Done | #51 |
 | 8 | Build and boot aarch64 on native `ubuntu-24.04-arm` instead of QEMU, and run Playwright on both arches | this repo | Done | #51 |
 | 9 | Update TESTING.md and EVALUATION.md, which still said only amd64 was booted, and describe the new layer | this repo | Done | #56 |
-| 10 | Declare the oldest supported HA in `config.yaml` (`homeassistant:`), which it did not do before. The value and the rule it must satisfy come from my global CLAUDE.md ("Home Assistant: test against current stable"), not from this ADR. Declare it only once row 11 has shown the add-on works on it. After that the Supervisor will not offer the update to older installs, so the changelog must say so. Declared as 2026.8.1 in 0.4.3. Stable Core was 2026.9.3 on 2026-09-26, so the bound was 2026.8.1 | this repo | Done | #55 |
+| 10 | Declare the oldest supported HA in `config.yaml` (`homeassistant:`), which it did not do before. The rule it must satisfy is set out in Context, not decided here. Declare it only once row 11 has shown the add-on works on it. After that the Supervisor will not offer the update to older installs, so the changelog must say so. Declared as 2026.8.1 in 0.4.3. Stable Core was 2026.9.3 on 2026-09-26, so the bound was 2026.8.1 | this repo | Done | #55 |
 | 11 | Test that floor too: a second pilot leg with Core pinned to the declared minimum, under the current stable Supervisor, which users on an old Core still receive through auto-update. Row 1 establishes whether the devcontainer can pin Core. Since row 10 the leg reads the version from `config.yaml`'s `homeassistant:` (`scripts/ha-floor-check.sh --declared`) rather than a default in the workflow, so the tested floor is the enforced one. The `floor_core` input only overrides it | this repo | Done | #52, run 36229742351; #55 |
 | 12 | After row 10 lands, enforce the rule in CI. Fail if `config.yaml`'s `homeassistant:` is missing, or breaks the bound computed from current stable Core in `stable.json`. The floor is relative to a moving target, so without this check it can drift out of compliance with nobody noticing. It is not a required check, like the integration's equivalent (my decision, 2026-09-25), so an outage at `version.home-assistant.io` cannot block every merge. It is `scripts/ha-floor-check.sh`, run by lint.yml's `ha-floor` job and by `just ha-floor`, and skipped on tag refs so the same outage cannot block a release either | this repo | Done | #55 |
 | 13 | Adopt the same approach in a290 and r5, including r5's Renovate rule for stable Core in a290. Accepting this ADR carries no authority into those repos. I approve the work in each of them separately | a290, r5 | Blocked | awaits row 5 and my approval in each repo |
@@ -67,7 +67,7 @@ I decided on 2026-09-26 to fix the profile and release it as 0.4.2 on its own, b
 
 ## References
 
-- RFC (unnumbered; this repo is not yet data-classified): https://claude.ai/code/artifact/6364efdb-f32e-4c4c-bd26-12ccd9a36111
+- RFC (unnumbered; not published)
 - Stable channel: https://version.home-assistant.io/stable.json
 - Working example of option A: https://github.com/brianbaggs35/ha-blink-clip-downloader/blob/main/.github/workflows/ha-integration.yaml
-- TESTING.md (manual HA OS layer), docs/EVALUATION.md
+- TESTING.md (manual HA OS layer)

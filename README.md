@@ -34,8 +34,6 @@ _Draw polygonal zones on a map and serve them as GeoJSON for the companion Polyg
 
 For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. This eliminates the gap where a merged version bump might reach HA users before the matching images exist on GHCR.
 
-**From a Claude Code session in this repo:** `/release-merge <pr-number>` (project-scope skill at `.claude/skills/release-merge/`). The skill runs a dry-run, asks you to confirm, then runs for real.
-
 **From a shell:**
 
 ```sh
@@ -58,7 +56,7 @@ git push origin vX.Y.Z
 [`.github/workflows/release.yml`](./.github/workflows/release.yml) takes over from there:
 1. Verifies the tag matches `config.yaml`'s version.
 2. Builds multi-arch images (using the same matrix as the regular build workflow, sourced from `polygonal_zones_editor/build.yaml`).
-3. Pushes them to `ghcr.io/matthewhobbs/{arch}-addon-polygonal_zones:<version>` and `:latest`.
+3. Pushes them to `ghcr.io/matthewhobbs/{arch}-addon-polygonal_zones:<version>`.
 4. Creates a GitHub Release whose body is the matching section of [`polygonal_zones_editor/CHANGELOG.md`](./polygonal_zones_editor/CHANGELOG.md).
 
 The workflow can also be run manually via **Actions → Release addon → Run workflow** (the `version` input must equal `config.yaml`'s version).

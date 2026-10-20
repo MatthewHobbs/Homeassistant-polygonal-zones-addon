@@ -1,6 +1,6 @@
 # Release runbook
 
-Operational procedures for the release pipeline. For routine releases, use `scripts/release-merge.sh` or the `/release-merge` skill — this doc covers the failure modes.
+Operational procedures for the release pipeline. For routine releases, use `scripts/release-merge.sh` — this doc covers the failure modes.
 
 > Throughout this doc `vX.Y.Z` is a placeholder — substitute the version in `polygonal_zones_editor/config.yaml`. Don't copy the literal example versions during an incident.
 
@@ -12,7 +12,7 @@ Operational procedures for the release pipeline. For routine releases, use `scri
    - **matrix** — resolves the version from the tag, verifies it matches `config.yaml`, verifies a `CHANGELOG.md` entry exists, generates the arch matrix.
    - **tests** — reusable call to `test.yml` (pytest + 100% line coverage gate).
    - **lint** — reusable call to `lint.yml` (`frenck/action-addon-linter` + shellcheck on `scripts/` and `rootfs/`).
-   - **build** — reusable call to `build.yml` — multi-arch docker build + amd64 boot-smoke + Playwright smoke (draw→save round-trip, a11y aria-labels, tile-picker assertions). Added in PR #108 so a tag can't publish an image that hasn't booted cleanly at least once.
+   - **build** — reusable call to `build.yml` — multi-arch docker build + per-arch boot-smoke + Playwright smoke (draw→save round-trip, a11y aria-labels, tile-picker assertions). Added in PR #108 so a tag can't publish an image that hasn't booted cleanly at least once.
    - **publish** — builds and pushes per-arch images to `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`, then attaches a Sigstore build-provenance attestation to each image (keyless, via GitHub OIDC — no secret required).
    - **release** — extracts the CHANGELOG section for the version and creates/updates the GitHub Release.
    - **notify-failure** — opens a GitHub issue if any upstream job failed.
@@ -61,9 +61,22 @@ Symptom: HA automations no longer fire on zone entry/exit, or a user hitting the
    - **File corruption** — rare outside ungraceful power loss. Usually diagnosable because the log shows a JSON parse error rather than a read error.
 3. **Fastest recovery**: restore `zones.json` from the latest HA snapshot that predates the failure (**Settings → System → Backups**). The companion integration retains its last-known-good state during the outage, so automations keep firing and no geofencing is lost during the recovery window.
 
+### `release-merge.sh` exit codes
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| 0 | success | nothing |
+| 2 | usage error in the script call | re-invoke with a PR number |
+| 3 | pre-flight failed (PR state, checks, mergeability, version mismatch) | fix the upstream cause |
+| 4 | merge failed (unusual after pre-flight passed) | check the GitHub UI |
+| 5 | tag creation failed | retry; the script auto-resumes if the PR is now merged |
+| 6 | release workflow failed | inspect the workflow run, then re-run the script (it auto-resumes) |
+
+The script's final stdout line is `STATUS:SUCCESS …` or `STATUS:FAILED <reason>`.
+
 ### Release run cancelled by concurrency
 
-See the session history: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-` and `lint-`). If you see `Canceling since a higher priority waiting request for <group> exists`, it's almost certainly because a reusable workflow lost its prefix or another workflow is claiming the same group. Fix by giving each reusable workflow a unique concurrency-group prefix.
+Note: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-` and `lint-`). If you see `Canceling since a higher priority waiting request for <group> exists`, it's almost certainly because a reusable workflow lost its prefix or another workflow is claiming the same group. Fix by giving each reusable workflow a unique concurrency-group prefix.
 
 ### Build-provenance attestation step fails
 

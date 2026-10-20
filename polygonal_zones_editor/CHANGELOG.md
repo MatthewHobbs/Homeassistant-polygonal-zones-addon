@@ -53,8 +53,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
   other.
 - **Fixed: a `MultiPolygon` tracker readout could report "outside" for a
   device that was actually inside one of its parts**, if another part's
-  boundary happened to be nearer — found by adversarial review while row 12
-  above was already open, pre-existing and unrelated to holes specifically.
+  boundary happened to be nearer — a separate, older bug found while row 12
+  above was open.
   Being inside any one part now always wins, regardless of how close any
   other part's edge is.
 
@@ -141,8 +141,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 - **Changed: the add-on now requires Home Assistant 2026.8.1 or newer.**
   `config.yaml` declares a minimum Core version for the first time. Installs
   on an older Core keep 0.4.2 and are not offered this update until Home
-  Assistant is upgraded. The value follows the owner's rule that a declared
-  minimum is at most the `.1` release of the month before current stable
+  Assistant is upgraded. The declared
+  minimum is held to at most the `.1` release of the month before current stable
   (2026.9.3 today), so every install from 2026.8.1 onward keeps receiving
   updates. CI now checks the declared value against `stable.json` on every
   run, and the Supervisor-level test (ADR 0001) runs the add-on on exactly
@@ -280,7 +280,7 @@ Reimplements the intent of an earlier stalled [PR #132](https://github.com/Matth
 
 - **`schema_version: 1`** stamped on every persisted `zones.json` at write time. Purely informational today — readers are expected to ignore unknown top-level keys — but consumers that pin behaviour to a specific shape can branch on this. Optional on input for curl-restore backward compatibility with pre-versioned files; rejected if present-but-not-int (`bool` explicitly rejected because `isinstance(True, int)` is True in Python).
 - **`properties.id`** on every feature — the stable handle HA automations bind to through zone renames. Optional on input; the server **backfills** a fresh `uuid4().hex` for any feature missing one so a curl-restored pre-versioned file still writes cleanly. When supplied by a client (the editor now generates one via `crypto.randomUUID()` on `draw:created`), it must be a non-empty string **and unique** across the collection — duplicate ids would defeat the "stable binding handle" contract.
-- **`docs/EVALUATION.md`** — the 7-specialist panel review (chief-architect, product-manager, security-reviewer, lead-backend, sre-reliability, dpo, lead-frontend) that seeded issues #111–#131 earlier this week. Committed as the provenance record for that arc of work; lands unchanged from the original panel output.
+- **`docs/EVALUATION.md`** — a review that seeded issues #111–#131 earlier this week. Committed as the provenance record for that arc of work; lands unchanged from the original output.
 
 ### Contract
 
@@ -335,7 +335,7 @@ XSS containment is materially improved — any script injection now must come fr
 
 ## 0.2.31 — 2026-04-19
 
-UX polish slice: two small editor fixes that addressed friction points flagged in the principal-engineer panel review.
+UX polish slice: two small editor fixes that addressed friction points flagged in a review.
 
 ### Changed
 
@@ -409,7 +409,7 @@ First user-visible UX slice after the 0.2.27 correctness batch — a tile-layer 
 
 ## 0.2.27 — 2026-04-19
 
-Installation and correctness — a batch of owned P0 fixes from this week's principal-engineer panel review. No new features; the next user-visible UX work is queued for 0.2.28.
+Installation and correctness — a batch of owned P0 fixes from this week's review. No new features; the next user-visible UX work is queued for 0.2.28.
 
 ### Security
 
