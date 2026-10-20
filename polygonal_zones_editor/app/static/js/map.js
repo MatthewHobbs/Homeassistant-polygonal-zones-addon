@@ -273,23 +273,12 @@ function generate_map(zones_url) {
             try { data = JSON.parse(json); }
             catch (e) { throw new Error(`zones.json parse failed: ${e.message}`); }
 
-            L.geoJSON(data, {
-                style: () => ({color: window.ZONE_COLOUR}),
-                onEachFeature: (feature, layer) => {
-                    layer.bindPopup(name_popup_element(feature));
-                    editableLayers.addLayer(layer);
-                },
-            })
-
+            const count = add_zones(data);
             render_zone_list();
-            // Only auto-fit to the zones when the user hasn't manually
-            // positioned the viewport before (#130). Otherwise their
-            // remembered center/zoom wins — someone who bounced around
-            // multiple HA installs shouldn't get snapped to the zone
-            // bounding box on every first load.
-            if (editableLayers.getLayers().length > 0) {
+            // Only centre on the zones when the user hasn't positioned the
+            // viewport before (#130): their remembered center/zoom wins.
+            if (count > 0) {
                 if (!restoredViewport) {
-                    map.fitBounds(editableLayers.getBounds());
                     map.setView(editableLayers.getBounds().getCenter(), 13);
                 }
             } else {
@@ -637,6 +626,29 @@ function show_transient_error(message) {
     setTimeout(() => el.remove(), 5000);
 }
 
+/* Replace the drawn zones with the polygons in `data`; return how many.
+ * Every layer is built before the current zones are cleared, so input that is
+ * not GeoJSON polygons throws and leaves the editor as it was, and input with
+ * no zones changes nothing. */
+function add_zones(data) {
+    const layers = [];
+    L.geoJSON(data, {
+        style: () => ({color: window.ZONE_COLOUR}),
+        onEachFeature: (feature, layer) => {
+            layer.bindPopup(name_popup_element(feature));
+            layers.push(layer);
+        },
+    });
+    // Polygon covers MultiPolygon too; anything else the server would refuse.
+    if (!layers.every(layer => layer instanceof L.Polygon)) {
+        throw new Error('not polygon zones');
+    }
+    if (!layers.length) return 0;
+    editableLayers.clearLayers();
+    layers.forEach(layer => editableLayers.addLayer(layer));
+    return layers.length;
+}
+
 function load_bulk_json() {
     // open a file dialog
     let input = document.createElement('input');
@@ -652,23 +664,20 @@ function load_bulk_json() {
                 show_transient_error('The selected file is not valid JSON.');
                 return;
             }
-            editableLayers.clearLayers();
-            L.geoJSON(data, {
-                style: () => ({color: window.ZONE_COLOUR}),
-                onEachFeature: (feature, layer) => {
-                    layer.bindPopup(name_popup_element(feature));
-                    editableLayers.addLayer(layer);
-                },
-            })
-            map.fitBounds(editableLayers.getBounds());
+            let count;
+            try { count = add_zones(data); }
+            catch (err) {
+                show_transient_error('The selected file is not GeoJSON polygon zones.');
+                return;
+            }
+            if (!count) {
+                show_transient_error('The selected file has no zones in it.');
+                return;
+            }
             render_zone_list();
             mark_dirty();
-            if (editableLayers.getLayers().length > 0) {
-                map.fitBounds(editableLayers.getBounds());
-                map.setView(editableLayers.getBounds().getCenter(), 13);
-
-                delete_load_btn();
-            }
+            map.setView(editableLayers.getBounds().getCenter(), 13);
+            delete_load_btn();
         };
         reader.readAsText(file);
     });
