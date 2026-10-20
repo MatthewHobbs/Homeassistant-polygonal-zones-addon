@@ -145,6 +145,26 @@ async def smoke(request, url, expect_colour):
             f"/config.json zone_colour {colour!r}, expected {expect_colour!r} set via the Supervisor"
         )
     print(f"OK /config.json reflects the Supervisor-set option ({colour})")
+    await caching(request, url)
+
+
+async def caching(request, url):
+    """Ingress must pass the revalidation headers through, or a browser keeps
+    serving a stale editor after an upgrade."""
+    r = await request.get(url + "js/map.js")
+    etag = r.headers.get("etag")
+    cache_control = [d.strip() for d in r.headers.get("cache-control", "").split(",")]
+    if r.status != 200 or not etag or "no-cache" not in cache_control:
+        fail(f"js/map.js through ingress: {r.status} {r.headers}")
+    r = await request.get(url + "js/map.js", headers={"If-None-Match": etag})
+    if r.status != 304:
+        fail(f"js/map.js with If-None-Match {etag} through ingress: {r.status} {r.headers}")
+    print("OK js/map.js carries no-cache and an ETag, and revalidates to 304")
+
+    r = await request.get(url + "zones.json")
+    if r.status != 200 or not r.headers.get("etag"):
+        fail(f"/zones.json through ingress: {r.status} {r.headers}")
+    print("OK /zones.json carries an ETag")
 
 
 async def tracker_position(page, entity_id):
