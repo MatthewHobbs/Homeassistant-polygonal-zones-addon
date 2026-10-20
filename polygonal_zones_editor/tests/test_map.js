@@ -90,13 +90,14 @@ function geoJSON(data, options) {
     if (data) add(data);
 }
 
-function loadMap() {
+function loadMap({ noAbortTimeout = false } = {}) {
     const errors = [];
     const calls = [];
     const elements = { '.zone-list': fakeElement('div'), '.save-btn': fakeElement('button') };
     const status = fakeElement('p');
     const posts = [];
     let reply = { status: 200, etag: null };
+    const timers = [];
     let pendingFile = null;
 
     const layers = [];
@@ -138,18 +139,25 @@ function loadMap() {
         fetch: (url, opts) => {
             if (url !== './save_zones') return new Promise(() => {});
             posts.push(opts);
+            if (reply.hang) {
+                // Like fetch: an already-aborted signal rejects at once.
+                const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
+                if (opts.signal.aborted) return Promise.reject(aborted());
+                return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
+            }
             return Promise.resolve({
                 status: reply.status,
                 ok: reply.status >= 200 && reply.status < 300,
                 headers: { get: (h) => (h.toLowerCase() === 'etag' ? reply.etag : null) },
             });
         },
-        setTimeout: () => 0,
+        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
         clearTimeout: () => {},
+        AbortController,
         console,
         L: { geoJSON, Polygon },
         crypto: require('node:crypto').webcrypto,
-        AbortSignal,
+        AbortSignal: noAbortTimeout ? {} : AbortSignal,
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
@@ -169,6 +177,8 @@ function loadMap() {
         posts,
         status,
         reply: (s, etag = null) => { reply = { status: s, etag }; },
+        hang: () => { reply = { hang: true }; },
+        fireSaveTimeout: () => timers.filter((t) => t.ms === 30000).forEach((t) => t.fn()),
         setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
         save: () => vm.runInContext('save_zones', context)(),
         saveBtn: elements['.save-btn'],
@@ -419,11 +429,46 @@ test('a save says it is saving, and a click meanwhile leaves that in place', asy
     assert.equal(m.status.textContent, 'Zones saved.');
 });
 
-test('a save is bounded in time', async () => {
+test('a save that gets no answer times out, says so, and frees Save', async () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.hang();
+    const pending = m.save();
+    m.fireSaveTimeout();
+    await pending;
+    assert.equal(m.status.textContent, 'Save timed out. Your changes are not saved; try again.');
+    m.reply(200, '"saved"');
     await m.save();
-    assert.ok(m.posts[0].signal, 'a hung request would block every later save');
+    assert.equal(m.posts.length, 2, 'Save stayed blocked after the timeout');
+});
+
+test('saving works on a browser without AbortSignal.timeout', async () => {
+    const m = loadMap({ noAbortTimeout: true });
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    await m.save();
+    assert.equal(m.posts.length, 2);
+    assert.equal(m.status.textContent, 'Zones saved.');
+});
+
+test('a bulk load clears a not-loaded refusal', async () => {
+    const m = loadMap();
+    await m.save();
+    m.bulkLoad(collection(polygon('A')));
+    assert.equal(m.status.textContent, '');
+    assert.ok(!m.saveBtn.classList.contains('error'));
+});
+
+test('sending a save drops the previous success colour', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.ok(m.saveBtn.classList.contains('success'));
+    m.hang();
+    m.save();
+    assert.ok(!m.saveBtn.classList.contains('success'));
 });
 
 test('after a failed load, save says the zones could not be loaded', async () => {

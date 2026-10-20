@@ -589,13 +589,21 @@ function save_zones() {
     save_in_flight = true;
     const sent_seq = edit_seq;
     clearTimeout(save_status_timer);
+    if (save_btn) save_btn.classList.remove('success');
     if (save_status) save_status.textContent = 'Saving…';
-    return fetch('./save_zones', {
+    // AbortController + setTimeout rather than AbortSignal.timeout, which
+    // Safari/iOS before 16 lack.
+    const controller = new AbortController();
+    let timed_out = false;
+    const timer = setTimeout(() => { timed_out = true; controller.abort(); }, SAVE_TIMEOUT_MS);
+    // Started inside the chain, so even a synchronous throw reaches .finally
+    // and Save is never left blocked.
+    return Promise.resolve().then(() => fetch('./save_zones', {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(geojson),
-        signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
-    }).then(response => {
+        signal: controller.signal,
+    })).then(response => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
         if (response.status === 412) {
@@ -636,11 +644,16 @@ function save_zones() {
         let status = document.getElementById('save-status');
         elem.classList.remove('success')
         elem.classList.add('error')
-        if (status) status.textContent = `Save failed: ${err.message}`;
+        if (status) status.textContent = timed_out
+            ? 'Save timed out. Your changes are not saved; try again.'
+            : `Save failed: ${err.message}`;
         // No setTimeout: an intermittent ingress failure flashing red for
         // 2s and disappearing left users unsure whether their zones saved.
         // The error stays until the next save click (#123).
-    }).finally(() => { save_in_flight = false; });
+    }).finally(() => {
+        clearTimeout(timer);
+        save_in_flight = false;
+    });
 }
 
 
