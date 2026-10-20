@@ -476,21 +476,23 @@ function new_zone_id() {
         b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function edit_zone_event(e) {
-    // disable editing for all zones.
-    editableLayers.eachLayer(layer => { if (layer.pm) layer.pm.disable(); });
-    document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
+/* Finish the open row as its Done button would, so a name typed there is kept
+ * by whatever comes next: a save, another row, or a list rebuild. */
+function close_open_edit() {
+    document.querySelector('zone-entry[editing="true"]')?.edit_event_handler();
+}
 
+function edit_zone_event(e) {
     // Every zone has an id (drawn ones at creation, loaded ones in add_zones),
     // so the id alone finds it whatever its name.
     let layer = editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id);
 
-    // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
+        close_open_edit();
         map.fitBounds(layer.getBounds());
         layer.pm.enable({ allowSelfIntersection: false });
     } else {
-        // once we stop we will disable editing and save the changes
+        layer.pm.disable();
         // An empty box leaves the zone unnamed: two zones named "" would be
         // refused on save as duplicates.
         if (e.detail.name) layer.feature.properties.name = e.detail.name;
@@ -522,6 +524,7 @@ function show_zone_area(entry, layer) {
 }
 
 function render_zone_list() {
+    close_open_edit();
     let zone_list = document.querySelector('.zone-list');
     zone_list.innerHTML = '';
     // Whatever called us has finished loading (this is also the success path of
@@ -579,17 +582,15 @@ function save_zones() {
         return Promise.resolve();
     }
 
+    close_open_edit();
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
     // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
     // a single-ring Polygon, losing every ring beyond the first.
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
-        // toGeoJSON preserves the layer's original feature.properties when
-        // present, but we re-write `name` to pick up any rename that hasn't
-        // yet been flushed back onto the inner feature object. The id is
-        // preserved so renames stay bindable by the HA integration; the
-        // server backfills one for zones loaded from pre-versioned files.
+        // Only name and id are sent; the id keeps a renamed zone bound to
+        // the same automations.
         const src = layer.feature.properties || {};
         feature.properties = {name: src.name};
         if (src.id) feature.properties.id = src.id;

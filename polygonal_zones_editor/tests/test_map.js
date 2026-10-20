@@ -23,7 +23,8 @@ function fakeElement(tag) {
         tagName: tag.toUpperCase(),
         attributes: {},
         children: [],
-        innerHTML: '',
+        get innerHTML() { return ''; },
+        set innerHTML(_v) { this.children = []; },
         textContent: '',
         listeners,
         // Like the DOM: attribute values are stored as strings.
@@ -578,4 +579,54 @@ test('dragging a vertex marks the editor unsaved and re-measures the zone', () =
     assert.equal(m.isDirty(), true);
     assert.equal(m.entries()[0].attributes['area-m2'], '1234');
     assert.ok(m.calls.includes('pz:zoneschanged'), 'the tracker readout is not re-measured');
+});
+
+// Opens the first listed zone and types `name` into its box.
+function typeInto(m, index, name) {
+    const row = m.entries()[index];
+    row.edit_event_handler();
+    row.typed = name;
+    return row;
+}
+
+test('saving with a rename still open saves the typed name and closes the row', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'), polygon('B'))));
+    typeInto(m, 0, 'Renamed');
+    assert.equal(m.layers[0].pm.enabled, true);
+    m.reply(200, '"saved"');
+    await m.save();
+    const sent = JSON.parse(m.posts[0].body).features.map((f) => f.properties.name);
+    assert.deepEqual(sent, ['Renamed', 'B']);
+    assert.equal(m.layers[0].pm.enabled, false, 'the edit handles stayed on');
+    assert.equal(m.isDirty(), false);
+});
+
+test('saving with an emptied name box leaves the zone unnamed', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, '');
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.ok(!('name' in JSON.parse(m.posts[0].body).features[0].properties));
+});
+
+test('opening another zone keeps the name typed in the open one', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'), polygon('B'))));
+    const a = typeInto(m, 0, 'A2');
+    m.entries()[1].edit_event_handler();
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A2', 'B']);
+    assert.equal(a.attributes.editing, 'false');
+    assert.deepEqual(m.layers.map((l) => l.pm.enabled), [false, true]);
+});
+
+test('drawing a zone while a rename is open keeps the typed name', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, 'A2');
+    m.map.fire('pm:create', { layer: new Polygon() });
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A2', 'Zone 1']);
+    assert.equal(m.layers[0].pm.enabled, false);
 });
