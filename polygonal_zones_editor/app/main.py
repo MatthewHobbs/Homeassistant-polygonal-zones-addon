@@ -269,6 +269,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Content-Security-Policy"] = _CSP
+        # Revalidate (a cheap 304) rather than reuse by guesswork, so a fixed
+        # editor script reaches browsers on the next load after an update.
+        # Routes that forbid caching set their own header, which wins.
+        response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
 
@@ -559,9 +563,10 @@ def save_zones_generator(options: dict):
             )
 
         # Optimistic concurrency: when the client provides If-Match, refuse to
-        # overwrite if the on-disk file has changed since they read it. There
-        # is a short TOCTOU window between this check and atomic_write_json;
-        # adequate for a single-user addon, where contention is rare.
+        # overwrite if the on-disk file has changed since they read it. Nothing
+        # awaits between this check and atomic_write_json, so on the one event
+        # loop no other save can slip in between. Keep it that way: moving the
+        # write to a thread would open that race.
         if_match = request.headers.get("if-match", "").strip()
         if if_match:
             current = _current_zones_etag()

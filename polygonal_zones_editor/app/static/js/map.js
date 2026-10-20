@@ -8,12 +8,39 @@ let editableLayers;
 // on /save_zones so a concurrent edit by another tab can't silently overwrite
 // us — the server returns 412 and we surface a conflict notice.
 let zones_etag = null;
+// Whether the editor knows what is on disk: the saved zones loaded, or a bulk
+// load replaced them on purpose. Until then a save could overwrite zones the
+// editor never showed, so save_zones refuses.
+let zones_loaded = false;
+let zones_load_failed = false;
+// One save at a time: a second click sends the same If-Match and would be
+// refused as a conflict with its own first save.
+let save_in_flight = false;
+// A save that never answers must not block every later click.
+const SAVE_TIMEOUT_MS = 30000;
+let save_status_timer = null;
+const NOT_LOADED_TEXT = {
+    pending: 'The saved zones are still loading. Try again in a moment.',
+    failed: "The saved zones couldn't be loaded, so saving now could overwrite them. Reload the page and try again.",
+};
+
+/* Once saving is possible, drop a not-loaded refusal still on screen. */
+function clear_not_loaded_refusal() {
+    const save_btn = document.querySelector('.save-btn');
+    const save_status = document.getElementById('save-status');
+    if (save_status && Object.values(NOT_LOADED_TEXT).includes(save_status.textContent)) {
+        save_status.textContent = '';
+        if (save_btn) save_btn.classList.remove('error');
+    }
+}
 // isDirty flips to true on any edit the user hasn't flushed to the server
 // (draw, delete, rename, bulk-load). Cleared on a successful save. Drives
 // the beforeunload prompt below so HA's ingress shell can't silently discard
 // unsaved polygons when the user taps another sidebar entry.
 let isDirty = false;
-function mark_dirty() { isDirty = true; update_dirty_indicator(); }
+// Bumped on every edit, so a save only marks clean what it actually sent.
+let edit_seq = 0;
+function mark_dirty() { isDirty = true; edit_seq++; update_dirty_indicator(); }
 function mark_clean() { isDirty = false; update_dirty_indicator(); }
 function update_dirty_indicator() {
     // Visible (non-screen-reader) cue that there are unsaved changes — the
@@ -276,6 +303,7 @@ function generate_map(zones_url) {
             load_saved_zones(data, restoredViewport);
         })
         .catch(err => {
+            zones_load_failed = true;
             console.error('Failed to load zones:', err);
             let list = document.querySelector('.zone-list');
             if (list) {
@@ -517,6 +545,9 @@ function render_zone_list() {
 }
 
 function save_zones() {
+    // Ignored while a save is on its way, before anything below changes what
+    // the user sees.
+    if (save_in_flight) return Promise.resolve();
     // Clear any prior error state on a fresh save attempt. #123: previous
     // errors persist on screen until the next user action, so this is the
     // "next action" that dismisses them. Success auto-clears at the
@@ -526,6 +557,12 @@ function save_zones() {
     if (save_btn) save_btn.classList.remove('error');
     if (save_status && save_status.textContent && save_status.textContent !== 'Zones saved.') {
         save_status.textContent = '';
+    }
+
+    if (!zones_loaded) {
+        if (save_btn) save_btn.classList.add('error');
+        if (save_status) save_status.textContent = zones_load_failed ? NOT_LOADED_TEXT.failed : NOT_LOADED_TEXT.pending;
+        return Promise.resolve();
     }
 
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
@@ -549,16 +586,26 @@ function save_zones() {
     const headers = {'Content-Type': 'application/json'};
     if (zones_etag) headers['If-Match'] = zones_etag;
 
-    fetch('./save_zones', {
+    save_in_flight = true;
+    const sent_seq = edit_seq;
+    clearTimeout(save_status_timer);
+    if (save_btn) save_btn.classList.remove('success');
+    if (save_status) save_status.textContent = 'Saving…';
+    // AbortController + setTimeout rather than AbortSignal.timeout, which
+    // Safari/iOS before 16 lack.
+    const controller = new AbortController();
+    let timed_out = false;
+    const timer = setTimeout(() => { timed_out = true; controller.abort(); }, SAVE_TIMEOUT_MS);
+    // Started inside the chain, so even a synchronous throw reaches .finally
+    // and Save is never left blocked.
+    return Promise.resolve().then(() => fetch('./save_zones', {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify(geojson)
-    }).then(response => {
+        body: JSON.stringify(geojson),
+        signal: controller.signal,
+    })).then(response => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
-        const new_etag = response.headers.get('ETag');
-        if (new_etag) zones_etag = new_etag;
-
         if (response.status === 412) {
             elem.classList.remove('success')
             elem.classList.add('error')
@@ -572,11 +619,17 @@ function save_zones() {
             elem.classList.remove('error')
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
-            mark_clean();
+            // Only a save that landed moves the editor to the new version: a
+            // 412 carries the other session's ETag, and adopting it would let
+            // the next click overwrite their edits.
+            const new_etag = response.headers.get('ETag');
+            if (new_etag) zones_etag = new_etag;
+            // An edit made while the request was in flight is still unsaved.
+            if (edit_seq === sent_seq) mark_clean();
             // Success auto-clears at 2s. Errors below persist until the next
             // save click (top of save_zones()): 2s is too short for a user
             // not looking at the button, especially on mobile.
-            setTimeout(() => {
+            save_status_timer = setTimeout(() => {
                 elem.classList.remove('success');
                 if (status && status.textContent === 'Zones saved.') status.textContent = '';
             }, 2000);
@@ -591,11 +644,17 @@ function save_zones() {
         let status = document.getElementById('save-status');
         elem.classList.remove('success')
         elem.classList.add('error')
-        if (status) status.textContent = `Save failed: ${err.message}`;
+        if (status) status.textContent = timed_out
+            // The server may still have written: say so rather than "not saved".
+            ? 'Save timed out. It may not have saved; reload to check before saving again.'
+            : `Save failed: ${err.message}`;
         // No setTimeout: an intermittent ingress failure flashing red for
         // 2s and disappearing left users unsure whether their zones saved.
         // The error stays until the next save click (#123).
-    })
+    }).finally(() => {
+        clearTimeout(timer);
+        save_in_flight = false;
+    });
 }
 
 
@@ -614,6 +673,8 @@ function show_transient_error(message) {
  * the fetch was in flight rather than replacing it. */
 function load_saved_zones(data, restoredViewport) {
     const {skipped} = add_zones(data, false);
+    zones_loaded = true;
+    clear_not_loaded_refusal();
     render_zone_list();
     if (skipped) {
         show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
@@ -692,6 +753,8 @@ function load_bulk_json() {
                 show_transient_error('The selected file has no zones in it.');
                 return;
             }
+            zones_loaded = true;
+            clear_not_loaded_refusal();
             render_zone_list();
             mark_dirty();
             map.setView(editableLayers.getBounds().getCenter(), 13);

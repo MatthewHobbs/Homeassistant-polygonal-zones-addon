@@ -27,6 +27,11 @@ function fakeElement(tag) {
         textContent: '',
         // Like the DOM: attribute values are stored as strings.
         setAttribute(k, v) { this.attributes[k] = String(v); },
+        classes: new Set(),
+        get classList() {
+            const s = this.classes;
+            return { add: (c) => s.add(c), remove: (c) => s.delete(c), contains: (c) => s.has(c) };
+        },
         removeAttribute(k) { delete this.attributes[k]; },
         appendChild(child) { this.children.push(child); return child; },
         addEventListener(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); },
@@ -85,10 +90,15 @@ function geoJSON(data, options) {
     if (data) add(data);
 }
 
-function loadMap() {
+function loadMap({ noAbortTimeout = false } = {}) {
     const errors = [];
     const calls = [];
-    const elements = { '.zone-list': fakeElement('div') };
+    const elements = { '.zone-list': fakeElement('div'), '.save-btn': fakeElement('button') };
+    const status = fakeElement('p');
+    const posts = [];
+    let reply = { status: 200, etag: null };
+    const timers = [];
+    const cleared = [];
     let pendingFile = null;
 
     const layers = [];
@@ -110,6 +120,7 @@ function loadMap() {
 
     const document = {
         querySelector: (sel) => elements[sel] || null,
+        getElementById: (id) => (id === 'save-status' ? status : null),
         querySelectorAll: () => [],
         createElement(tag) {
             const el = fakeElement(tag);
@@ -126,11 +137,29 @@ function loadMap() {
     const context = vm.createContext({
         window: { addEventListener() {}, ZONE_COLOUR: 'green' },
         document,
-        fetch: () => new Promise(() => {}),
-        setTimeout: () => 0,
+        fetch: (url, opts) => {
+            if (url !== './save_zones') return new Promise(() => {});
+            posts.push(opts);
+            if (reply.throwSync) throw new TypeError('fetch threw');
+            if (reply.hang) {
+                // Like fetch: an already-aborted signal rejects at once.
+                const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
+                if (opts.signal.aborted) return Promise.reject(aborted());
+                return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
+            }
+            return Promise.resolve({
+                status: reply.status,
+                ok: reply.status >= 200 && reply.status < 300,
+                headers: { get: (h) => (h.toLowerCase() === 'etag' ? reply.etag : null) },
+            });
+        },
+        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+        clearTimeout: (id) => { cleared.push(id); },
+        AbortController,
         console,
         L: { geoJSON, Polygon },
         crypto: require('node:crypto').webcrypto,
+        AbortSignal: noAbortTimeout ? {} : AbortSignal,
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
@@ -147,6 +176,19 @@ function loadMap() {
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
         zoneList: elements['.zone-list'],
+        posts,
+        status,
+        reply: (s, etag = null) => { reply = { status: s, etag }; },
+        hang: () => { reply = { hang: true }; },
+        throwSync: () => { reply = { throwSync: true }; },
+        timers,
+        cleared,
+        fireSaveTimeout: () => timers.filter((t) => t.ms === 30000).forEach((t) => t.fn()),
+        setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
+        save: () => vm.runInContext('save_zones', context)(),
+        saveBtn: elements['.save-btn'],
+        setLoadFailed: () => vm.runInContext('zones_load_failed = true', context),
+        markDirty: () => vm.runInContext('mark_dirty', context)(),
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         editZone: (detail) => vm.runInContext('edit_zone_event', context)({ detail, target: fakeElement('zone-entry') }),
         loadSaved: (data, restored = false) => vm.runInContext('load_saved_zones', context)(data, restored),
@@ -304,4 +346,171 @@ test('first load of no zones offers the load button', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection()));
     assert.ok(m.calls.includes('create_load_btn'));
+});
+
+test('after a 412, the next save still sends the ETag the editor loaded', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(412, '"theirs"');
+    await m.save();
+    m.reply(200, '"next"');
+    await m.save();
+    assert.equal(m.posts.length, 2);
+    assert.equal(m.posts[1].headers['If-Match'], '"loaded"', 'a retry must not adopt the conflicting version');
+});
+
+test('a successful save adopts the new ETag', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(200, '"saved"');
+    await m.save();
+    await m.save();
+    assert.equal(m.posts[1].headers['If-Match'], '"saved"');
+});
+
+test('save refuses until the saved zones have loaded', async () => {
+    const m = loadMap();
+    await m.save();
+    assert.equal(m.posts.length, 0, 'saved without knowing what was on disk');
+    assert.ok(m.status.textContent.length > 0, 'the refusal is shown');
+});
+
+test('save is allowed after a bulk load even if the first load failed', async () => {
+    const m = loadMap();
+    m.setLoadFailed();
+    m.bulkLoad(collection(polygon('A')));
+    await m.save();
+    assert.equal(m.posts.length, 1);
+});
+
+test('a 412 keeps the editor dirty and says why', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.markDirty();
+    m.reply(412, '"theirs"');
+    await m.save();
+    assert.equal(m.isDirty(), true);
+    assert.match(m.status.textContent, /^Conflict/);
+});
+
+test('a second click while a save is in flight sends nothing', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(200, '"saved"');
+    const first = m.save();
+    const second = m.save();
+    await Promise.all([first, second]);
+    assert.equal(m.posts.length, 1, 'the duplicate would hit its own 412');
+});
+
+test('an edit made while a save is in flight stays unsaved', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.markDirty();
+    m.reply(200, '"saved"');
+    const pending = m.save();
+    m.markDirty();
+    await pending;
+    assert.equal(m.isDirty(), true, 'the later edit was marked saved');
+});
+
+test('while the saved zones are still loading, save asks you to wait', async () => {
+    const m = loadMap();
+    await m.save();
+    assert.match(m.status.textContent, /still loading/);
+});
+
+test('a save says it is saving, and a click meanwhile leaves that in place', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    const first = m.save();
+    assert.equal(m.status.textContent, 'Saving…');
+    const second = m.save();
+    assert.equal(m.status.textContent, 'Saving…', 'the ignored click wiped the status');
+    await Promise.all([first, second]);
+    assert.equal(m.status.textContent, 'Zones saved.');
+});
+
+test('a save that gets no answer times out, says so, and frees Save', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.hang();
+    const pending = m.save();
+    m.fireSaveTimeout();
+    await pending;
+    assert.match(m.status.textContent, /^Save timed out\. It may not have saved/);
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.equal(m.posts.length, 2, 'Save stayed blocked after the timeout');
+});
+
+test('saving works on a browser without AbortSignal.timeout', async () => {
+    const m = loadMap({ noAbortTimeout: true });
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    await m.save();
+    assert.equal(m.posts.length, 2);
+    assert.equal(m.status.textContent, 'Zones saved.');
+});
+
+test('a bulk load clears a not-loaded refusal', async () => {
+    const m = loadMap();
+    await m.save();
+    m.bulkLoad(collection(polygon('A')));
+    assert.equal(m.status.textContent, '');
+    assert.ok(!m.saveBtn.classList.contains('error'));
+});
+
+test('sending a save drops the previous success colour', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.ok(m.saveBtn.classList.contains('success'));
+    m.hang();
+    m.save();
+    assert.ok(!m.saveBtn.classList.contains('success'));
+});
+
+test('after a failed load, save says the zones could not be loaded', async () => {
+    const m = loadMap();
+    m.setLoadFailed();
+    await m.save();
+    assert.match(m.status.textContent, /couldn't be loaded/);
+});
+
+test('the not-loaded refusal clears once the zones load', async () => {
+    const m = loadMap();
+    await m.save();
+    assert.ok(m.saveBtn.classList.contains('error'));
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    assert.equal(m.status.textContent, '');
+    assert.ok(!m.saveBtn.classList.contains('error'));
+});
+
+test('a new save cancels the previous success timer', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    const id = m.timers.findIndex((t) => t.ms === 2000) + 1;
+    assert.ok(id > 0, 'the success message is not timed');
+    await m.save();
+    assert.ok(m.cleared.includes(id), "the old timer would clear the new save's message");
+});
+
+test('a fetch that throws at once still frees Save', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.throwSync();
+    await m.save();
+    assert.match(m.status.textContent, /^Save failed/);
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.equal(m.posts.length, 2);
 });

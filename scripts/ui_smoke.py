@@ -239,7 +239,7 @@ async def main():
         await page.wait_for_timeout(2500)
         still_error = await page.evaluate(
             "() => document.querySelector('.save-btn').classList.contains('error') && "
-            "!!document.getElementById('save-status')?.textContent"
+            "(document.getElementById('save-status')?.textContent || '').startsWith('Save failed (500)')"
         )
         if not still_error:
             fail("save error cleared within 2.5s (regression of #123)", errors)

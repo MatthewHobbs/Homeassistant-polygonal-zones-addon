@@ -97,16 +97,14 @@
     color: #88baff !important;
 }
 
-.sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+/* Visible, not screen-reader only: a sighted user who sees only a red button
+   clicks Save again instead of reading why it failed. */
+/* Not hidden when empty: a live region must already be in the accessibility
+   tree when its text changes, or screen readers may not announce it. */
+.save-status {
+    margin: 0.4em 0 0;
+    font-size: 0.85em;
+    color: var(--text-color);
 }
 
 
