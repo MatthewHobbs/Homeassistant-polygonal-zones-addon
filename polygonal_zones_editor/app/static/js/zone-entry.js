@@ -126,6 +126,9 @@ class ZoneEntry extends HTMLElement {
 
     render(editing) {
         let name = this.getAttribute('name') ?? '';
+        // A vertex drag re-renders an open row to show its new area; keep
+        // what has been typed in the name box.
+        const typed = editing ? this.shadowRoot.querySelector('input')?.value : undefined;
         let shape_count = parseInt(this.getAttribute('shape-count') ?? '1', 10);
 
         // Zone names come from user input in zones.json; insert via DOM APIs
@@ -179,7 +182,7 @@ class ZoneEntry extends HTMLElement {
         }
 
         let input = this.shadowRoot.querySelector('input');
-        if (input) input.value = name;
+        if (input) input.value = typed ?? name;
 
         let edit_button = document.createElement('button');
         edit_button.classList.add('edit-btn');

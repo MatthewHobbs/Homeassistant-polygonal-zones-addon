@@ -25,12 +25,18 @@ function fakeElement(tag) {
         children: [],
         innerHTML: '',
         textContent: '',
+        listeners,
         // Like the DOM: attribute values are stored as strings.
         setAttribute(k, v) { this.attributes[k] = String(v); },
+        getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; },
         classes: new Set(),
         get classList() {
             const s = this.classes;
-            return { add: (c) => s.add(c), remove: (c) => s.delete(c), contains: (c) => s.has(c) };
+            return {
+                add: (c) => s.add(c),
+                remove: (...cs) => cs.forEach((c) => s.delete(c)),
+                contains: (c) => s.has(c),
+            };
         },
         removeAttribute(k) { delete this.attributes[k]; },
         appendChild(child) { this.children.push(child); return child; },
@@ -38,6 +44,33 @@ function fakeElement(tag) {
         click() { (listeners.change || []).forEach((fn) => fn()); },
         remove() {},
     };
+}
+
+// zone-entry's contract with map.js: its Edit/Done button sends an `edit`
+// event carrying the name typed in its box, then flips its `editing`
+// attribute. `typed` stands in for that box.
+function fakeZoneEntry() {
+    const el = fakeElement('zone-entry');
+    el.typed = null;
+    el.edit_event_handler = function () {
+        const editing = this.attributes.editing === 'true';
+        const detail = {
+            editing: !editing,
+            name: this.typed ?? this.attributes.name,
+            id: this.attributes['zone-id'] || null,
+        };
+        (this.listeners.edit || []).forEach((fn) => fn({ detail, target: this }));
+        this.setAttribute('editing', String(!editing));
+    };
+    return el;
+}
+
+// Leaflet's Evented, reduced to on/fire.
+function evented(target) {
+    const handlers = {};
+    target.on = (evt, fn) => { (handlers[evt] = handlers[evt] || []).push(fn); };
+    target.fire = (evt, e = {}) => { (handlers[evt] || []).forEach((fn) => fn(e)); };
+    return target;
 }
 
 function bounds(layers) {
@@ -51,8 +84,12 @@ function bounds(layers) {
 }
 
 class Polygon {
-    constructor(feature) { this.feature = feature; }
-    bindPopup() { return this; }
+    constructor(feature) {
+        this.feature = feature;
+        this.pm = { enabled: false, enable() { this.enabled = true; }, disable() { this.enabled = false; } };
+    }
+    bindPopup(content) { this.popup = content; return this; }
+    getBounds() { return bounds([this]); }
     toGeoJSON() { return { type: 'Feature', geometry: this.feature.geometry }; }
 }
 
@@ -102,28 +139,36 @@ function loadMap({ noAbortTimeout = false } = {}) {
     let pendingFile = null;
 
     const layers = [];
-    const editableLayers = {
+    const editableLayers = evented({
         addLayer(l) { layers.push(l); },
+        removeLayer(l) { const i = layers.indexOf(l); if (i >= 0) layers.splice(i, 1); },
+        hasLayer: (l) => layers.includes(l),
         clearLayers() { calls.push('clearLayers'); layers.length = 0; },
         getLayers: () => layers.slice(),
         eachLayer(fn) { layers.slice().forEach(fn); },
         getBounds: () => bounds(layers),
-    };
-    const map = {
+    });
+    const map = evented({
         fitBounds(b) {
             if (!b.isValid()) throw new Error('Bounds are not valid.');
             calls.push('fitBounds');
         },
         setView(center, zoom) { calls.push(['setView', zoom]); },
-        fire() {},
-    };
+        removeLayer() {},
+        pm: { setGlobalOptions() {}, addControls() {} },
+    });
+    const mapFire = map.fire;
+    map.fire = (evt, e) => { calls.push(evt); mapFire(evt, e); };
+    const entries = () => elements['.zone-list'].children.filter((c) => c.tagName === 'ZONE-ENTRY');
 
     const document = {
-        querySelector: (sel) => elements[sel] || null,
+        querySelector: (sel) => (sel === 'zone-entry[editing="true"]'
+            ? entries().find((e) => e.attributes.editing === 'true') || null
+            : elements[sel] || null),
         getElementById: (id) => (id === 'save-status' ? status : null),
-        querySelectorAll: () => [],
+        querySelectorAll: (sel) => (sel === 'zone-entry' ? entries() : []),
         createElement(tag) {
-            const el = fakeElement(tag);
+            const el = tag === 'zone-entry' ? fakeZoneEntry() : fakeElement(tag);
             if (tag === 'input') el.files = [pendingFile];
             return el;
         },
@@ -163,7 +208,9 @@ function loadMap({ noAbortTimeout = false } = {}) {
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
-        name_popup_element: () => ({}),
+        name_popup_element: (feature) => ({ text: feature.properties.name }),
+        pz_layer_polygons: () => [{}],
+        pz_layer_area_m2: (layer) => layer.area || 0,
         delete_load_btn: () => calls.push('delete_load_btn'),
         create_load_btn: () => calls.push('create_load_btn'),
     });
@@ -183,6 +230,10 @@ function loadMap({ noAbortTimeout = false } = {}) {
         throwSync: () => { reply = { throwSync: true }; },
         timers,
         cleared,
+        map,
+        editableLayers,
+        entries,
+        setupEditing: () => vm.runInContext('setup_editing', context)(map, editableLayers),
         fireSaveTimeout: () => timers.filter((t) => t.ms === 30000).forEach((t) => t.fn()),
         setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
         save: () => vm.runInContext('save_zones', context)(),
@@ -513,4 +564,18 @@ test('a fetch that throws at once still frees Save', async () => {
     m.reply(200, '"saved"');
     await m.save();
     assert.equal(m.posts.length, 2);
+});
+
+test('dragging a vertex marks the editor unsaved and re-measures the zone', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    const layer = m.layers[0];
+    layer.area = 1234;
+    m.calls.length = 0;
+    // Geoman fires pm:edit on the layer and its parent groups, not the map.
+    m.editableLayers.fire('pm:edit', { layer });
+    assert.equal(m.isDirty(), true);
+    assert.equal(m.entries()[0].attributes['area-m2'], '1234');
+    assert.ok(m.calls.includes('pz:zoneschanged'), 'the tracker readout is not re-measured');
 });

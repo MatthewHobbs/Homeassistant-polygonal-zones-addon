@@ -399,6 +399,16 @@ function setup_editing(map, editableLayers) {
             });
     });
 
+    // Geoman fires pm:edit on the layer and its parent groups, never on the
+    // map. No list rebuild: that would close the row being edited.
+    editableLayers.on('pm:edit', e => {
+        mark_dirty();
+        const entry = Array.from(document.querySelectorAll('zone-entry'))
+            .find(z => z.getAttribute('zone-id') === e.layer.feature.properties.id);
+        if (entry) show_zone_area(entry, e.layer);
+        map.fire('pz:zoneschanged');
+    });
+
     // Geoman removes one layer per click, so there is no batch of deletions
     // to fold into one rebuild.
     map.on('pm:remove', function (e) {
@@ -501,6 +511,16 @@ function shape_count(layer) {
     return 1;
 }
 
+// Area is the cheapest sanity check there is on a hand-drawn zone: a
+// room-sized number on something meant to be a property boundary is obvious at
+// a glance and invisible on the map itself.
+function show_zone_area(entry, layer) {
+    if (typeof pz_layer_area_m2 !== 'function') return;
+    const area = pz_layer_area_m2(layer);
+    if (area > 0) entry.setAttribute('area-m2', String(Math.round(area)));
+    else entry.removeAttribute('area-m2');
+}
+
 function render_zone_list() {
     let zone_list = document.querySelector('.zone-list');
     zone_list.innerHTML = '';
@@ -519,13 +539,7 @@ function render_zone_list() {
         }
         const count = shape_count(layer);
         if (count > 1) zone_entry.setAttribute('shape-count', String(count));
-        // Area is the cheapest sanity check there is on a hand-drawn zone: a
-        // room-sized number on something meant to be a property boundary is
-        // obvious at a glance and invisible on the map itself.
-        if (typeof pz_layer_area_m2 === 'function') {
-            const area = pz_layer_area_m2(layer);
-            if (area > 0) zone_entry.setAttribute('area-m2', String(Math.round(area)));
-        }
+        show_zone_area(zone_entry, layer);
         zone_entry.addEventListener('edit', edit_zone_event);
 
         zone_list.appendChild(zone_entry);
