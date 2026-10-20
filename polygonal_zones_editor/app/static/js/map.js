@@ -718,9 +718,6 @@ function add_zones(data, replace) {
         onEachFeature: (feature, layer) => {
             // GeoJSON allows null properties; the editor reads and writes them.
             if (!feature.properties) feature.properties = {};
-            // Every zone gets an id, so its list entry finds it even when names
-            // are missing or repeated. The server keeps an id it is given.
-            if (!feature.properties.id) feature.properties.id = new_zone_id();
             // A function, so the popup reads the name at open, after any rename.
             layer.bindPopup(l => name_popup_element(l.feature));
             layers.push(layer);
@@ -731,18 +728,26 @@ function add_zones(data, replace) {
     const skipped = layers.length - zones.length;
     if (replace) {
         if (skipped) throw new Error('not polygon zones');
-        // The server takes a name that is text, null or absent; refuse anything
-        // else now rather than at save.
-        if (zones.some(layer => {
-            const name = layer.feature.properties.name;
-            return name != null && typeof name !== 'string';
-        })) {
-            throw new Error('zone name is not text');
+        // The server takes a name that is text, null or absent, and an id that
+        // is null, absent or unique non-empty text; refuse anything else now
+        // rather than at save.
+        const ids = new Set();
+        for (const {feature: {properties: {name, id}}} of zones) {
+            if (name != null && typeof name !== 'string') throw new Error('zone name is not text');
+            if (id == null) continue;
+            if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('bad zone id');
+            ids.add(id);
         }
         if (!zones.length) return {count: 0, skipped: 0};
         editableLayers.clearLayers();
     }
-    zones.forEach(layer => editableLayers.addLayer(layer));
+    zones.forEach(layer => {
+        // Every zone gets a text id, so its list entry finds it even when
+        // names are missing or repeated. The server keeps an id it is given.
+        const p = layer.feature.properties;
+        if (typeof p.id !== 'string' || !p.id) p.id = new_zone_id();
+        editableLayers.addLayer(layer);
+    });
     return {count: zones.length, skipped};
 }
 

@@ -688,3 +688,26 @@ test('the load button is added once however often it is asked for', () => {
     vm.runInContext('create_load_btn(); create_load_btn();', context);
     assert.deepEqual(header.children.map((c) => c.id), ['load-text', 'load-btn']);
 });
+
+for (const [what, ids] of [['a number', [5]], ['an empty string', ['']], ['a repeat', ['x', 'x']]]) {
+    test(`bulk load refuses a zone id that is ${what}, before clearing`, () => {
+        const m = withExistingZone();
+        m.bulkLoad(collection(...ids.map((id) => unnamed({ id }))));
+        assert.equal(m.errors.length, 1);
+        assert.ok(!m.calls.includes('clearLayers'));
+        assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home']);
+    });
+}
+
+test('bulk load gives a null id a fresh one, as the server does', () => {
+    const m = withExistingZone();
+    m.bulkLoad(collection(unnamed({ id: null })));
+    assert.deepEqual(m.errors, []);
+    assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
+});
+
+test('first load gives a zone whose id is not text a fresh one', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed({ id: 5 }))));
+    assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
+});
