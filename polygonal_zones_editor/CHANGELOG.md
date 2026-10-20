@@ -26,6 +26,27 @@
   them, and the editor could not load the file again. They are now refused
   with `422` and nothing is written. A file already holding one still fails
   to load: restore an earlier backup, or remove the value by hand.
+- **Fixed: dragging a zone's corner marks the editor unsaved** and updates
+  its area. Before, a reshaped zone looked saved, and leaving the page lost
+  the change without a warning.
+- **Fixed: a name typed into an open zone is kept** when you press Save,
+  open another zone or draw a new one, instead of being thrown away.
+- **Fixed: a zone's popup shows its current name,** after a rename and for
+  zones drawn in this session.
+- **Fixed: loading the saved zones gives up after 30 seconds** and offers
+  the load button, instead of leaving Save refused for good. A load that
+  answers after you have loaded zones from a file no longer replaces them.
+- **Fixed: loading zones from a file checks their ids.** A missing id gets
+  a fresh one, as the add-on does; a repeated, empty or non-text id is
+  refused before your current zones are cleared, instead of failing later
+  at Save.
+- **Fixed: tracker dots can no longer be deleted or snapped to** while
+  editing zones, and a collapsed sidebar stays collapsed when the page
+  loads.
+- **Fixed: Save keeps working behind a proxy that strips the `ETag`
+  header,** using the copy in the save response.
+- **Changed: the map style choices are named Street map, Dark and
+  Satellite.**
 - **Fixed: one bad reply from Home Assistant no longer takes the tracker
   overlay down.** A garbled or cut-short reply for one entity made
   `/trackers.json` fail with `500`; that entity is now reported unavailable
