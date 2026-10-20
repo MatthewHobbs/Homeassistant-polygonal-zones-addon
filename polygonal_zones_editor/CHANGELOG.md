@@ -34,8 +34,9 @@
 - **Fixed: a zone's popup shows its current name,** after a rename and for
   zones drawn in this session.
 - **Fixed: loading the saved zones gives up after 30 seconds** and offers
-  the load button, instead of leaving Save refused for good. A load that
-  answers after you have loaded zones from a file no longer replaces them.
+  the load button, instead of waiting forever. Save stays refused until you
+  reload or load a file. A load that answers after you have loaded zones
+  from a file no longer replaces them.
 - **Fixed: loading zones from a file checks their ids.** A missing id gets
   a fresh one, as the add-on does; a repeated, empty or non-text id is
   refused before your current zones are cleared, instead of failing later
@@ -45,8 +46,6 @@
   loads.
 - **Fixed: Save keeps working behind a proxy that strips the `ETag`
   header,** using the copy in the save response.
-- **Changed: the map style choices are named Street map, Dark and
-  Satellite.**
 - **Fixed: one bad reply from Home Assistant no longer takes the tracker
   overlay down.** A garbled or cut-short reply for one entity made
   `/trackers.json` fail with `500`; that entity is now reported unavailable
