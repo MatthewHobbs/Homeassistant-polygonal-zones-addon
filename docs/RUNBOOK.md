@@ -56,12 +56,13 @@ The `Refuse to overwrite a different build of this version` step in `Publish (<a
 
 **Option A — forward-fix (preferred).** Revert the bad commit on `main`, bump version, tag. Takes one release cycle (~5 minutes).
 
-**Option B — immediate rollback.** Users can pin via **Supervisor → Add-ons → Polygonal Zones → ⋮ → Rebuild** after installing a previous version from the store. From a Supervisor shell:
+**Option B — restore the add-on's partial backup.** This exists only if the user updated with backups on: the backup toggle in the UI's update dialog, or from a Supervisor shell:
 
 ```sh
-# X.Y.Z = the last known-good version (the one before the bad release)
-ha addons update polygonal_zones --version X.Y.Z
+ha apps update polygonal_zones --backup
 ```
+
+Restoring that backup (**Settings → System → Backups**) puts back the add-on as it was before the update. There is no way to install a chosen earlier version instead: the CLI's `update` takes only `--backup`, and its help says "It is currently not possible to upgrade/downgrade to a specific version."
 
 You can't delete a published ghcr.io image tag via automation; users on the broken version stay on it until they update. Cut a forward-fix version and announce it.
 

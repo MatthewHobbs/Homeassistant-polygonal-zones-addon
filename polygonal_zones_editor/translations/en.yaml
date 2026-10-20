@@ -31,9 +31,10 @@ configuration:
     description: >-
       Comma-separated list of the IP address of each reverse proxy whose
       X-Forwarded-For header should be honoured. List each proxy's own IP
-      rather than a range. Leave empty unless you front the addon with
-      your own reverse proxy. Wildcards (*, 0.0.0.0/0) and the HA
-      ingress IP (172.30.32.2) are refused and logged as errors.
+      rather than a range: a range is accepted with a warning in the log.
+      Leave empty unless you front the addon with your own reverse proxy.
+      Wildcards (*, 0.0.0.0/0) and the HA ingress IP (172.30.32.2) are
+      refused and logged as errors.
   tracker_refresh_seconds:
     name: Tracker refresh interval
     description: >-
