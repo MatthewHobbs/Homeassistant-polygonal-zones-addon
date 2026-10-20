@@ -66,12 +66,12 @@ Symptom: HA automations no longer fire on zone entry/exit, or a user hitting the
 | Exit | Meaning | What to do |
 |---|---|---|
 | 0 | success | nothing |
-| 1 | unexpected failure (an unguarded command failed) | read the output, fix the cause, re-run |
+| 1 | unexpected failure (an unguarded command failed) | read the output, fix the cause, re-run; if it failed after the merge, the exit-3 caveat applies |
 | 2 | usage error: missing PR number or unknown flag | re-invoke with a PR number |
 | 3 | pre-flight failed (PR state, checks, mergeability, version mismatch), or after the merge: `post-merge-version-mismatch` or `post-merge-head-propagation-timeout` | before the merge, fix the cause. After the merge the PR is merged but untagged: re-run the script, which resumes by tagging, provided nothing else has merged to `main` since (it tags `main`'s HEAD); otherwise tag the merge commit by hand (see **Manual fallback** in README) |
 | 4 | merge failed (unusual after pre-flight passed) | check the GitHub UI |
 | 5 | tag creation failed | re-run; the script resumes if the PR is merged, with the same caveat as exit 3 |
-| 6 | release workflow failed | inspect the workflow run, then re-run the script (it resumes) |
+| 6 | release workflow failed | the script only watches the run, so re-running it alone reports the same failure. Fix the run first: re-run its failed jobs (**Partial-matrix publish failure** above), or cut a new patch for a test or lint failure; then re-run the script to watch |
 
 Progress goes to stdout as `STATUS:<TOKEN>` lines, ending in `STATUS:SUCCESS …` on success. A failure prints `STATUS:FAILED <reason>` to stderr; usage errors and unexpected failures print no `STATUS:FAILED` line.
 

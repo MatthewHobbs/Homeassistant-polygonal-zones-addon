@@ -29,7 +29,7 @@ Status is one of **Open**, **Done**, **Blocked**, **Dropped**. A **Done** row ca
 
 ## Context
 
-My users take Home Assistant updates through the normal path. An add-on that works in isolation but not under the current Supervisor fails them on update. On 2026-09-25 this add-on's CI booted the container on both arches (aarch64 under QEMU) and ran Playwright on amd64, all standalone. Nothing installed it through a Supervisor, set its options through one, reached it through ingress, or confined it with AppArmor. An earlier review (issues #111–#131) had already listed "No Supervisor-level boot gate". a290 and r5 did not boot their containers in CI at all.
+My users take Home Assistant updates through the normal path. An add-on that works in isolation but not under the current Supervisor fails them on update. On 2026-09-25 this add-on's CI booted the container on both arches (aarch64 under QEMU) and ran Playwright on amd64, all standalone. Nothing installed it through a Supervisor, set its options through one, reached it through ingress, or confined it with AppArmor. A review in April 2026 had already listed "No Supervisor-level boot gate". a290 and r5 did not boot their containers in CI at all.
 
 ## Alternatives
 
