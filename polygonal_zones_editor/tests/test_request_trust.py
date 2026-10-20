@@ -467,3 +467,33 @@ def test_host_bit_cidr_normalisation_is_logged(boot, caplog):
     with caplog.at_level(logging.WARNING):
         boot({"trusted_proxies": "192.168.1.5/24"})
     assert "host bits set" in caplog.text
+
+
+def _parse_warnings(caplog, trusted_proxies):
+    import main
+
+    with caplog.at_level(logging.WARNING):
+        kept = main._parse_trusted_proxies({"trusted_proxies": trusted_proxies})
+    return kept, [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_each_range_in_trusted_proxies_warns_once(caplog):
+    kept, warnings = _parse_warnings(
+        caplog, "10.0.0.0/24, 192.168.1.1, 10.1.0.1/32, 2001:db8::/32, 2001:db8::1/128"
+    )
+    assert kept == ["10.0.0.0/24", "192.168.1.1", "10.1.0.1/32", "2001:db8::/32", "2001:db8::1/128"]
+    ranges = [w for w in warnings if "every address in the range" in w]
+    assert len(ranges) == 2
+    # Constant text: the entry itself is never logged.
+    assert not any("10.0.0.0" in w or "2001:db8" in w for w in warnings)
+
+
+def test_non_canonical_ipv6_spelling_is_not_a_host_bit_entry(caplog):
+    _, warnings = _parse_warnings(caplog, "2001:DB8::/32")
+    assert not any("host bits set" in w for w in warnings)
+
+
+def test_host_bit_entry_is_still_flagged(caplog):
+    kept, warnings = _parse_warnings(caplog, "192.168.1.5/24")
+    assert kept == ["192.168.1.0/24"]
+    assert sum("host bits set" in w for w in warnings) == 1

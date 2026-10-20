@@ -27,6 +27,7 @@ import uvicorn
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from const import (
+    ALLOWED_IPS,
     DATA_FOLDER,
     DEFAULT_TRACKER_REFRESH_SECONDS,
     MAX_OVERLAY_ENTITIES,
@@ -946,38 +947,24 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
     return TransportPeerMiddleware(app), log_config
 
 
-# Values that, when handed to uvicorn's forwarded_allow_ips, would let any
-# on-path attacker forge X-Forwarded-For: 172.30.32.2 and be treated as the
-# HA ingress sidecar by allowed_ip(). We drop these with a logged error
-# rather than failing startup so a typo can't lock a user out.
-#
-# Split into two categories so each branch can log a constant string with
-# no interpolation — CodeQL's taint analysis otherwise flags %s-logging of
-# any value derived from the options dict (which also carries save_token).
+# Ingress is decided by the TCP peer (TransportPeerMiddleware), never by a
+# forwarded header, so no trusted_proxies entry can make a request ingress.
+# What a trusted proxy decides is which client a request is logged and
+# rate-limited as. These entries are dropped, with a logged error rather than
+# a failed startup so a typo can't lock a user out:
+#   - wildcards, which would let every client name its own address and so
+#     escape the per-client failure limit;
+#   - the ingress IP or any range covering it: ingress is HA's own proxy and
+#     needs no listing, and a range that wide trusts every other host on the
+#     Supervisor network to name any client it likes.
+# Every message is a constant string: CodeQL flags %s-logging of any value
+# derived from the options dict, which also carries save_token.
 _TRUSTED_PROXIES_WILDCARDS = frozenset({"*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"})
-_INGRESS_IP_STR = "172.30.32.2"
-
-
-_INGRESS_IP_OBJ = ipaddress.ip_address(_INGRESS_IP_STR)
+_INGRESS_IPS = tuple(ipaddress.ip_address(ip) for ip in ALLOWED_IPS)
 
 
 def _parse_trusted_proxies(options: dict) -> list[str]:
-    """Parse + validate the trusted_proxies option.
-
-    Rejects, with a logged error, any entry that would let an on-path
-    attacker forge X-Forwarded-For: 172.30.32.2 and be treated as the
-    HA ingress sidecar by allowed_ip(). Each rejection logs a constant
-    string (no value interpolation) so CodeQL's taint analysis doesn't
-    flag the options-derived value.
-
-    Rejection criteria (any one disqualifies):
-      1. Literal wildcards (*, 0.0.0.0, 0.0.0.0/0, ::, ::/0).
-      2. The ingress IP itself.
-      3. Unparseable as an IP or CIDR (hostnames, garbage).
-      4. A CIDR that contains the ingress IP (e.g. 172.30.0.0/16,
-         0.0.0.0/8, 172.30.32.2/24) — closes the "supernet bypass"
-         vector a naive literal match would miss.
-    """
+    """Parse and validate the trusted_proxies option; return what uvicorn gets."""
     raw = options.get("trusted_proxies", "") or ""
     entries = [p.strip() for p in raw.split(",") if p.strip()]
     safe = []
@@ -985,19 +972,9 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
         if entry in _TRUSTED_PROXIES_WILDCARDS:
             _LOGGER.error(
                 "Refusing a wildcard trusted_proxies entry (one of "
-                "*, 0.0.0.0, 0.0.0.0/0, ::, ::/0). It would let any "
-                "client forge X-Forwarded-For and bypass the ingress-IP "
-                "check on /save_zones. Dropping this entry; fix the "
-                "option in the addon configuration."
-            )
-            continue
-        if entry == _INGRESS_IP_STR:
-            _LOGGER.error(
-                "Refusing the HA ingress IP (172.30.32.2) as a "
-                "trusted_proxies entry. It would let any client forge "
-                "X-Forwarded-For and bypass the ingress-IP check on "
-                "/save_zones. Dropping this entry; fix the option in "
-                "the addon configuration."
+                "*, 0.0.0.0, 0.0.0.0/0, ::, ::/0). It would let any client "
+                "choose the address it is logged and rate-limited as. "
+                "Dropping this entry; fix the option in the addon configuration."
             )
             continue
         try:
@@ -1010,23 +987,27 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
                 "configuration."
             )
             continue
-        # If the entry is an IPv4 network that contains the ingress IP,
-        # it's a supernet bypass (e.g. 172.30.0.0/16 covers the ingress
-        # IP 172.30.32.2). Reject. IPv6 networks can't contain an IPv4
-        # address so no check is needed there.
-        if isinstance(net, ipaddress.IPv4Network) and _INGRESS_IP_OBJ in net:
+        # A bare address parses as a /32, so this also catches the ingress
+        # IP listed on its own.
+        if any(ip in net for ip in _INGRESS_IPS):
             _LOGGER.error(
-                "Refusing a trusted_proxies entry whose CIDR covers "
-                "the HA ingress IP. It would let any client forge "
-                "X-Forwarded-For and bypass the ingress-IP check on "
-                "/save_zones. Dropping this entry; fix the option in "
-                "the addon configuration."
+                "Refusing a trusted_proxies entry whose CIDR covers the HA "
+                "ingress IP (172.30.32.2). Ingress is recognised by its own "
+                "connection and needs no listing, and a range this wide "
+                "trusts other hosts on the Supervisor network. Dropping this "
+                "entry; fix the option in the addon configuration."
             )
             continue
+        if net.prefixlen < net.max_prefixlen:
+            _LOGGER.warning(
+                "A trusted_proxies entry is a range: every address in the range "
+                "is believed about which client it forwards for. List each "
+                "proxy's own IP instead."
+            )
         # uvicorn parses CIDRs strictly, so a host-bit entry such as
         # 192.168.1.5/24 would silently trust nothing; hand it the network,
-        # and say so, since that trusts the whole range.
-        if "/" in entry and str(net) != entry:
+        # and say so.
+        if "/" in entry and ipaddress.ip_interface(entry).ip != net.network_address:
             _LOGGER.warning(
                 "A trusted_proxies entry has host bits set and is applied as "
                 "its whole network. List each proxy's own IP instead."
