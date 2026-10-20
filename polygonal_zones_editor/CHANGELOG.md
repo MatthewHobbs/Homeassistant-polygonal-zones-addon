@@ -141,8 +141,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 - **Changed: the add-on now requires Home Assistant 2026.8.1 or newer.**
   `config.yaml` declares a minimum Core version for the first time. Installs
   on an older Core keep 0.4.2 and are not offered this update until Home
-  Assistant is upgraded. The declared
-  minimum is held to at most the `.1` release of the month before current stable
+  Assistant is upgraded. The declared minimum is held to at most the `.1`
+  release of the month before current stable
   (2026.9.3 today), so every install from 2026.8.1 onward keeps receiving
   updates. CI now checks the declared value against `stable.json` on every
   run, and the Supervisor-level test (ADR 0001) runs the add-on on exactly
@@ -280,7 +280,7 @@ Reimplements the intent of an earlier stalled [PR #132](https://github.com/Matth
 
 - **`schema_version: 1`** stamped on every persisted `zones.json` at write time. Purely informational today — readers are expected to ignore unknown top-level keys — but consumers that pin behaviour to a specific shape can branch on this. Optional on input for curl-restore backward compatibility with pre-versioned files; rejected if present-but-not-int (`bool` explicitly rejected because `isinstance(True, int)` is True in Python).
 - **`properties.id`** on every feature — the stable handle HA automations bind to through zone renames. Optional on input; the server **backfills** a fresh `uuid4().hex` for any feature missing one so a curl-restored pre-versioned file still writes cleanly. When supplied by a client (the editor now generates one via `crypto.randomUUID()` on `draw:created`), it must be a non-empty string **and unique** across the collection — duplicate ids would defeat the "stable binding handle" contract.
-- **`docs/EVALUATION.md`** — a review that seeded issues #111–#131 earlier this week. Committed as the provenance record for that arc of work.
+- A review that shaped the next releases was recorded at the time; it is no longer kept in the repository.
 
 ### Contract
 
