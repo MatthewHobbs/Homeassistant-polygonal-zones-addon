@@ -12,12 +12,18 @@ let zones_etag = null;
 // load replaced them on purpose. Until then a save could overwrite zones the
 // editor never showed, so save_zones refuses.
 let zones_loaded = false;
+let zones_load_failed = false;
+// One save at a time: a second click sends the same If-Match and would be
+// refused as a conflict with its own first save.
+let save_in_flight = false;
 // isDirty flips to true on any edit the user hasn't flushed to the server
 // (draw, delete, rename, bulk-load). Cleared on a successful save. Drives
 // the beforeunload prompt below so HA's ingress shell can't silently discard
 // unsaved polygons when the user taps another sidebar entry.
 let isDirty = false;
-function mark_dirty() { isDirty = true; update_dirty_indicator(); }
+// Bumped on every edit, so a save only marks clean what it actually sent.
+let edit_seq = 0;
+function mark_dirty() { isDirty = true; edit_seq++; update_dirty_indicator(); }
 function mark_clean() { isDirty = false; update_dirty_indicator(); }
 function update_dirty_indicator() {
     // Visible (non-screen-reader) cue that there are unsaved changes — the
@@ -280,6 +286,7 @@ function generate_map(zones_url) {
             load_saved_zones(data, restoredViewport);
         })
         .catch(err => {
+            zones_load_failed = true;
             console.error('Failed to load zones:', err);
             let list = document.querySelector('.zone-list');
             if (list) {
@@ -532,16 +539,18 @@ function save_zones() {
         save_status.textContent = '';
     }
 
-    // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
-    // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
-    // a single-ring Polygon, losing every ring beyond the first.
+    if (save_in_flight) return Promise.resolve();
     if (!zones_loaded) {
         if (save_btn) save_btn.classList.add('error');
-        if (save_status) save_status.textContent =
-            "The saved zones haven't loaded, so saving now could overwrite them. Reload the page and try again.";
+        if (save_status) save_status.textContent = zones_load_failed
+            ? "The saved zones couldn't be loaded, so saving now could overwrite them. Reload the page and try again."
+            : 'The saved zones are still loading. Try again in a moment.';
         return Promise.resolve();
     }
 
+    // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
+    // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
+    // a single-ring Polygon, losing every ring beyond the first.
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
@@ -560,6 +569,8 @@ function save_zones() {
     const headers = {'Content-Type': 'application/json'};
     if (zones_etag) headers['If-Match'] = zones_etag;
 
+    save_in_flight = true;
+    const sent_seq = edit_seq;
     return fetch('./save_zones', {
         method: 'POST',
         headers: headers,
@@ -585,7 +596,8 @@ function save_zones() {
             // the next click overwrite their edits.
             const new_etag = response.headers.get('ETag');
             if (new_etag) zones_etag = new_etag;
-            mark_clean();
+            // An edit made while the request was in flight is still unsaved.
+            if (edit_seq === sent_seq) mark_clean();
             // Success auto-clears at 2s. Errors below persist until the next
             // save click (top of save_zones()): 2s is too short for a user
             // not looking at the button, especially on mobile.
@@ -608,7 +620,7 @@ function save_zones() {
         // No setTimeout: an intermittent ingress failure flashing red for
         // 2s and disappearing left users unsure whether their zones saved.
         // The error stays until the next save click (#123).
-    })
+    }).finally(() => { save_in_flight = false; });
 }
 
 

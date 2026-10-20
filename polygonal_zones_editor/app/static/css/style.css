@@ -99,13 +99,12 @@
 
 /* Visible, not screen-reader only: a sighted user who sees only a red button
    clicks Save again instead of reading why it failed. */
+/* Not hidden when empty: a live region must already be in the accessibility
+   tree when its text changes, or screen readers may not announce it. */
 .save-status {
     margin: 0.4em 0 0;
     font-size: 0.85em;
     color: var(--text-color);
-}
-.save-status:empty {
-    display: none;
 }
 
 

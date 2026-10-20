@@ -165,6 +165,7 @@ function loadMap() {
         reply: (s, etag = null) => { reply = { status: s, etag }; },
         setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
         save: () => vm.runInContext('save_zones', context)(),
+        markDirty: () => vm.runInContext('mark_dirty', context)(),
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         editZone: (detail) => vm.runInContext('edit_zone_event', context)({ detail, target: fakeElement('zone-entry') }),
         loadSaved: (data, restored = false) => vm.runInContext('load_saved_zones', context)(data, restored),
@@ -358,4 +359,42 @@ test('save is allowed after a bulk load even if the first load failed', async ()
     m.bulkLoad(collection(polygon('A')));
     await m.save();
     assert.equal(m.posts.length, 1);
+});
+
+test('a 412 keeps the editor dirty and says why', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.markDirty();
+    m.reply(412, '"theirs"');
+    await m.save();
+    assert.equal(m.isDirty(), true);
+    assert.match(m.status.textContent, /^Conflict/);
+});
+
+test('a second click while a save is in flight sends nothing', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(200, '"saved"');
+    const first = m.save();
+    const second = m.save();
+    await Promise.all([first, second]);
+    assert.equal(m.posts.length, 1, 'the duplicate would hit its own 412');
+});
+
+test('an edit made while a save is in flight stays unsaved', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.markDirty();
+    m.reply(200, '"saved"');
+    const pending = m.save();
+    m.markDirty();
+    await pending;
+    assert.equal(m.isDirty(), true, 'the later edit was marked saved');
+});
+
+test('while the saved zones are still loading, save asks you to wait', async () => {
+    const m = loadMap();
+    await m.save();
+    assert.match(m.status.textContent, /still loading/);
 });

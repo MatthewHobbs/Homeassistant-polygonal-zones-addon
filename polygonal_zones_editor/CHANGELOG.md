@@ -11,8 +11,11 @@
 - **Fixed: Save refuses until your saved zones have loaded.** If loading
   `zones.json` failed, or you saved before it finished, the save went out
   unchecked and the file was replaced by whatever was on screen. Save now
-  says the zones haven't loaded; a bulk load from a file still saves, since
-  replacing the zones is then the point.
+  says the zones are still loading (or couldn't be loaded); a bulk load from
+  a file still saves, since replacing the zones is then the point.
+- **Fixed: a double click on Save no longer reports a conflict with itself,**
+  and an edit made while a save is on its way stays marked as unsaved instead
+  of being shown as saved.
 
 ## 0.5.6 — 2026-10-20
 
