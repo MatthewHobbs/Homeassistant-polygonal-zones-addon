@@ -1,19 +1,7 @@
 import json
+import re
 
 import pytest
-
-
-def test_allow_all_ips_from_options():
-    import helpers
-
-    assert helpers.allow_all_ips({"allow_all_ips": True}) is True
-
-
-def test_allow_all_ips_default_false():
-    import helpers
-
-    assert helpers.allow_all_ips({}) is False
-    assert helpers.allow_all_ips({"allow_all_ips": False}) is False
 
 
 def test_allowed_ip_permits_supervisor_host(request_factory):
@@ -46,19 +34,6 @@ def test_allowed_ip_uses_transport_peer_not_resolved_client(request_factory):
     unrecorded = request_factory("172.30.32.2")
     unrecorded.scope = {}
     assert helpers.allowed_ip(unrecorded) is False
-
-
-def test_allow_request_opens_when_allow_all(request_factory):
-    import helpers
-
-    assert helpers.allow_request({"allow_all_ips": True}, request_factory("10.0.0.1")) is True
-
-
-def test_allow_request_falls_back_to_ip_allowlist(request_factory):
-    import helpers
-
-    assert helpers.allow_request({}, request_factory("172.30.32.2")) is True
-    assert helpers.allow_request({}, request_factory("10.0.0.1")) is False
 
 
 def test_load_options_returns_empty_dict_when_missing(tmp_options_file):
@@ -168,6 +143,25 @@ def test_atomic_write_json_writes_new_file(tmp_path):
     assert json.loads(target.read_text()) == payload
 
 
+def test_atomic_write_json_returns_the_bytes_it_wrote(tmp_path):
+    import helpers
+
+    target = tmp_path / "zones.json"
+    assert helpers.atomic_write_json(str(target), {"a": [1, 2.5]}) == target.read_bytes()
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_atomic_write_json_refuses_non_finite_numbers_without_touching_disk(tmp_path, value):
+    import helpers
+
+    target = tmp_path / "zones.json"
+    target.write_text("{}")
+    with pytest.raises(ValueError):
+        helpers.atomic_write_json(str(target), {"properties": {"w": value}})
+    assert [p.name for p in tmp_path.iterdir()] == ["zones.json"]
+    assert target.read_text() == "{}"
+
+
 def test_atomic_write_json_replaces_existing_file(tmp_path):
     import helpers
 
@@ -258,8 +252,8 @@ def test_atomic_write_json_fsyncs_parent_directory(tmp_path, monkeypatch):
 
 
 def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path, monkeypatch):
-    """Simulate a crash mid-write: json.dump raises after the temp file is
-    opened but before the rename happens. The destination must be untouched
+    """Simulate a crash mid-write: fsync raises after the temp file is
+    written but before the rename happens. The destination must be untouched
     and no stray temp file must remain."""
     import helpers
 
@@ -270,7 +264,7 @@ def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path
     def boom(*_args, **_kwargs):
         raise RuntimeError("simulated crash mid-write")
 
-    monkeypatch.setattr(helpers.json, "dump", boom)
+    monkeypatch.setattr(helpers.os, "fsync", boom)
 
     with pytest.raises(RuntimeError, match="simulated crash"):
         helpers.atomic_write_json(str(target), {"anything": True})
@@ -278,3 +272,27 @@ def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path
     assert json.loads(target.read_text()) == original
     siblings = [p.name for p in tmp_path.iterdir()]
     assert siblings == ["zones.json"], f"temp file leaked: {siblings}"
+
+
+def _keys_under(path, section):
+    """The two-space-indented keys of a top-level YAML block; no YAML parser needed."""
+    keys, inside = [], False
+    for line in path.read_text().splitlines():
+        if not line.startswith(" ") and line.strip():
+            inside = line.rstrip() == f"{section}:"
+        elif inside and re.match(r"^  [a-z_]+:", line):
+            keys.append(line.split(":")[0].strip())
+    return keys
+
+
+def test_every_option_has_a_name_and_description_in_the_ui():
+    # A missing entry shows Supervisor users the raw key and no explanation.
+    from tests.conftest import APP_DIR
+
+    addon = APP_DIR.parent
+    schema = _keys_under(addon / "config.yaml", "schema")
+    translated = _keys_under(addon / "translations" / "en.yaml", "configuration")
+    assert "overlay_entities" in schema
+    assert sorted(schema) == sorted(translated)
+    text = (addon / "translations" / "en.yaml").read_text()
+    assert "readable by anyone holding the save_token" in " ".join(text.split())

@@ -15,12 +15,14 @@ def chdir_to_app(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def reset_failure_sweep():
-    # The sweep clock is module state; a test that fakes time must not leak it.
+def reset_failure_records():
+    # Module state: failures left by one test would push a later one into 429.
     import main
 
+    main._auth_failures.clear()
     main._last_sweep = 0.0
     yield
+    main._auth_failures.clear()
     main._last_sweep = 0.0
 
 

@@ -6,6 +6,7 @@ uvicorn itself would wrap around the app (its ProxyHeadersMiddleware when
 proxy_headers is on), not a hand-assembled stack.
 """
 
+import asyncio
 import json
 import logging
 import runpy
@@ -59,6 +60,7 @@ def boot(tmp_path, tmp_zones_file, tmp_options_file, monkeypatch):
 
         monkeypatch.setattr(uvicorn, "run", fake_run)
         runpy.run_path(str(APP_DIR / "main.py"), run_name="__main__")
+        _boot.run_kwargs = captured["kwargs"]
 
         kwargs = {
             k: v
@@ -82,7 +84,7 @@ def _served_client(boot, options, client):
 def test_forwarded_header_from_trusted_range_is_not_ingress(boot):
     client = _served_client(
         boot,
-        {"allow_all_ips": True, "save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
+        {"save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
         HOST_IN_PROXY_RANGE,
     )
     xff = {"X-Forwarded-For": INGRESS}
@@ -95,7 +97,7 @@ def test_forwarded_header_from_trusted_range_is_not_ingress(boot):
 def test_real_ingress_peer_is_still_ingress_with_proxies_configured(boot):
     client = _served_client(
         boot,
-        {"allow_all_ips": True, "save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
+        {"save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
         (INGRESS, 5000),
     )
 
@@ -107,7 +109,7 @@ def test_real_ingress_peer_is_still_ingress_with_proxies_configured(boot):
 def test_trusted_proxy_still_resolves_the_forwarded_client(boot, caplog):
     client = _served_client(
         boot,
-        {"allow_all_ips": True, "save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
+        {"save_token": TOKEN, "trusted_proxies": PROXY_RANGE},
         HOST_IN_PROXY_RANGE,
     )
     with caplog.at_level(logging.WARNING):
@@ -115,7 +117,7 @@ def test_trusted_proxy_still_resolves_the_forwarded_client(boot, caplog):
 
     assert r.status_code == 403
     # Rate limiting and logging key on the resolved client, not the proxy.
-    assert "Rejected /zones.json read from 10.9.8.7" in caplog.text
+    assert "Rejected /zones.json from 10.9.8.7" in caplog.text
     assert "192.168.1.50" not in caplog.text
 
     r = client.get("/zones.json", headers={"X-Forwarded-For": "10.9.8.7", "X-Save-Token": TOKEN})
@@ -125,6 +127,13 @@ def test_trusted_proxy_still_resolves_the_forwarded_client(boot, caplog):
 def test_forwarded_header_ignored_without_trusted_proxies(boot):
     client = _served_client(boot, {"save_token": TOKEN}, HOST_IN_PROXY_RANGE)
     assert client.get("/zones.json", headers={"X-Forwarded-For": INGRESS}).status_code == 403
+
+
+def test_uvicorn_access_log_is_off(boot):
+    # It would log every client's IP and request line at INFO.
+    boot({})
+    assert boot.run_kwargs["access_log"] is False
+    assert "log_config" not in boot.run_kwargs
 
 
 def test_uvicorn_adds_no_proxy_handling_of_its_own(boot):
@@ -137,7 +146,7 @@ def test_app_without_peer_record_is_never_ingress(tmp_zones_file):
     """The Starlette app alone, without the outer layer, fails closed."""
     import main
 
-    served, _ = main.generate_app({"save_token": TOKEN})
+    served = main.generate_app({"save_token": TOKEN})
     client = TestClient(served.app, client=(INGRESS, 5000))
     assert client.get("/zones.json").status_code == 403
 
@@ -145,7 +154,7 @@ def test_app_without_peer_record_is_never_ingress(tmp_zones_file):
 def test_lifespan_passes_through_the_peer_layer(tmp_zones_file):
     import main
 
-    served, _ = main.generate_app({"trusted_proxies": "10.0.0.5"})
+    served = main.generate_app({"trusted_proxies": "10.0.0.5"})
     with TestClient(served, client=(INGRESS, 5000)) as client:
         assert client.get("/zones.json").status_code == 200
 
@@ -157,10 +166,7 @@ def test_lifespan_passes_through_the_peer_layer(tmp_zones_file):
 def open_client(tmp_zones_file):
     import main
 
-    main._auth_failures.clear()
-    app, _ = main.generate_app({"allow_all_ips": True})
-    yield TestClient(app)
-    main._auth_failures.clear()
+    return TestClient(main.generate_app({}), client=(INGRESS, 5000))
 
 
 def test_save_refuses_non_json_media_type(open_client, tmp_zones_file):
@@ -225,8 +231,7 @@ def test_save_accepts_same_origin_and_user_initiated(open_client, site):
 def test_cross_site_refusal_ignores_a_valid_token_and_spends_no_budget(tmp_zones_file):
     import main
 
-    main._auth_failures.clear()
-    app, _ = main.generate_app({"save_token": TOKEN})
+    app = main.generate_app({"save_token": TOKEN})
     client = TestClient(app)
     headers = {"Sec-Fetch-Site": "cross-site", "X-Save-Token": TOKEN}
     for _ in range(main._AUTH_FAILURE_LIMIT + 1):
@@ -234,7 +239,6 @@ def test_cross_site_refusal_ignores_a_valid_token_and_spends_no_budget(tmp_zones
     # Refusals of browser cross-site requests must not lock the client out.
     r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": TOKEN})
     assert r.status_code == 200
-    main._auth_failures.clear()
 
 
 # --- Startup log --------------------------------------------------------------
@@ -294,65 +298,43 @@ def test_loggable_options_shape():
     assert main.loggable_options({"overlay_entities": {"not": "a list"}})["overlay_entities"] == 0
 
 
-# --- Startup warning ----------------------------------------------------------
+def test_first_boot_seeds_the_zones_file_atomically(boot, tmp_zones_file, monkeypatch):
+    import helpers
+
+    real_write = helpers.atomic_write_json
+    seen = []
+    monkeypatch.setattr(
+        helpers, "atomic_write_json", lambda path, data: seen.append(path) or real_write(path, data)
+    )
+    tmp_zones_file.unlink()
+    boot({})
+    assert seen == [str(tmp_zones_file)]
+    assert json.loads(tmp_zones_file.read_text()) == {"type": "FeatureCollection", "features": []}
 
 
-def _warnings(caplog):
-    return " ".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+# --- Startup log for the retired allow_all_ips --------------------------------
 
 
-def test_open_access_warning_names_reads_and_trackers(boot, caplog):
+@pytest.mark.parametrize("token", ["", TOKEN])
+def test_allow_all_ips_logs_one_error_at_startup(boot, caplog, token):
     with caplog.at_level(logging.INFO):
-        boot({"allow_all_ips": True, "overlay_entities": ["device_tracker.car"]})
-    text = _warnings(caplog)
-    assert "/save_zones" in text
-    assert "/zones.json" in text
-    assert "/trackers.json" in text
+        boot({"allow_all_ips": True, "save_token": token})
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "allow_all_ips no longer grants LAN access" in errors[0]
+    assert "save_token" in errors[0]
 
 
-def test_open_access_warning_omits_trackers_when_none_configured(boot, caplog):
+@pytest.mark.parametrize("options", [{}, {"allow_all_ips": False}])
+def test_no_allow_all_ips_error_when_it_is_off(boot, caplog, options):
     with caplog.at_level(logging.INFO):
-        boot({"allow_all_ips": True})
-    text = _warnings(caplog)
-    assert "/zones.json" in text
-    assert "/trackers.json" not in text
-
-
-def test_no_open_access_warning_with_token(boot, caplog):
-    with caplog.at_level(logging.INFO):
-        boot({"allow_all_ips": True, "save_token": TOKEN})
-    assert "/zones.json" not in _warnings(caplog)
-    assert "require X-Save-Token" in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("options", "level", "expected"),
-    [
-        ({}, None, None),
-        ({"allow_all_ips": True, "save_token": TOKEN}, logging.INFO, "/trackers.json"),
-        ({"allow_all_ips": True}, logging.WARNING, "/zones.json is readable"),
-        (
-            {"allow_all_ips": True, "overlay_entities": ["device_tracker.car"]},
-            logging.WARNING,
-            "/zones.json and /trackers.json are readable",
-        ),
-    ],
-)
-def test_log_open_access(caplog, options, level, expected):
-    import main
-
-    with caplog.at_level(logging.INFO):
-        main.log_open_access(options)
-    if expected is None:
-        assert caplog.records == []
-    else:
-        assert [r.levelno for r in caplog.records] == [level]
-        assert expected in caplog.text
+        boot(options)
+    assert "allow_all_ips" not in " ".join(
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    )
 
 
 def test_peer_layer_records_none_without_a_client():
-    import asyncio
-
     import main
 
     seen = {}
@@ -377,12 +359,11 @@ def test_forged_ingress_failures_cannot_rate_limit_real_ingress(boot, path):
 def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     import main
 
-    main._auth_failures.clear()
-    app, _ = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
+    app = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
     client = TestClient(app, client=HOST_IN_PROXY_RANGE)
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 5)
     clock = [1_000_000.0]
-    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock[0])
     for i in range(1, 30):
         client.get("/zones.json", headers={"X-Forwarded-For": f"192.0.2.{i}"})
     assert len(main._auth_failures) == 29
@@ -390,17 +371,14 @@ def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     client.get("/zones.json", headers={"X-Forwarded-For": "192.0.2.200"})
     # The 29 expired clients are gone; only the newest failure remains.
     assert list(main._auth_failures) == ["192.0.2.200"]
-    main._auth_failures.clear()
 
 
 def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkeypatch):
     import main
 
-    main._auth_failures.clear()
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 2)
-    monkeypatch.setattr(main, "_last_sweep", 0.0)
     clock = [1_000_000.0]
-    monkeypatch.setattr(main.time, "time", lambda: clock[0])
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock[0])
     sweeps = []
     real_prune = main._prune
     monkeypatch.setattr(
@@ -420,20 +398,6 @@ def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkey
     clock[0] += 0.5
     main._record_auth_failure(request_factory("192.0.2.201"))
     assert sweeps[3:] == [1_000_001.0] * 51
-    main._auth_failures.clear()
-
-
-def test_failure_record_sweep_survives_the_clock_stepping_back(request_factory, monkeypatch):
-    import main
-
-    main._auth_failures.clear()
-    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 0)
-    monkeypatch.setattr(main.time, "time", lambda: 1_000_000.0)
-    monkeypatch.setattr(main, "_last_sweep", 1_000_000.0 + 3600)
-    main._auth_failures["192.0.2.1"].append(1_000_000.0 - 120)  # expired
-    main._record_auth_failure(request_factory("192.0.2.2"))
-    assert list(main._auth_failures) == ["192.0.2.2"]
-    main._auth_failures.clear()
 
 
 def test_real_ingress_with_forwarded_header_is_still_ingress(boot):
@@ -452,7 +416,7 @@ def test_host_bit_cidr_is_applied_as_its_network(boot, caplog):
 
 
 def test_cross_site_reads_never_test_a_token_or_spend_budget(boot):
-    options = {"save_token": TOKEN, "allow_all_ips": True}
+    options = {"save_token": TOKEN}
     client = _served_client(boot, options, ("192.168.7.7", 5000))
     cross = {"Sec-Fetch-Site": "cross-site"}
     for path in ("/zones.json", "/trackers.json"):
@@ -497,3 +461,100 @@ def test_host_bit_entry_is_still_flagged(caplog):
     kept, warnings = _parse_warnings(caplog, "192.168.1.5/24")
     assert kept == ["192.168.1.0/24"]
     assert sum("host bits set" in w for w in warnings) == 1
+
+
+@pytest.mark.parametrize(
+    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
+)
+def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
+    # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse
+    # reads them as a fragment or query and sees an exempt path. The test
+    # client would normalise the dots away, so the scope is sent directly.
+    app = boot({"save_token": TOKEN})
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"addon")],
+        "client": ("192.168.7.7", 5000),
+        "server": ("addon", 8000),
+    }
+    asyncio.run(app(scope, receive, send))
+    assert sent[0]["status"] == 403
+
+
+def test_cross_site_static_loads_never_test_a_token_or_spend_budget(boot):
+    client = _served_client(boot, {"save_token": TOKEN}, ("192.168.7.7", 5000))
+    cross = {"Sec-Fetch-Site": "cross-site"}
+    for _ in range(15):
+        assert client.get("/", headers={**cross, "X-Save-Token": "guess"}).status_code == 403
+    assert client.get("/", headers={**cross, "X-Save-Token": TOKEN}).status_code == 403
+    assert client.get("/zones.json", headers={"X-Save-Token": TOKEN}).status_code == 200
+
+
+def test_ingress_loads_the_editor_from_a_cross_site_link(boot):
+    client = _served_client(boot, {}, (INGRESS, 5000))
+    assert client.get("/", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("body", "status"),
+    [
+        (
+            b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},'
+            b'"geometry":{"type":"Polygon","coordinates":[[[1'
+            + b"0" * 400
+            + b",0],[1,0],[1,1],[1"
+            + b"0" * 400
+            + b",0]]]}}]}",
+            422,
+        ),
+        (b"1" * 5000, 400),
+        (b"[" * 100_000, 400),
+    ],
+    ids=["huge-int", "too-many-digits", "too-deep"],
+)
+def test_a_save_body_python_cannot_hold_is_refused_not_a_500(boot, body, status):
+    client = _served_client(boot, {"save_token": TOKEN}, (INGRESS, 5000))
+    r = client.post("/save_zones", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == status
+
+
+def test_a_refusal_carries_the_security_headers(boot):
+    client = _served_client(boot, {"save_token": TOKEN}, ("192.168.7.7", 5000))
+    r = client.get("/")
+    assert r.status_code == 403
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    ("attrs", "accuracy"),
+    [
+        ({"latitude": 10**400, "longitude": 0}, "dropped"),
+        ({"latitude": 91, "longitude": 0}, "dropped"),
+        ({"latitude": 1, "longitude": 2, "gps_accuracy": 10**400}, None),
+    ],
+)
+def test_an_out_of_range_tracker_is_dropped_not_a_crash(attrs, accuracy):
+    import main
+
+    point = main._overlay_point("device_tracker.x", {"attributes": attrs})
+    if accuracy == "dropped":
+        assert point is None
+    else:
+        assert point["gps_accuracy"] is accuracy

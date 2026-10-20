@@ -43,15 +43,6 @@ def configure_logging(level: int = logging.INFO) -> None:
     logging.getLogger().setLevel(level)
 
 
-def allow_all_ips(options: dict) -> bool:
-    """Whether unauthenticated access from any client IP is enabled.
-
-    Options only: an auth bypass keyed on process arguments would be fragile
-    and surprising.
-    """
-    return bool(options.get("allow_all_ips", False))
-
-
 def allowed_ip(request: Request) -> bool:
     """Whether the request's TCP peer is the HA ingress sidecar.
 
@@ -63,13 +54,11 @@ def allowed_ip(request: Request) -> bool:
     return bool(peer) and peer in ALLOWED_IPS
 
 
-def allow_request(options: dict, request: Request) -> bool:
-    """Check if the request is allowed to access the web interface."""
-    return allow_all_ips(options) or allowed_ip(request)
+def atomic_write_json(path: str, data) -> bytes:
+    """Serialise ``data`` to ``path`` atomically and return the bytes written.
 
-
-def atomic_write_json(path: str, data) -> None:
-    """Serialise ``data`` to ``path`` atomically.
+    Raises ValueError, before touching the disk, if ``data`` holds NaN or
+    Infinity: browsers' JSON.parse rejects them, so the file would not load.
 
     Writes to a temporary file in the same directory, flushes and fsyncs it,
     then renames it over the destination. Guarantees that a concurrent reader
@@ -82,11 +71,12 @@ def atomic_write_json(path: str, data) -> None:
     (overlayfs as used by HA OS, vfat, tmpfs) the rename may not be
     persisted to the directory inode before power is lost.
     """
+    body = json.dumps(data, allow_nan=False).encode()
     directory = os.path.dirname(path) or "."
     fd, tmp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f)
+        with os.fdopen(fd, "wb") as f:
+            f.write(body)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
@@ -101,12 +91,13 @@ def atomic_write_json(path: str, data) -> None:
     try:
         dir_fd = os.open(directory, os.O_RDONLY)
     except OSError:
-        return
+        return body
     try:
         with contextlib.suppress(OSError):
             os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
+    return body
 
 
 def load_options() -> dict:

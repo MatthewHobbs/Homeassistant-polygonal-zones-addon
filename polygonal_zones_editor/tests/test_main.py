@@ -1,6 +1,7 @@
 from collections import Counter
 from email.utils import formatdate
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -13,32 +14,27 @@ import pytest
 from starlette.testclient import TestClient
 
 
-@pytest.fixture(autouse=True)
-def reset_save_rate_limit():
-    """Each test gets a clean rate-limit state. Without this, accumulated
-    failures leak between tests and later suites spuriously hit 429."""
-    import main
-
-    main._auth_failures.clear()
-    yield
-    main._auth_failures.clear()
-
-
 @pytest.fixture
 def app_factory(tmp_zones_file):
     import main
 
     def _build(options=None):
-        app, _ = main.generate_app(options or {})
+        app = main.generate_app(options or {})
         return app
 
     return _build
 
 
+INGRESS = ("172.30.32.2", 5000)
+
+
+def _ingress(app):
+    return TestClient(app, client=INGRESS)
+
+
 @pytest.fixture
-def allow_all_client(app_factory):
-    app = app_factory({"allow_all_ips": True})
-    return TestClient(app)
+def ingress_client(app_factory):
+    return _ingress(app_factory({}))
 
 
 @pytest.fixture
@@ -63,33 +59,33 @@ def _valid_payload(name="Home"):
     }
 
 
-def test_zones_json_returns_empty_collection(allow_all_client, tmp_zones_file):
-    response = allow_all_client.get("/zones.json")
+def test_zones_json_returns_empty_collection(ingress_client, tmp_zones_file):
+    response = ingress_client.get("/zones.json")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     assert response.json() == {"type": "FeatureCollection", "features": []}
 
 
-def test_zones_json_passes_file_bytes_through(allow_all_client, tmp_zones_file):
+def test_zones_json_passes_file_bytes_through(ingress_client, tmp_zones_file):
     # Write a payload with whitespace formatting that JSONResponse would
     # normalise away — the passthrough must preserve the bytes verbatim.
     raw = b'{"type": "FeatureCollection",\n    "features": []\n}'
     tmp_zones_file.write_bytes(raw)
-    response = allow_all_client.get("/zones.json")
+    response = ingress_client.get("/zones.json")
     assert response.status_code == 200
     assert response.content == raw
 
 
-def test_zones_json_returns_etag(allow_all_client, tmp_zones_file):
-    response = allow_all_client.get("/zones.json")
+def test_zones_json_returns_etag(ingress_client, tmp_zones_file):
+    response = ingress_client.get("/zones.json")
     assert response.status_code == 200
     # Strong validator: the quoted hex sha256 of the bytes served.
     expected = hashlib.sha256(tmp_zones_file.read_bytes()).hexdigest()
     assert response.headers["etag"] == f'"{expected}"'
 
 
-def test_zones_json_returns_last_modified(allow_all_client, tmp_zones_file):
-    response = allow_all_client.get("/zones.json")
+def test_zones_json_returns_last_modified(ingress_client, tmp_zones_file):
+    response = ingress_client.get("/zones.json")
     assert response.status_code == 200
     # RFC 7231 IMF-fixdate of the file's mtime, e.g. "Sun, 06 Nov 1994 08:49:37 GMT".
     expected = formatdate(os.stat(tmp_zones_file).st_mtime, usegmt=True)
@@ -100,12 +96,12 @@ def test_zones_json_returns_last_modified(allow_all_client, tmp_zones_file):
     )
 
 
-def test_zones_json_returns_304_on_matching_if_none_match(allow_all_client, tmp_zones_file):
+def test_zones_json_returns_304_on_matching_if_none_match(ingress_client, tmp_zones_file):
     """Integration polling idiom (#119): pass the previous ETag via
     If-None-Match; the addon returns 304 with no body so the poll
     doesn't re-parse a FeatureCollection that hasn't changed."""
-    etag = allow_all_client.get("/zones.json").headers["etag"]
-    r = allow_all_client.get("/zones.json", headers={"If-None-Match": etag})
+    etag = ingress_client.get("/zones.json").headers["etag"]
+    r = ingress_client.get("/zones.json", headers={"If-None-Match": etag})
     assert r.status_code == 304
     # 304 must not carry a body per RFC 7232.
     assert r.content == b""
@@ -116,36 +112,36 @@ def test_zones_json_returns_304_on_matching_if_none_match(allow_all_client, tmp_
     assert r.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
 
-def test_zones_json_returns_304_on_wildcard_if_none_match(allow_all_client, tmp_zones_file):
+def test_zones_json_returns_304_on_wildcard_if_none_match(ingress_client, tmp_zones_file):
     """If-None-Match: * matches any existing resource per RFC 7232."""
-    r = allow_all_client.get("/zones.json", headers={"If-None-Match": "*"})
+    r = ingress_client.get("/zones.json", headers={"If-None-Match": "*"})
     assert r.status_code == 304
 
 
-def test_zones_json_returns_200_on_stale_if_none_match(allow_all_client, tmp_zones_file):
+def test_zones_json_returns_200_on_stale_if_none_match(ingress_client, tmp_zones_file):
     """If the client's cached ETag doesn't match, serve the full body."""
-    r = allow_all_client.get("/zones.json", headers={"If-None-Match": '"notarealtag"'})
+    r = ingress_client.get("/zones.json", headers={"If-None-Match": '"notarealtag"'})
     assert r.status_code == 200
     assert r.headers.get("etag") != '"notarealtag"'
     assert b"FeatureCollection" in r.content
 
 
-def test_zones_json_if_none_match_handles_comma_separated_list(allow_all_client, tmp_zones_file):
+def test_zones_json_if_none_match_handles_comma_separated_list(ingress_client, tmp_zones_file):
     """RFC 7232 permits a comma-separated list of candidate validators.
     Match on any one returns 304."""
-    etag = allow_all_client.get("/zones.json").headers["etag"]
-    r = allow_all_client.get(
+    etag = ingress_client.get("/zones.json").headers["etag"]
+    r = ingress_client.get(
         "/zones.json",
         headers={"If-None-Match": f'"stale", {etag}, "alsostale"'},
     )
     assert r.status_code == 304
 
 
-def test_save_response_includes_new_etag(allow_all_client, tmp_zones_file):
+def test_save_response_includes_new_etag(ingress_client, tmp_zones_file):
     # Initial GET ETag.
-    initial = allow_all_client.get("/zones.json").headers["etag"]
+    initial = ingress_client.get("/zones.json").headers["etag"]
     # POST a new payload.
-    r = allow_all_client.post("/save_zones", json=_valid_payload())
+    r = ingress_client.post("/save_zones", json=_valid_payload())
     assert r.status_code == 200
     assert "etag" in r.headers
     # The new ETag must be in both the response header and the body, and
@@ -154,9 +150,9 @@ def test_save_response_includes_new_etag(allow_all_client, tmp_zones_file):
     assert r.headers["etag"] != initial
 
 
-def test_save_with_matching_if_match_succeeds(allow_all_client, tmp_zones_file):
-    etag = allow_all_client.get("/zones.json").headers["etag"]
-    r = allow_all_client.post(
+def test_save_with_matching_if_match_succeeds(ingress_client, tmp_zones_file):
+    etag = ingress_client.get("/zones.json").headers["etag"]
+    r = ingress_client.post(
         "/save_zones",
         json=_valid_payload(),
         headers={"If-Match": etag},
@@ -164,13 +160,13 @@ def test_save_with_matching_if_match_succeeds(allow_all_client, tmp_zones_file):
     assert r.status_code == 200
 
 
-def test_save_with_stale_if_match_returns_412(allow_all_client, tmp_zones_file):
+def test_save_with_stale_if_match_returns_412(ingress_client, tmp_zones_file):
     # First save advances the ETag.
-    initial = allow_all_client.get("/zones.json").headers["etag"]
-    allow_all_client.post("/save_zones", json=_valid_payload(name="One"))
+    initial = ingress_client.get("/zones.json").headers["etag"]
+    ingress_client.post("/save_zones", json=_valid_payload(name="One"))
 
     # Now post with the stale ETag — should be refused.
-    r = allow_all_client.post(
+    r = ingress_client.post(
         "/save_zones",
         json=_valid_payload(name="Two"),
         headers={"If-Match": initial},
@@ -184,24 +180,24 @@ def test_save_with_stale_if_match_returns_412(allow_all_client, tmp_zones_file):
     assert r.headers.get("etag") == body["current_etag"]
 
 
-def test_save_without_if_match_still_works(allow_all_client, tmp_zones_file):
+def test_save_without_if_match_still_works(ingress_client, tmp_zones_file):
     # Backwards-compat: clients that don't send If-Match keep working
     # (last-write-wins) so older curl scripts and the integration aren't
     # forced to learn ETags.
-    r = allow_all_client.post("/save_zones", json=_valid_payload())
+    r = ingress_client.post("/save_zones", json=_valid_payload())
     assert r.status_code == 200
 
 
-def test_zones_json_sets_cache_headers(allow_all_client):
-    response = allow_all_client.get("/zones.json")
+def test_zones_json_sets_cache_headers(ingress_client):
+    response = ingress_client.get("/zones.json")
     assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
     # Cache-Control: no-store already says it; the HTTP/1.0 headers add nothing.
     assert "pragma" not in response.headers
     assert "expires" not in response.headers
 
 
-def test_zones_json_no_wildcard_cors(allow_all_client):
-    response = allow_all_client.get("/zones.json")
+def test_zones_json_no_wildcard_cors(ingress_client):
+    response = ingress_client.get("/zones.json")
     assert response.headers.get("access-control-allow-origin") != "*"
 
 
@@ -211,9 +207,9 @@ def test_zones_json_blocks_unauthorized_client(restricted_client):
     assert response.json() == {"error": "not authorised"}
 
 
-def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
+def test_save_zones_persists_valid_geojson(ingress_client, tmp_zones_file):
     payload = _valid_payload()
-    response = allow_all_client.post("/save_zones", json=payload)
+    response = ingress_client.post("/save_zones", json=payload)
 
     assert response.status_code == 200
     body = response.json()
@@ -238,7 +234,7 @@ def test_save_zones_persists_valid_geojson(allow_all_client, tmp_zones_file):
     assert "schema_version" not in stored
 
 
-def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_file):
+def test_save_zones_preserves_client_supplied_id(ingress_client, tmp_zones_file):
     """When the client supplies a stable properties.id (a drawn zone, for
     which the editor generates a client-side UUID), the server must
     round-trip it verbatim rather than overwriting with a fresh one —
@@ -257,14 +253,14 @@ def test_save_zones_preserves_client_supplied_id(allow_all_client, tmp_zones_fil
             }
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
     stored = json.loads(tmp_zones_file.read_text())
     assert stored["features"][0]["properties"]["id"] == stable_id
 
 
 def test_save_zones_backfills_missing_id_and_non_dict_properties(
-    allow_all_client,
+    ingress_client,
     tmp_zones_file,
 ):
     """Feature with properties=null (allowed on input) gets a fresh
@@ -291,7 +287,7 @@ def test_save_zones_backfills_missing_id_and_non_dict_properties(
             },
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
     stored = json.loads(tmp_zones_file.read_text())
     for feat in stored["features"]:
@@ -299,48 +295,48 @@ def test_save_zones_backfills_missing_id_and_non_dict_properties(
         assert len(feat["properties"]["id"]) == 32
 
 
-def test_save_zones_rejects_non_int_schema_version(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_non_int_schema_version(ingress_client, tmp_zones_file):
     payload = {**_valid_payload(), "schema_version": "oops"}
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "schema_version" in r.json()["detail"]
 
 
-def test_save_zones_rejects_bool_schema_version(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_bool_schema_version(ingress_client, tmp_zones_file):
     """bool subclasses int in Python; must be explicitly rejected so a
     consumer doing `schema_version >= 1` doesn't silently pass on True."""
     payload = {**_valid_payload(), "schema_version": True}
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "schema_version" in r.json()["detail"]
 
 
-def test_save_zones_accepts_valid_schema_version(allow_all_client, tmp_zones_file):
+def test_save_zones_accepts_valid_schema_version(ingress_client, tmp_zones_file):
     payload = {**_valid_payload(), "schema_version": 1}
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
 
 
-def test_save_zones_accepts_nested_schema_version(allow_all_client, tmp_zones_file):
+def test_save_zones_accepts_nested_schema_version(ingress_client, tmp_zones_file):
     """The canonical input location is the foreign member; a nested value is
     validated and re-stamped nested (never duplicated top-level)."""
     payload = {**_valid_payload(), "polygonal_zones": {"schema_version": 1}}
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
     stored = json.loads(tmp_zones_file.read_text())
     assert stored["polygonal_zones"]["schema_version"] == 1
     assert "schema_version" not in stored
 
 
-def test_save_zones_rejects_non_int_nested_schema_version(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_non_int_nested_schema_version(ingress_client, tmp_zones_file):
     """A bad value in the canonical nested location is rejected, not ignored."""
     payload = {**_valid_payload(), "polygonal_zones": {"schema_version": "oops"}}
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "schema_version" in r.json()["detail"]
 
 
-def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_non_string_id(ingress_client, tmp_zones_file):
     payload = {
         "type": "FeatureCollection",
         "features": [
@@ -354,12 +350,12 @@ def test_save_zones_rejects_non_string_id(allow_all_client, tmp_zones_file):
             }
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "properties.id" in r.json()["detail"]
 
 
-def test_save_zones_rejects_empty_id(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_empty_id(ingress_client, tmp_zones_file):
     payload = {
         "type": "FeatureCollection",
         "features": [
@@ -373,12 +369,12 @@ def test_save_zones_rejects_empty_id(allow_all_client, tmp_zones_file):
             }
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "properties.id" in r.json()["detail"]
 
 
-def test_save_zones_rejects_duplicate_ids(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_duplicate_ids(ingress_client, tmp_zones_file):
     """id is the binding handle — duplicates would defeat the 'stable
     reference' contract since an automation couldn't route an id match
     to a specific zone unambiguously."""
@@ -390,15 +386,15 @@ def test_save_zones_rejects_duplicate_ids(allow_all_client, tmp_zones_file):
             {"type": "Feature", "properties": {"name": "b", "id": "dup"}, "geometry": geom},
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "duplicate" in r.json()["detail"]
     assert "id" in r.json()["detail"]
 
 
-def test_save_zones_rejects_non_geojson(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_non_geojson(ingress_client, tmp_zones_file):
     original = tmp_zones_file.read_text()
-    response = allow_all_client.post("/save_zones", json={"evil": True})
+    response = ingress_client.post("/save_zones", json={"evil": True})
     assert response.status_code == 422
     assert tmp_zones_file.read_text() == original
 
@@ -446,9 +442,9 @@ def test_save_zones_rejects_non_geojson(allow_all_client, tmp_zones_file):
         },
     ],
 )
-def test_save_zones_rejects_malformed_shapes(allow_all_client, tmp_zones_file, payload):
+def test_save_zones_rejects_malformed_shapes(ingress_client, tmp_zones_file, payload):
     original = tmp_zones_file.read_text()
-    response = allow_all_client.post("/save_zones", json=payload)
+    response = ingress_client.post("/save_zones", json=payload)
     assert response.status_code == 422
     assert tmp_zones_file.read_text() == original
 
@@ -483,11 +479,11 @@ def _polygon(coords):
         # subclasses int in Python (True == 1, False == 0 would otherwise pass).
         (
             _feature(_polygon([[[True, 0], [1, 0], [1, 1], [True, 0]]])),
-            "longitude must be a number",
+            "longitude must be a finite number",
         ),
         (
             _feature(_polygon([[["oops", 0], [1, 0], [1, 1], ["oops", 0]]])),
-            "longitude must be a number",
+            "longitude must be a finite number",
         ),
         # MultiPolygon shape
         (
@@ -538,13 +534,13 @@ def _polygon(coords):
     ],
 )
 def test_save_zones_rejects_invalid_geometry_with_detail(
-    allow_all_client,
+    ingress_client,
     tmp_zones_file,
     payload,
     expect_detail_contains,
 ):
     original = tmp_zones_file.read_text()
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     body = r.json()
     assert body["error"] == "invalid GeoJSON"
@@ -555,7 +551,7 @@ def test_save_zones_rejects_invalid_geometry_with_detail(
     assert tmp_zones_file.read_text() == original
 
 
-def test_save_zones_rejects_non_finite_coordinate(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_non_finite_coordinate(ingress_client, tmp_zones_file):
     """Infinity / NaN are semi-legal in Python's json (allow_nan=True) but
     meaningless for geodetic coordinates. Send as raw bytes — httpx on
     Python 3.14 refuses to serialize float('inf') via json=payload."""
@@ -564,26 +560,63 @@ def test_save_zones_rejects_non_finite_coordinate(allow_all_client, tmp_zones_fi
         b'"properties":{},"geometry":{"type":"Polygon",'
         b'"coordinates":[[[Infinity,0],[1,0],[1,1],[Infinity,0]]]}}]}'
     )
-    r = allow_all_client.post(
+    r = ingress_client.post(
         "/save_zones", content=raw, headers={"content-type": "application/json"}
     )
     assert r.status_code == 422
-    assert "must be finite" in r.json()["detail"]
+    assert "longitude must be a finite number" in r.json()["detail"]
 
 
-def test_save_zones_rejects_vertex_cap_breach(allow_all_client, tmp_zones_file):
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_save_zones_refuses_a_non_finite_number_anywhere(ingress_client, tmp_zones_file, constant):
+    # Python's parser accepts these, but the editor's JSON.parse cannot load them back.
+    original = tmp_zones_file.read_text()
+    raw = (
+        b'{"type":"FeatureCollection","features":[{"type":"Feature",'
+        b'"properties":{"name":"x","weight":' + constant + b"},"
+        b'"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}'
+    )
+    r = ingress_client.post(
+        "/save_zones", content=raw, headers={"content-type": "application/json"}
+    )
+    assert r.status_code == 422
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_etag_is_the_hash_of_the_bytes_written(ingress_client, tmp_zones_file, monkeypatch):
+    # The file vanishing straight after the write must not turn the ETag into null.
+    import main
+
+    real_write = main.atomic_write_json
+    written = {}
+
+    def write_then_lose_it(path, data):
+        result = real_write(path, data)
+        written["bytes"] = tmp_zones_file.read_bytes()
+        tmp_zones_file.unlink()
+        return result
+
+    monkeypatch.setattr(main, "atomic_write_json", write_then_lose_it)
+    r = ingress_client.post("/save_zones", json=_valid_payload())
+    assert r.status_code == 200
+    expected = f'"{hashlib.sha256(written["bytes"]).hexdigest()}"'
+    assert r.json()["etag"] == expected
+    assert r.headers["etag"] == expected
+
+
+def test_save_zones_rejects_vertex_cap_breach(ingress_client, tmp_zones_file):
     """Per-feature vertex cap. Build a single Polygon with 1001 vertices —
     the first-last-equal close duplicates one position, so generate 1000
     distinct points and close with the first. Cap is 1000 so this should
     trip at the 1001st total."""
     ring = [[i / 1000.0, 0.0] for i in range(1001)] + [[0.0, 0.0]]
     payload = _feature(_polygon([ring]))
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "vertex count" in r.json()["detail"]
 
 
-def test_save_zones_rejects_duplicate_zone_names(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_duplicate_zone_names(ingress_client, tmp_zones_file):
     """Two features with the same name would make HA automations ambiguous
     (`state_attr('zone.home', ...)` — which 'home'?). Reject at save time."""
     geom = _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]])
@@ -594,12 +627,12 @@ def test_save_zones_rejects_duplicate_zone_names(allow_all_client, tmp_zones_fil
             {"type": "Feature", "properties": {"name": "Home"}, "geometry": geom},
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 422
     assert "duplicate" in r.json()["detail"]
 
 
-def test_save_zones_accepts_unnamed_duplicates(allow_all_client, tmp_zones_file):
+def test_save_zones_accepts_unnamed_duplicates(ingress_client, tmp_zones_file):
     """Uniqueness only applies to features that carry a string name.
     Two unnamed features (or features with name=None) are fine — HA won't
     surface them as zone.* entities anyway until a name is set."""
@@ -611,13 +644,12 @@ def test_save_zones_accepts_unnamed_duplicates(allow_all_client, tmp_zones_file)
             {"type": "Feature", "properties": {"name": None}, "geometry": geom},
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
 
 
-def test_save_zones_accepts_multipolygon(allow_all_client, tmp_zones_file):
-    """MultiPolygon is an accepted geometry type alongside Polygon. Exercises
-    the branch in _is_valid_feature_collection that allows MultiPolygon."""
+def test_save_zones_accepts_multipolygon(ingress_client, tmp_zones_file):
+    """MultiPolygon is an accepted geometry type alongside Polygon."""
     payload = {
         "type": "FeatureCollection",
         "features": [
@@ -634,11 +666,11 @@ def test_save_zones_accepts_multipolygon(allow_all_client, tmp_zones_file):
             }
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
 
 
-def test_save_zones_accepts_null_properties(allow_all_client, tmp_zones_file):
+def test_save_zones_accepts_null_properties(ingress_client, tmp_zones_file):
     """`properties` may be absent or null per GeoJSON — the validator only
     rejects non-None non-dict values."""
     payload = {
@@ -654,12 +686,12 @@ def test_save_zones_accepts_null_properties(allow_all_client, tmp_zones_file):
             }
         ],
     }
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
 
 
 def test_save_zones_rejects_body_over_cap_with_small_content_length(
-    allow_all_client,
+    ingress_client,
     tmp_zones_file,
     monkeypatch,
 ):
@@ -683,7 +715,7 @@ def test_save_zones_rejects_body_over_cap_with_small_content_length(
     monkeypatch.setattr(Request, "body", lying_body)
 
     # content-length header small, triggering the post-read len(body) > cap.
-    r = allow_all_client.post(
+    r = ingress_client.post(
         "/save_zones",
         content=original_payload,
         headers={"content-type": "application/json", "content-length": str(len(original_payload))},
@@ -692,18 +724,18 @@ def test_save_zones_rejects_body_over_cap_with_small_content_length(
     assert r.json() == {"error": "payload too large"}
 
 
-def test_save_zones_rejects_non_string_name(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_non_string_name(ingress_client, tmp_zones_file):
     payload = _valid_payload()
     payload["features"][0]["properties"]["name"] = {"x": 1}
     original = tmp_zones_file.read_text()
-    response = allow_all_client.post("/save_zones", json=payload)
+    response = ingress_client.post("/save_zones", json=payload)
     assert response.status_code == 422
     assert tmp_zones_file.read_text() == original
 
 
-def test_save_zones_rejects_invalid_json(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_invalid_json(ingress_client, tmp_zones_file):
     original = tmp_zones_file.read_text()
-    response = allow_all_client.post(
+    response = ingress_client.post(
         "/save_zones",
         content=b"not json",
         headers={"content-type": "application/json"},
@@ -712,10 +744,10 @@ def test_save_zones_rejects_invalid_json(allow_all_client, tmp_zones_file):
     assert tmp_zones_file.read_text() == original
 
 
-def test_save_zones_rejects_oversize_payload(allow_all_client, tmp_zones_file):
+def test_save_zones_rejects_oversize_payload(ingress_client, tmp_zones_file):
     original = tmp_zones_file.read_text()
     huge = "x" * (512 * 1024 + 1)
-    response = allow_all_client.post(
+    response = ingress_client.post(
         "/save_zones",
         content=huge.encode(),
         headers={"content-type": "application/json"},
@@ -724,14 +756,14 @@ def test_save_zones_rejects_oversize_payload(allow_all_client, tmp_zones_file):
     assert tmp_zones_file.read_text() == original
 
 
-def test_save_zones_returns_500_on_write_failure(allow_all_client, tmp_zones_file, monkeypatch):
+def test_save_zones_returns_500_on_write_failure(ingress_client, tmp_zones_file, monkeypatch):
     import main
 
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
     monkeypatch.setattr(main, "atomic_write_json", boom)
-    response = allow_all_client.post("/save_zones", json=_valid_payload())
+    response = ingress_client.post("/save_zones", json=_valid_payload())
     assert response.status_code == 500
 
 
@@ -742,27 +774,6 @@ def test_save_zones_blocks_unauthorized_client(restricted_client, tmp_zones_file
     assert response.status_code == 403
     assert response.json() == {"error": "not authorised"}
     assert tmp_zones_file.read_text() == original
-
-
-def test_save_token_required_when_set_and_lan_request(app_factory, tmp_zones_file):
-    """When save_token is set, non-ingress requests must present it."""
-    app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
-    client = TestClient(app)
-    original = tmp_zones_file.read_text()
-
-    # No header.
-    r = client.post("/save_zones", json=_valid_payload())
-    assert r.status_code == 403
-    assert r.json() == {"error": "not authorised"}
-
-    # Wrong token.
-    r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "wrong"})
-    assert r.status_code == 403
-
-    # Correct token.
-    r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "s3cret"})
-    assert r.status_code == 200
-    assert tmp_zones_file.read_text() != original
 
 
 def test_save_token_strips_whitespace_symmetrically(app_factory, tmp_zones_file):
@@ -779,63 +790,11 @@ def test_save_token_strips_whitespace_symmetrically(app_factory, tmp_zones_file)
     assert r.status_code == 200
 
 
-def test_save_token_works_without_allow_all_ips(app_factory, tmp_zones_file):
-    """save_token should also unlock LAN access when allow_all_ips is off."""
-    app = app_factory({"allow_all_ips": False, "save_token": "s3cret"})
-    client = TestClient(app)
-
-    r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": "s3cret"})
-    assert r.status_code == 200
-
-    # Without a token, the response is the same uniform rejection every
-    # other auth failure gets (ADR 0002 row 3) — it must not signal that a
-    # token even exists, let alone that one is merely missing.
-    r = client.post("/save_zones", json=_valid_payload())
-    assert r.status_code == 403
-    assert r.json() == {"error": "not authorised"}
-
-
-def test_zones_json_requires_token_when_set_and_lan_request(app_factory, tmp_zones_file):
-    """When save_token is set, non-ingress GET /zones.json requests must
-    present the same X-Save-Token as /save_zones, so zone geometry is never
-    less protected than the write action."""
-    app = app_factory({"allow_all_ips": True, "save_token": "s3cret"})
-    client = TestClient(app)
-
-    # No header.
-    r = client.get("/zones.json")
-    assert r.status_code == 403
-    assert r.json() == {"error": "not authorised"}
-
-    # Wrong token.
-    r = client.get("/zones.json", headers={"X-Save-Token": "wrong"})
-    assert r.status_code == 403
-
-    # Correct token.
-    r = client.get("/zones.json", headers={"X-Save-Token": "s3cret"})
-    assert r.status_code == 200
-    assert r.headers.get("etag")
-
-
-def test_zones_json_unchanged_when_no_save_token(app_factory, tmp_zones_file):
-    """Without save_token, reads remain gated only by the IP allowlist /
-    allow_all_ips. No regression for the common LAN-backup workflow."""
-    app = app_factory({"allow_all_ips": True})
-    client = TestClient(app)
-    r = client.get("/zones.json")
-    assert r.status_code == 200
-
-
 def test_zones_json_rate_limit_shared_with_save_failures(app_factory, tmp_zones_file):
     """Failed /zones.json reads and failed /save_zones writes share one
     rate-limit bucket per IP. Without this, an attacker could double
-    their per-window guess budget by rotating between GET and POST.
-
-    Uses allow_all_ips: true so both paths reach their token check
-    (otherwise IPAllowMiddleware blocks GETs at 403 before the handler
-    runs, and failures recorded only from /save_zones wouldn't prove
-    the shared-bucket property)."""
-    app = app_factory({"allow_all_ips": True, "save_token": "sekrit"})
+    their per-window guess budget by rotating between GET and POST."""
+    app = app_factory({"save_token": "sekrit"})
     client = TestClient(app)
 
     # Five bad POSTs.
@@ -874,24 +833,24 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
             lambda **kw: client.post("/save_zones", json=_valid_payload(), **kw),
         )
 
-    # No token configured, no allow_all_ips: "not_allowed".
-    client = TestClient(app_factory({"allow_all_ips": False}))
+    # No token configured.
+    client = TestClient(app_factory({}))
     for name, do in requests_for(client):
         r = do()
         assert r.status_code == expected_status, name
         assert r.json() == expected_body, name
         assert r.headers.get("cache-control") == expected_cache_control, name
 
-    # Token configured, none presented: "token_missing".
-    client = TestClient(app_factory({"allow_all_ips": True, "save_token": "sekrit"}))
+    # Token configured, none presented.
+    client = TestClient(app_factory({"save_token": "sekrit"}))
     for name, do in requests_for(client):
         r = do()
         assert r.status_code == expected_status, name
         assert r.json() == expected_body, name
         assert r.headers.get("cache-control") == expected_cache_control, name
 
-    # Token configured, wrong one presented: "token_wrong".
-    client = TestClient(app_factory({"allow_all_ips": True, "save_token": "sekrit"}))
+    # Token configured, wrong one presented.
+    client = TestClient(app_factory({"save_token": "sekrit"}))
     for name, do in requests_for(client):
         r = do(headers={"X-Save-Token": "wrong"})
         assert r.status_code == expected_status, name
@@ -899,56 +858,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
         assert r.headers.get("cache-control") == expected_cache_control, name
 
 
-def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
-    """Ingress (172.30.32.2) reads remain unauthenticated even when a
-    token is set — the HA UI's zones.json fetch must keep working."""
-    import main
-
-    app, _ = main.generate_app({"save_token": "sekrit"})
-    client = TestClient(app)
-    import helpers
-
-    original_allowed_ip_helpers = helpers.allowed_ip
-    original_allowed_ip_main = main.allowed_ip
-    try:
-        helpers.allowed_ip = lambda req: True
-        main.allowed_ip = lambda req: True
-        r = client.get("/zones.json")
-        assert r.status_code == 200
-    finally:
-        helpers.allowed_ip = original_allowed_ip_helpers
-        main.allowed_ip = original_allowed_ip_main
-
-
-def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
-    """Ingress (172.30.32.2) is always allowed even when a token is set —
-    the HA UI Save button must keep working without knowing the token."""
-    from starlette.testclient import TestClient as TC
-
-    import main
-
-    app, _ = main.generate_app({"save_token": "s3cret"})
-    # Simulate a request from the ingress IP.
-    client = TC(app, base_url="http://172.30.32.2")
-    # TestClient doesn't expose a way to set request.client.host directly, so
-    # we monkeypatch allowed_ip to confirm the bypass works in principle.
-    import helpers
-
-    original_allowed_ip = helpers.allowed_ip
-    main_allowed_ip = main.allowed_ip
-    try:
-        # Force allowed_ip to True for this client.
-        helpers.allowed_ip = lambda req: True
-        main.allowed_ip = lambda req: True
-        r = client.post("/save_zones", json=_valid_payload())
-        assert r.status_code == 200
-    finally:
-        helpers.allowed_ip = original_allowed_ip
-        main.allowed_ip = main_allowed_ip
-
-
-def test_index_serves_static_html(allow_all_client):
-    response = allow_all_client.get("/")
+def test_index_serves_static_html(ingress_client):
+    response = ingress_client.get("/")
     assert response.status_code == 200
     # index.html is served as a static file, not a template: the colour
     # comes from /config.json, so no placeholder may survive in the page.
@@ -957,25 +868,24 @@ def test_index_serves_static_html(allow_all_client):
     assert "ZONE_COLOUR" not in response.text
 
 
-def test_config_json_default(allow_all_client):
-    response = allow_all_client.get("/config.json")
+def test_config_json_default(ingress_client):
+    response = ingress_client.get("/config.json")
     assert response.status_code == 200
-    assert response.json() == {"zone_colour": "green", "theme": "auto"}
+    # config.yaml's default, so an options.json without the key looks the same.
+    assert response.json() == {"zone_colour": "purple", "theme": "auto"}
 
 
 def test_config_json_respects_option(app_factory):
-    app = app_factory({"allow_all_ips": True, "zone_colour": "purple"})
-    client = TestClient(app)
+    client = TestClient(app_factory({"zone_colour": "red"}), client=INGRESS)
     response = client.get("/config.json")
     assert response.status_code == 200
-    assert response.json() == {"zone_colour": "purple", "theme": "auto"}
+    assert response.json() == {"zone_colour": "red", "theme": "auto"}
 
 
 def test_config_json_passes_arbitrary_string_safely(app_factory):
     # JSONResponse encodes the value safely — no template injection surface.
     malicious = 'red"; alert(1); //'
-    app = app_factory({"allow_all_ips": True, "zone_colour": malicious})
-    client = TestClient(app)
+    client = TestClient(app_factory({"zone_colour": malicious}), client=INGRESS)
     response = client.get("/config.json")
     assert response.status_code == 200
     assert response.json() == {"zone_colour": malicious, "theme": "auto"}
@@ -983,8 +893,7 @@ def test_config_json_passes_arbitrary_string_safely(app_factory):
 
 @pytest.mark.parametrize("value", ["auto", "light", "dark"])
 def test_config_json_theme_passthrough(app_factory, value):
-    app = app_factory({"allow_all_ips": True, "theme": value})
-    client = TestClient(app)
+    client = TestClient(app_factory({"theme": value}), client=INGRESS)
     assert client.get("/config.json").json()["theme"] == value
 
 
@@ -992,15 +901,14 @@ def test_config_json_theme_invalid_falls_back_to_auto(app_factory):
     # HA's schema enforces the enum at the supervisor, but defence in depth:
     # an unexpected value (e.g. someone hand-edited options.json) must not
     # propagate to the frontend as-is.
-    app = app_factory({"allow_all_ips": True, "theme": "neon"})
-    client = TestClient(app)
+    client = TestClient(app_factory({"theme": "neon"}), client=INGRESS)
     assert client.get("/config.json").json()["theme"] == "auto"
 
 
 def test_index_blocks_unauthorized_client(restricted_client):
     response = restricted_client.get("/")
     assert response.status_code == 403
-    assert response.text == "not allowed"
+    assert response.json() == {"error": "not authorised"}
 
 
 def test_config_json_blocks_unauthorized_client(restricted_client):
@@ -1014,10 +922,10 @@ def test_healthz_returns_ok_without_authz(restricted_client):
     assert response.text == "ok"
 
 
-def test_security_headers_applied(allow_all_client):
+def test_security_headers_applied(ingress_client):
     """SecurityHeadersMiddleware sets Referrer-Policy, nosniff,
     X-Frame-Options, and a CSP on every response."""
-    response = allow_all_client.get("/zones.json")
+    response = ingress_client.get("/zones.json")
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "SAMEORIGIN"
@@ -1054,17 +962,17 @@ def test_security_headers_applied(allow_all_client):
     assert any(t == "https://server.arcgisonline.com" for t in img_src_sources)
 
 
-def test_security_headers_applied_to_static_files(allow_all_client):
+def test_security_headers_applied_to_static_files(ingress_client):
     """Middleware runs on static assets too — clickjacking / CSP apply
     to index.html and the JS bundles."""
-    response = allow_all_client.get("/")
+    response = ingress_client.get("/")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "SAMEORIGIN"
     assert "frame-ancestors" in response.headers["content-security-policy"]
 
 
-def test_static_file_served_to_authorized_client(allow_all_client):
-    response = allow_all_client.get("/js/map.js")
+def test_static_file_served_to_authorized_client(ingress_client):
+    response = ingress_client.get("/js/map.js")
     assert response.status_code == 200
     assert "generate_map" in response.text
 
@@ -1074,23 +982,23 @@ def test_static_file_blocked_for_unauthorized_client(restricted_client):
     assert response.status_code == 403
 
 
-def test_static_traversal_attempt_rejected(allow_all_client):
+def test_static_traversal_attempt_rejected(ingress_client):
     # StaticFiles normalises and rejects paths that escape the root directory.
-    response = allow_all_client.get("/..%2F..%2Fapp%2Fconst.py")
+    response = ingress_client.get("/..%2F..%2Fapp%2Fconst.py")
     assert response.status_code == 404
 
 
-def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, tmp_zones_file):
+def test_zones_json_returns_parseable_geojson_when_populated(ingress_client, tmp_zones_file):
     """The companion integration's first action on every poll is
     json.loads(body) + a type check. Byte-identity passthrough isn't
     enough — the response must remain parseable GeoJSON with the right
     Content-Type.
     """
     payload = _valid_payload(name="Home")
-    r = allow_all_client.post("/save_zones", json=payload)
+    r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
 
-    r = allow_all_client.get("/zones.json")
+    r = ingress_client.get("/zones.json")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/json"
     data = r.json()
@@ -1099,11 +1007,11 @@ def test_zones_json_returns_parseable_geojson_when_populated(allow_all_client, t
     assert data["features"][0]["properties"]["name"] == "Home"
 
 
-def test_zones_json_returns_503_when_file_unreadable(allow_all_client, tmp_zones_file):
+def test_zones_json_returns_503_when_file_unreadable(ingress_client, tmp_zones_file):
     """An unreadable file is a 503 with a JSON body and a log line, not a
     bare 500."""
     tmp_zones_file.unlink()
-    response = allow_all_client.get("/zones.json")
+    response = ingress_client.get("/zones.json")
     assert response.status_code == 503
     assert response.json() == {"error": "zones file unreadable"}
 
@@ -1135,15 +1043,14 @@ def test_save_zones_rate_limits_after_10_failures(app_factory, tmp_zones_file):
 
 def test_save_zones_rate_limit_window_expires(app_factory, tmp_zones_file, monkeypatch):
     """Failures older than the window are evicted on the next check. Without
-    this, a client hitting the limit would be locked out forever. Exercises
-    the `failures.popleft()` branch in `_rate_limit_exceeded`.
+    this, a client hitting the limit would be locked out forever.
     """
     import main
 
     # Freeze time at t0, record 10 failures, advance past the window, then
     # a fresh attempt should succeed (old failures get popped).
     t = [1000.0]
-    monkeypatch.setattr(main.time, "time", lambda: t[0])
+    monkeypatch.setattr(main.time, "monotonic", lambda: t[0])
 
     app = app_factory({"save_token": "sekrit"})
     client = TestClient(app)
@@ -1195,36 +1102,6 @@ def test_save_zones_rate_limit_lets_correct_token_through_on_first_try(app_facto
         headers={"X-Save-Token": "sekrit"},
     )
     assert r.status_code == 200
-
-
-def test_zones_json_uniform_rejection_when_save_token_set_and_no_header(
-    app_factory,
-    tmp_zones_file,
-):
-    """With save_token set and allow_all_ips off, a non-ingress GET with no
-    X-Save-Token header gets the same uniform rejection as every other auth
-    failure (ADR 0002 row 3) — not a distinct "token required" signal, which
-    would let a client infer a token is configured without ever presenting
-    one. This mirrors the /save_zones behaviour."""
-    app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
-    client = TestClient(app)
-    r = client.get("/zones.json")
-    assert r.status_code == 403
-    assert r.json() == {"error": "not authorised"}
-
-
-def test_zones_json_token_unlocks_lan_without_allow_all_ips(
-    app_factory,
-    tmp_zones_file,
-):
-    """Mirror of test_save_token_works_without_allow_all_ips for reads.
-    save_token is the stronger signal; setting it should unlock LAN
-    access without requiring allow_all_ips to also be flipped."""
-    app = app_factory({"allow_all_ips": False, "save_token": "sekrit"})
-    client = TestClient(app)
-    r = client.get("/zones.json", headers={"X-Save-Token": "sekrit"})
-    assert r.status_code == 200
-    assert r.headers.get("etag")
 
 
 def test_parse_trusted_proxies_handles_empty_and_list(app_factory):
@@ -1351,8 +1228,7 @@ def test_save_with_if_match_on_missing_file_omits_current_etag(
     `"current_etag": null` which forces clients into defensive
     null-handling for a field that semantically means "resource
     missing"). The ETag response header is also absent."""
-    app = app_factory({"allow_all_ips": True})
-    client = TestClient(app)
+    client = TestClient(app_factory({}), client=INGRESS)
     tmp_zones_file.unlink()
 
     r = client.post(
@@ -1519,8 +1395,8 @@ def test_overlay_point_falls_back_to_entity_id_for_name():
     assert p["name"] == "device_tracker.a" and p["state"] == "unknown"
 
 
-def test_trackers_json_reports_not_configured_by_default(allow_all_client):
-    r = allow_all_client.get("/trackers.json")
+def test_trackers_json_reports_not_configured_by_default(ingress_client):
+    r = ingress_client.get("/trackers.json")
     assert r.status_code == 200
     assert r.json() == {"configured": False, "trackers": []}
     assert r.headers["cache-control"] == "no-store"
@@ -1583,10 +1459,9 @@ def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypat
     monkeypatch.setattr(
         main, "_fetch_state", lambda eid, _t: _ha_state(eid, 51.9471338, -0.6274617)
     )
-    client = TestClient(
+    client = _ingress(
         app_factory(
             {
-                "allow_all_ips": True,
                 "overlay_entities": ["device_tracker.car"],
                 "tracker_refresh_seconds": 15,
             }
@@ -1595,6 +1470,16 @@ def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypat
     r = client.get("/trackers.json")
     assert r.json()["refresh_seconds"] == 15
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_a_bad_overlay_entity_is_warned_about_once_not_on_every_poll(app_factory, caplog):
+    import logging
+
+    client = _ingress(app_factory({"overlay_entities": ["not an entity"]}))
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            assert client.get("/trackers.json").json()["configured"] is False
+    assert sum("Ignoring overlay entity" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_trackers_json_blocks_unauthorized_client(restricted_client):
@@ -1607,10 +1492,9 @@ def test_trackers_json_blocks_unauthorized_client(restricted_client):
 
 def test_trackers_json_without_supervisor_token(app_factory, monkeypatch):
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
-    client = TestClient(
+    client = _ingress(
         app_factory(
             {
-                "allow_all_ips": True,
                 "overlay_entities": ["device_tracker.a"],
             }
         )
@@ -1630,10 +1514,9 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
         return _ha_state(entity_id, 51.9471338, -0.6274617, 5, name=entity_id)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    client = TestClient(
+    client = _ingress(
         app_factory(
             {
-                "allow_all_ips": True,
                 "overlay_entities": ["device_tracker.car", "sensor.not_a_tracker"],
             }
         )
@@ -1665,10 +1548,9 @@ def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypa
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    client = TestClient(
+    client = _ingress(
         app_factory(
             {
-                "allow_all_ips": True,
                 "overlay_entities": ["device_tracker.broken", "device_tracker.ok"],
             }
         )
@@ -1692,10 +1574,9 @@ def test_trackers_json_drops_entities_that_report_no_position(app_factory, monke
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    client = TestClient(
+    client = _ingress(
         app_factory(
             {
-                "allow_all_ips": True,
                 "overlay_entities": ["device_tracker.indoors", "device_tracker.ok"],
             }
         )
@@ -1724,10 +1605,9 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
         return _ha_state(entity_id, 51.9471338, -0.6274617)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
-    client = TestClient(
+    client = _ingress(
         app_factory(
             {
-                "allow_all_ips": True,
                 "overlay_entities": ["device_tracker.stalled", "device_tracker.ok"],
             }
         )
@@ -1759,7 +1639,7 @@ def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     entities = [f"device_tracker.t{i:02d}" for i in range(2 * main.OVERLAY_FETCH_WORKERS)]
-    client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
+    client = _ingress(app_factory({"overlay_entities": entities}))
     body = client.get("/trackers.json").json()
     assert body["unavailable"] == []
     assert [t["entity_id"] for t in body["trackers"]] == entities
@@ -1788,7 +1668,7 @@ def test_trackers_json_caps_fetches_in_flight_across_all_polls(app_factory, monk
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     entities = [f"device_tracker.t{i}" for i in range(8)]
-    client = TestClient(app_factory({"allow_all_ips": True, "overlay_entities": entities}))
+    client = _ingress(app_factory({"overlay_entities": entities}))
     with _Clients(max_workers=10) as clients:
         bodies = list(clients.map(lambda _: client.get("/trackers.json").json(), range(10)))
     assert all(len(b["trackers"]) == 8 and b["unavailable"] == [] for b in bodies)
@@ -1847,6 +1727,8 @@ _FETCH_FAILURES = {
     "server_error": _http_error(500),
     "not_json": b"<html>Bad gateway</html>",
     "timed_out": TimeoutError("timed out"),
+    "bad_status_line": http.client.BadStatusLine("garbage"),
+    "cut_short": http.client.IncompleteRead(b"{", 10),
 }
 
 
@@ -1874,9 +1756,7 @@ def test_trackers_json_survives_every_fetch_failure(app_factory, monkeypatch):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
     monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
     failing = [f"device_tracker.{name}" for name in _FETCH_FAILURES]
-    client = TestClient(
-        app_factory({"allow_all_ips": True, "overlay_entities": [*failing, "device_tracker.ok"]})
-    )
+    client = _ingress(app_factory({"overlay_entities": [*failing, "device_tracker.ok"]}))
     r = client.get("/trackers.json")
     assert r.status_code == 200
     assert [t["entity_id"] for t in r.json()["trackers"]] == ["device_tracker.ok"]
@@ -1892,7 +1772,6 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     """
     app = app_factory(
         {
-            "allow_all_ips": True,
             "save_token": "sekrit",
             "overlay_entities": ["device_tracker.a"],
         }
@@ -1911,13 +1790,8 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     assert r.json() == {"error": "too many failed attempts"}
 
 
-@pytest.mark.parametrize(
-    ("path", "cache_control"),
-    [("/save_zones", "no-cache"), ("/zones.json", "no-cache"), ("/trackers.json", "no-store")],
-)
-def test_rate_limit_refusal_is_logged_on_every_gated_route(
-    app_factory, caplog, path, cache_control
-):
+@pytest.mark.parametrize("path", ["/save_zones", "/zones.json", "/trackers.json", "/"])
+def test_rate_limit_refusal_is_logged_on_every_gated_route(app_factory, caplog, path):
     import logging
 
     import main
@@ -1929,7 +1803,8 @@ def test_rate_limit_refusal_is_logged_on_every_gated_route(
         r = client.request("POST" if path == "/save_zones" else "GET", path, json={})
     assert r.status_code == 429
     assert r.json() == {"error": "too many failed attempts"}
-    assert r.headers.get("cache-control") == cache_control
+    # A cached 429 would keep refusing after the window has passed.
+    assert r.headers.get("cache-control") == "no-store"
     assert f"Rate limit hit on {path} for testclient" in caplog.text
 
 
@@ -1968,14 +1843,84 @@ def test_parse_trusted_proxies_keeps_a_range_that_starts_at_zero(app_factory):
 
 
 @pytest.mark.parametrize("path", ["/", "/js/map.js", "/css/style.css"])
-def test_static_files_are_revalidated_so_a_client_fix_reaches_browsers(allow_all_client, path):
-    r = allow_all_client.get(path)
+def test_static_files_are_revalidated_so_a_client_fix_reaches_browsers(ingress_client, path):
+    r = ingress_client.get(path)
     assert r.status_code == 200
     assert r.headers.get("cache-control") == "no-cache"
 
 
-def test_routes_that_forbid_caching_keep_their_header(allow_all_client):
+def test_routes_that_forbid_caching_keep_their_header(ingress_client):
     assert (
-        allow_all_client.get("/zones.json").headers["cache-control"]
+        ingress_client.get("/zones.json").headers["cache-control"]
         == "no-cache, no-store, must-revalidate"
     )
+
+
+# --- LAN access needs save_token; allow_all_ips grants nothing ---------------
+
+LAN_ROUTES = [
+    ("GET", "/"),
+    ("GET", "/zones.json"),
+    ("GET", "/trackers.json"),
+    ("POST", "/save_zones"),
+]
+
+
+def _send(client, method, path, **kw):
+    if method == "POST":
+        return client.post(path, json=_valid_payload(), **kw)
+    return client.get(path, **kw)
+
+
+@pytest.mark.parametrize("options", [{}, {"allow_all_ips": True}])
+@pytest.mark.parametrize(("method", "path"), LAN_ROUTES)
+def test_lan_request_without_a_configured_token_is_refused(app_factory, options, method, path):
+    r = _send(TestClient(app_factory(options)), method, path)
+    assert r.status_code == 403
+    assert r.json() == {"error": "not authorised"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path"), [*LAN_ROUTES, ("GET", "/config.json"), ("GET", "/js/map.js")]
+)
+def test_lan_request_needs_the_token_when_one_is_configured(app_factory, method, path):
+    client = TestClient(app_factory({"save_token": "s3cret"}))
+    assert _send(client, method, path).status_code == 403
+    assert _send(client, method, path, headers={"X-Save-Token": "wrong"}).status_code == 403
+    assert _send(client, method, path, headers={"X-Save-Token": "s3cret"}).status_code == 200
+
+
+@pytest.mark.parametrize("options", [{}, {"save_token": "s3cret"}, {"allow_all_ips": True}])
+@pytest.mark.parametrize(("method", "path"), [*LAN_ROUTES, ("GET", "/config.json")])
+def test_ingress_needs_no_token(app_factory, options, method, path):
+    client = TestClient(app_factory(options), client=INGRESS)
+    assert _send(client, method, path).status_code == 200
+
+
+def test_static_files_share_the_failure_budget(app_factory):
+    # Otherwise "/" would be an unlimited oracle for guessing the token.
+    import main
+
+    client = TestClient(app_factory({"save_token": "s3cret"}))
+    for _ in range(main._AUTH_FAILURE_LIMIT):
+        assert client.get("/", headers={"X-Save-Token": "guess"}).status_code == 403
+    assert client.get("/", headers={"X-Save-Token": "s3cret"}).status_code == 429
+    assert client.get("/zones.json", headers={"X-Save-Token": "s3cret"}).status_code == 429
+
+
+@pytest.mark.parametrize(
+    ("options", "headers", "expected"),
+    [
+        ({"allow_all_ips": True}, {}, "not ingress, and no save_token is configured"),
+        ({"save_token": "  "}, {}, "not ingress, and no save_token is configured"),
+        ({"save_token": "x"}, {}, "missing X-Save-Token"),
+        ({"save_token": "x"}, {"x-save-token": "y"}, "wrong X-Save-Token"),
+        ({"save_token": "x"}, {"x-save-token": "x"}, None),
+    ],
+)
+def test_authorise_returns_the_log_text(request_factory, options, headers, expected):
+    import main
+
+    request = request_factory("10.0.0.9")
+    request.headers = headers
+    assert main.authorise(options, request) == expected

@@ -12,7 +12,13 @@ directory is then on sys.path, so draw_and_save imports by name.
 
 import asyncio
 
-from draw_and_save import draw_and_save, draw_rectangle_and_save, fail, watch_errors
+from draw_and_save import (
+    SMOKE_TOKEN,
+    draw_and_save,
+    draw_rectangle_and_save,
+    fail,
+    watch_errors,
+)
 from playwright.async_api import async_playwright
 
 BASE = "http://127.0.0.1:8000"
@@ -28,7 +34,10 @@ async def main():
         browser = await p.chromium.launch(
             args=[f"--host-resolver-rules=MAP {INSECURE_HOST} 127.0.0.1"]
         )
-        page = await browser.new_page()
+        # The browser reaches the container directly, not through ingress, so
+        # every request it makes, page loads included, carries the token.
+        context = await browser.new_context(extra_http_headers={"X-Save-Token": SMOKE_TOKEN})
+        page = await context.new_page()
         watch_errors(page, errors)
         await page.goto(f"{BASE}/", wait_until="networkidle")
 
@@ -167,7 +176,7 @@ async def main():
         await draw_and_save(page, "secure origin", errors, fail)
         await draw_rectangle_and_save(page, errors, fail)
 
-        insecure = await browser.new_page()
+        insecure = await context.new_page()
         watch_errors(insecure, errors)
         await insecure.goto(f"http://{INSECURE_HOST}:8000/", wait_until="networkidle")
         # Without this the check could run on a secure origin and pass whether

@@ -2,6 +2,7 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from email.utils import formatdate
 import hashlib
+import http.client
 import ipaddress
 import json
 import logging
@@ -10,7 +11,6 @@ import os
 import re
 import secrets
 import time
-import urllib.error
 import urllib.request
 import uuid
 
@@ -44,8 +44,6 @@ from const import (
     ZONES_FILE,
 )
 from helpers import (
-    allow_all_ips,
-    allow_request,
     allowed_ip,
     atomic_write_json,
     configure_logging,
@@ -55,13 +53,12 @@ from helpers import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Paths that bypass the IP allowlist middleware. /healthz is exempt so the
-# Docker HEALTHCHECK works. The other three run their own gate (_gate), which
-# lets a request carrying save_token through even when allow_all_ips is off:
-# a user who sets the token expects it to unlock LAN reads and writes alike.
+# Paths the middleware leaves alone. /healthz stays open for the Docker
+# HEALTHCHECK and the Supervisor watchdog; the other three call _gate
+# themselves, so their cross-origin refusal comes before the token check.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
 
-# Rate limit on authorisation failures across the three gated routes.
+# Rate limit on authorisation failures, shared by every gated path.
 # Protects against brute-forcing save_token when the port is exposed on LAN.
 # Only failures count. A request whose TCP peer is ingress is never limited,
 # so failures recorded against a forwarded "172.30.32.2" cannot lock the HA
@@ -99,17 +96,16 @@ def _rate_limit_exceeded(request: Request) -> bool:
     """Whether this request's client has used its failure budget."""
     if allowed_ip(request):
         return False
-    cutoff = time.time() - _AUTH_FAILURE_WINDOW_SECONDS
+    cutoff = time.monotonic() - _AUTH_FAILURE_WINDOW_SECONDS
     return _prune(_failure_key(request), cutoff) >= _AUTH_FAILURE_LIMIT
 
 
 def _record_auth_failure(request: Request) -> None:
     global _last_sweep
-    now = time.time()
-    # abs(): the wall clock can step backwards, which must not stall sweeps.
+    now = time.monotonic()
     if (
         len(_auth_failures) > _AUTH_FAILURE_MAX_KEYS
-        and abs(now - _last_sweep) >= _SWEEP_INTERVAL_SECONDS
+        and now - _last_sweep >= _SWEEP_INTERVAL_SECONDS
     ):
         _last_sweep = now
         cutoff = now - _AUTH_FAILURE_WINDOW_SECONDS
@@ -136,57 +132,35 @@ def _current_zones_etag() -> str | None:
         return None
 
 
-def authorise(options: dict, request: Request) -> tuple[bool, str | None]:
-    """Decide whether a request to one of the three gated routes is allowed.
+def authorise(options: dict, request: Request) -> str | None:
+    """None if the request may proceed, otherwise why not, for the log only.
 
-    Returns ``(allowed, reason)``. ``reason`` is one of ``"token_missing"``,
-    ``"token_wrong"`` or ``"not_allowed"`` — for logging only (ADR 0002 row
-    3): every caller collapses these to one identical response, so a client
-    cannot infer from the response alone whether a token is even configured.
-
-    Order:
-      1. Ingress is always allowed — the HA UI uses it.
-      2. If ``save_token`` is configured, require a constant-time-equal
-         ``X-Save-Token`` header, whatever allow_all_ips says: the token is
-         the stronger signal.
-      3. Otherwise fall back to allow_all_ips.
+    Ingress is always allowed: the HA UI uses it. Anything else needs a
+    configured save_token, presented as X-Save-Token.
     """
     if allowed_ip(request):
-        return True, None
-
+        return None
     save_token = (options.get("save_token") or "").strip()
-    if save_token:
-        # Strip both stored and provided — symmetric handling so a trailing
-        # whitespace in either doesn't silently break a correct token match.
-        provided = request.headers.get("x-save-token", "").strip()
-        if provided and secrets.compare_digest(provided.encode(), save_token.encode()):
-            return True, None
-        return False, "token_missing" if not provided else "token_wrong"
-
-    if allow_all_ips(options):
-        return True, None
-
-    return False, "not_allowed"
+    if not save_token:
+        return "not ingress, and no save_token is configured"
+    # Stripped on both sides, so stray whitespace can't fail a correct token.
+    provided = request.headers.get("x-save-token", "").strip()
+    if not provided:
+        return "missing X-Save-Token"
+    if not secrets.compare_digest(provided.encode(), save_token.encode()):
+        return "wrong X-Save-Token"
+    return None
 
 
-# ADR 0002 row 3: every authorisation failure on /zones.json, /trackers.json
-# and /save_zones gets this one status, body and headers, whatever the
-# reason — so a client cannot tell from the response alone whether a token
-# is even configured, let alone which of "IP not allowed", "token missing"
-# or "token wrong" applies. Callers log the precise reason themselves.
+# ADR 0002 row 3: every authorisation failure gets this one status, body and
+# headers, whatever the reason, so a client cannot tell from the response
+# alone whether a token is even configured. The precise reason is logged.
 def _auth_rejection_response() -> JSONResponse:
     return JSONResponse(
         {"error": "not authorised"},
         status_code=403,
         headers={"Cache-Control": "no-store"},
     )
-
-
-_AUTH_REJECTION_LOG_REASON = {
-    "token_missing": "missing X-Save-Token",
-    "token_wrong": "wrong X-Save-Token",
-    "not_allowed": "not ingress, no token configured, allow_all_ips off",
-}
 
 
 class TransportPeerMiddleware:
@@ -205,17 +179,25 @@ class TransportPeerMiddleware:
         await self.app(scope, receive, send)
 
 
-class IPAllowMiddleware(BaseHTTPMiddleware):
+class AuthoriseMiddleware(BaseHTTPMiddleware):
+    """Gates the editor's static files and /config.json like the data routes.
+
+    Ingress gets no cross-origin check: a link from another site to the
+    editor is a legitimate page load.
+    """
+
     def __init__(self, app, options: dict):
         super().__init__(app)
         self.options = options
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in AUTHZ_EXEMPT_PATHS:
-            return await call_next(request)
-        if not allow_request(self.options, request):
-            _LOGGER.warning("Blocked request from %s on %s", request.client.host, request.url.path)
-            return PlainTextResponse("not allowed", status_code=403)
+        # The routing path, not request.url.path: uvicorn decodes %23 and %3F
+        # into it, and a URL re-parse would read "/healthz%23/../x" as /healthz.
+        path = request.scope["path"]
+        if path not in AUTHZ_EXEMPT_PATHS:
+            refusal = _gate(self.options, request, path, check_origin=not allowed_ip(request))
+            if refusal is not None:
+                return refusal
         return await call_next(request)
 
 
@@ -292,22 +274,25 @@ _LON_MIN, _LON_MAX = -180.0, 180.0
 _LAT_MIN, _LAT_MAX = -90.0, 90.0
 
 
+def _finite_number(value) -> bool:
+    # bool subclasses int, but True is not a coordinate. An int is always
+    # finite, and math.isfinite raises OverflowError on a huge one.
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
+
+
 def _validate_position(pos, where: str) -> None:
     """Validate a single GeoJSON position `[lon, lat]` (altitude ignored).
 
     Raises ValueError with a descriptive, index-bearing message on failure.
-    Rejects bool values (which would otherwise pass `isinstance(..., int)`
-    because bool subclasses int in Python), NaN / inf, non-numeric types,
-    and out-of-range WGS84 coordinates.
     """
     if not isinstance(pos, list) or len(pos) < 2:
         raise ValueError(f"{where}: position must be a list of at least 2 numbers")
     lon, lat = pos[0], pos[1]
     for name, value in (("longitude", lon), ("latitude", lat)):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{where}: {name} must be a number")
-        if not math.isfinite(value):
-            raise ValueError(f"{where}: {name} must be finite")
+        if not _finite_number(value):
+            raise ValueError(f"{where}: {name} must be a finite number")
     if not (_LON_MIN <= lon <= _LON_MAX):
         raise ValueError(f"{where}: longitude out of range [-180, 180]")
     if not (_LAT_MIN <= lat <= _LAT_MAX):
@@ -356,14 +341,10 @@ def _validate_feature_collection(obj) -> None:
     if not isinstance(obj, dict) or obj.get("type") != "FeatureCollection":
         raise ValueError("expected a GeoJSON FeatureCollection")
 
-    # schema_version is optional on input for backward compatibility with
-    # curl-restored pre-versioned files. The canonical location is the foreign
-    # member ``polygonal_zones.schema_version`` (matching the spec and the
-    # companion integration's reader); a bare top-level ``schema_version`` is
-    # accepted only as a legacy fallback for files written before this fix.
-    # When present it must be an int. isinstance(True, int) is True in Python
-    # because bool subclasses int, so reject bool explicitly — a consumer
-    # doing `schema_version >= 1` shouldn't silently pass on `True`.
+    # schema_version is optional, so a restored unversioned file still saves.
+    # It belongs at polygonal_zones.schema_version, where the integration reads
+    # it; a bare top-level key is accepted because older files carry one. bool
+    # is refused: `schema_version >= 1` must not pass on True.
     pz_in = obj.get("polygonal_zones")
     nested_version = pz_in.get("schema_version") if isinstance(pz_in, dict) else None
     schema_version = nested_version if nested_version is not None else obj.get("schema_version")
@@ -446,16 +427,13 @@ def _validate_feature_collection(obj) -> None:
 def _normalise_feature_collection(obj: dict) -> dict:
     """Stamp `schema_version` and backfill missing `properties.id`.
 
-    Runs immediately before the on-disk write — so rejected payloads don't
-    get partially normalised. Guarantees that every persisted zones.json
-    carries a current `schema_version` and that every feature has a
-    stable `properties.id` the companion integration can bind automations
-    to across renames. Mutates and returns ``obj``.
+    Runs only on a payload that passed validation. Guarantees that every
+    persisted zones.json carries a current `schema_version` and that every
+    feature has a stable `properties.id` the companion integration can bind
+    automations to across renames. Mutates and returns ``obj``.
     """
-    # Stamp the canonical foreign-member location the integration reads
-    # (polygonal_zones.schema_version per docs/ZONES_FORMAT.md). Earlier
-    # builds wrote a bare top-level key the integration never read, so a
-    # future schema bump would have silently bypassed its version guard.
+    # The integration's version guard reads polygonal_zones.schema_version
+    # (docs/ZONES_FORMAT.md) and nothing else.
     pz = obj.get("polygonal_zones")
     if not isinstance(pz, dict):
         pz = {}
@@ -486,39 +464,38 @@ def _browser_cross_origin(request: Request) -> bool:
     return site is not None and site not in _SAVE_FETCH_SITES
 
 
-def _gate(options: dict, request: Request, label: str, respond=JSONResponse) -> Response | None:
+def _gate(options: dict, request: Request, label: str, check_origin=True) -> Response | None:
     """The refusal for a request to a gated route, or None to serve it.
 
-    ``label`` names the route in the log; ``respond`` builds the 429, so a
-    route that must not be cached can say so.
+    ``label`` names the route in the log.
     """
     client_host = request.client.host or "unknown"
     if _rate_limit_exceeded(request):
         _LOGGER.warning(
             "Rate limit hit on %s for %s (%d failures in %ds). "
             "Further attempts refused for the remainder of the window.",
-            request.url.path,
+            label,
             client_host,
             _AUTH_FAILURE_LIMIT,
             _AUTH_FAILURE_WINDOW_SECONDS,
         )
-        return respond({"error": "too many failed attempts"}, status_code=429)
+        # no-store: a cached 429 would outlive the window it reports.
+        return JSONResponse(
+            {"error": "too many failed attempts"},
+            status_code=429,
+            headers={"Cache-Control": "no-store"},
+        )
     # Checked before the token, so a browser-sent cross-site request is
     # refused whatever it carries. Not counted as a failure: the client did
     # not choose to send it, and counting would let any web page lock the
     # user's own browser out.
-    if _browser_cross_origin(request):
+    if check_origin and _browser_cross_origin(request):
         _LOGGER.warning("Rejected %s from %s: not a same-origin request", label, client_host)
         return _auth_rejection_response()
-    ok, reason = authorise(options, request)
-    if not ok:
+    reason = authorise(options, request)
+    if reason is not None:
         _record_auth_failure(request)
-        _LOGGER.warning(
-            "Rejected %s from %s: %s",
-            label,
-            client_host,
-            _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
-        )
+        _LOGGER.warning("Rejected %s from %s: %s", label, client_host, reason)
         return _auth_rejection_response()
     return None
 
@@ -551,7 +528,9 @@ def save_zones_generator(options: dict):
 
         try:
             geo_json = json.loads(body)
-        except json.JSONDecodeError:
+        # ValueError also covers an integer too long to convert, and
+        # RecursionError a body nested deeper than the parser goes.
+        except (ValueError, RecursionError):
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
         try:
@@ -595,17 +574,19 @@ def save_zones_generator(options: dict):
         # accepted the payload. Rejected payloads aren't mutated.
         _normalise_feature_collection(geo_json)
         try:
-            atomic_write_json(ZONES_FILE, geo_json)
+            written = atomic_write_json(ZONES_FILE, geo_json)
+        except ValueError:
+            return JSONResponse(
+                {"error": "invalid GeoJSON", "detail": "NaN and Infinity are not valid JSON"},
+                status_code=422,
+            )
         except OSError:
             _LOGGER.exception("Failed to write %s", ZONES_FILE)
             return JSONResponse({"error": "write failed"}, status_code=500)
 
-        new_etag = _current_zones_etag()
+        new_etag = _etag_for_bytes(written)
         _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
-        return JSONResponse(
-            {"status": "ok", "etag": new_etag},
-            headers={"ETag": new_etag} if new_etag else {},
-        )
+        return JSONResponse({"status": "ok", "etag": new_etag}, headers={"ETag": new_etag})
 
     return save_zones
 
@@ -622,7 +603,7 @@ def config_json_generator(options: dict):
     async def config_json(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
-                "zone_colour": options.get("zone_colour", "green"),
+                "zone_colour": options.get("zone_colour", "purple"),
                 "theme": _normalised_theme(options),
             }
         )
@@ -643,9 +624,9 @@ _ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
 def overlay_entities(options: dict) -> list[str]:
     """The entity ids the user has opted in to plotting, validated and capped.
 
-    Empty by default. The editor is LAN-reachable whenever allow_all_ips is on,
-    so the overlay must never become a general state proxy — only ids named
-    here are ever requested from Home Assistant or returned to a client.
+    Empty by default. Anyone holding save_token can read the overlay over the
+    LAN, so it must never become a general state proxy: only ids named here
+    are ever requested from Home Assistant or returned to a client.
     """
     raw = options.get("overlay_entities") or []
     if isinstance(raw, str):
@@ -721,7 +702,9 @@ def _fetch_state(entity_id: str, token: str) -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as err:
+    # URLError and TimeoutError are OSErrors; HTTPException covers a garbled
+    # or truncated reply.
+    except (OSError, ValueError, http.client.HTTPException) as err:
         # One unreachable or malformed entity must not fail the whole overlay:
         # the map is still useful with the trackers that did resolve.
         _LOGGER.debug("Overlay fetch failed for %s: %s", entity_id, err)
@@ -740,14 +723,13 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
     if not isinstance(attrs, dict):
         return None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
-    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-        return None
-    if isinstance(lat, bool) or isinstance(lon, bool):
-        return None
-    if not (math.isfinite(lat) and math.isfinite(lon)):
+    # Range-checked before float(), which overflows on a huge int.
+    if not (
+        _finite_number(lat) and _finite_number(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
+    ):
         return None
     acc = attrs.get("gps_accuracy")
-    if isinstance(acc, bool) or not isinstance(acc, (int, float)) or not math.isfinite(acc):
+    if not (_finite_number(acc) and 0 <= acc <= 1e7):
         acc = None
     return {
         "entity_id": entity_id,
@@ -761,6 +743,7 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
 
 def trackers_json_generator(options: dict):
     refresh_seconds = tracker_refresh_seconds(options)
+    entities = overlay_entities(options)
 
     # The editor polls this, so a cached copy would freeze every marker at the
     # position of whichever response the browser happened to keep.
@@ -770,11 +753,10 @@ def trackers_json_generator(options: dict):
     async def trackers_json(request: Request) -> Response:
         # Same gate as /zones.json — this returns positions, so it must not
         # be reachable on terms the zones file isn't.
-        refusal = _gate(options, request, "/trackers.json read", respond=_uncached)
+        refusal = _gate(options, request, "/trackers.json")
         if refusal is not None:
             return refusal
 
-        entities = overlay_entities(options)
         if not entities:
             # Opted out (the default). Say so explicitly rather than returning
             # an empty list, so the editor can distinguish "not configured"
@@ -829,7 +811,7 @@ def zones_json_generator(options: dict):
     async def zones_json(request: Request) -> Response:
         # Shares the failure bucket with /save_zones, so an attacker can't
         # rotate between GET and POST to double their guess budget.
-        refusal = _gate(options, request, "/zones.json read")
+        refusal = _gate(options, request, "/zones.json")
         if refusal is not None:
             return refusal
 
@@ -886,8 +868,8 @@ async def healthz(_request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
-    """Build the ASGI app exactly as it is served, plus uvicorn's log config.
+def generate_app(options: dict) -> TransportPeerMiddleware:
+    """Build the ASGI app exactly as it is served.
 
     Proxy headers are applied here rather than by uvicorn, inside the layer
     that records the TCP peer, so serve it with ``proxy_headers=False``.
@@ -904,18 +886,10 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
         Mount("/", app=StaticFiles(directory=static_folder, html=True), name="static"),
     ]
 
-    log_config = uvicorn.config.LOGGING_CONFIG
-    log_config["version"] = 1
-    log_config["disable_existing_loggers"] = False
-    # Quiet the access log: uvicorn's default access logger records the client
-    # IP + request line for every request at INFO, which the Supervisor add-on
-    # log surfaces to any HA user. Client IP is personal data (GDPR Recital 30)
-    # and the add-on log has no retention control, so raise it to WARNING.
-    log_config.setdefault("loggers", {}).setdefault("uvicorn.access", {})["level"] = "WARNING"
-
     middleware = [
-        Middleware(IPAllowMiddleware, options=options),
+        # Outside the gate, so its refusals carry the headers too.
         Middleware(SecurityHeadersMiddleware),
+        Middleware(AuthoriseMiddleware, options=options),
         # Innermost: compress text responses (the unminified vendored Leaflet
         # JS/CSS are the bulk of page weight). Auth/security middleware stay
         # outermost so they still gate before any work.
@@ -926,19 +900,13 @@ def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
 
     proxy_ip_allowlist = _parse_trusted_proxies(options)
     if proxy_ip_allowlist:
-        # Log the count only, not the list contents. `proxy_ip_allowlist` is
-        # derived from the `trusted_proxies` option, and CodeQL's
-        # py/clear-text-logging-sensitive-data rule flags any options-sourced
-        # value logged via %s — same reason _parse_trusted_proxies itself
-        # logs rejection reasons as constant strings. TESTING.md already
-        # documents the count-based format as the expected operator-visible
-        # output, so this aligns code with docs.
+        # The count only, for the reason _parse_trusted_proxies gives.
         _LOGGER.info(
             "Honouring X-Forwarded-For from %d configured proxy/proxies.",
             len(proxy_ip_allowlist),
         )
         app = ProxyHeadersMiddleware(app, trusted_hosts=proxy_ip_allowlist)
-    return TransportPeerMiddleware(app), log_config
+    return TransportPeerMiddleware(app)
 
 
 # Ingress is decided by the TCP peer (TransportPeerMiddleware), never by a
@@ -1053,39 +1021,25 @@ def loggable_options(options: dict) -> dict:
     return out
 
 
-def log_open_access(options: dict) -> None:
-    """Say at startup what allow_all_ips exposes without a token."""
-    if not allow_all_ips(options):
-        return
-    if (options.get("save_token") or "").strip():
-        _LOGGER.info(
-            "allow_all_ips is on; /save_zones, /zones.json and /trackers.json "
-            "require X-Save-Token from non-ingress clients."
+def log_retired_allow_all_ips(options: dict) -> None:
+    """allow_all_ips is kept in the schema so old configs validate; say it does nothing."""
+    if options.get("allow_all_ips"):
+        _LOGGER.error(
+            "allow_all_ips no longer grants LAN access. Set save_token and send it as the "
+            "X-Save-Token header; use the editor from the Home Assistant sidebar."
         )
-        return
-    reads = "/zones.json and /trackers.json are" if overlay_entities(options) else "/zones.json is"
-    _LOGGER.warning(
-        "allow_all_ips is enabled and no save_token is set — any client on your network "
-        "can overwrite zones through /save_zones, and %s readable by any client on your "
-        "network. Set the save_token option to require an X-Save-Token header on "
-        "non-ingress requests.",
-        reads,
-    )
 
 
 if __name__ == "__main__":  # pragma: no cover
-    # The entrypoint block is covered by the build.yml smoke test (boots
-    # the container under docker, probes /healthz + /zones.json), not by
-    # pytest. Extracting to a function would give pytest a handle but
-    # wouldn't exercise uvicorn.run(), which is the point of the block.
+    # Exercised by the boot tests in test_request_trust.py (through runpy,
+    # with uvicorn.run captured) and by build.yml's container smoke.
     # Bring logging up at the default level first so any errors in
     # load_options are visible, then re-apply the configured level.
     configure_logging()
 
     os.makedirs(DATA_FOLDER, exist_ok=True)
     if not os.path.exists(ZONES_FILE):
-        with open(ZONES_FILE, "w") as f:
-            json.dump({"type": "FeatureCollection", "features": []}, f)
+        atomic_write_json(ZONES_FILE, {"type": "FeatureCollection", "features": []})
 
     options = load_options()
     configure_logging(resolve_log_level(options.get("log_level")))
@@ -1102,11 +1056,14 @@ if __name__ == "__main__":  # pragma: no cover
             "dropping privileges to the 'app' user — check the service log "
             "for a warning explaining which condition fired."
         )
-    log_open_access(options)
+    log_retired_allow_all_ips(options)
 
-    app, log_config = generate_app(options)
     # generate_app applies trusted_proxies itself, inside the layer that
     # records the TCP peer; uvicorn's own proxy handling (on by default)
     # would rewrite the client before that record is taken.
+    # No access log: it records every client's IP and request line at INFO in
+    # an add-on log any HA user can read and nothing expires.
     # Port 8000 is what config.yaml's ingress_port and the HEALTHCHECK expect.
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=log_config, proxy_headers=False)
+    uvicorn.run(
+        generate_app(options), host="0.0.0.0", port=8000, access_log=False, proxy_headers=False
+    )

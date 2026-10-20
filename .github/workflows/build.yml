@@ -118,9 +118,13 @@ jobs:
         run: |
           set -euo pipefail
           DATA=$(mktemp -d)
+          # The probes below come from the runner, not ingress, so they need
+          # save_token; ui_smoke.py sends the same SMOKE_TOKEN.
+          TOKEN=$(python3 -c 'import sys; sys.path.insert(0, "scripts"); from draw_and_save import SMOKE_TOKEN; print(SMOKE_TOKEN)')
+          AUTH="X-Save-Token: $TOKEN"
           # Simulate the Supervisor mount: options.json is root-owned. The
           # addon must still be able to read it.
-          sudo install -o root -g root -m 0644 /dev/stdin "$DATA/options.json" <<< '{"allow_all_ips":true,"zone_colour":"green"}'
+          sudo install -o root -g root -m 0644 /dev/stdin "$DATA/options.json" <<< "{\"save_token\":\"$TOKEN\",\"zone_colour\":\"green\"}"
 
           docker run -d --name smoke -p 8000:8000 -v "$DATA":/data polygonal-zones:smoke
 
@@ -138,9 +142,17 @@ jobs:
             sleep 1
           done
 
+          # A LAN client without the token is refused.
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/zones.json)
+          if [ "$CODE" != "403" ]; then
+            echo "FAIL /zones.json without X-Save-Token returned $CODE, expected 403"
+            exit 1
+          fi
+          echo "OK /zones.json without X-Save-Token refused"
+
           # /zones.json must return a valid empty FeatureCollection (seeded at
           # startup if /data/polygonal_zones/zones.json is absent).
-          curl -fsS http://127.0.0.1:8000/zones.json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("type")=="FeatureCollection" and isinstance(d.get("features"), list), d; print("OK /zones.json shape")'
+          curl -fsS -H "$AUTH" http://127.0.0.1:8000/zones.json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("type")=="FeatureCollection" and isinstance(d.get("features"), list), d; print("OK /zones.json shape")'
 
           # /save_zones round-trip with a mix of Polygon and MultiPolygon
           # features. The MultiPolygon exercises the frontend's shape-count
@@ -150,7 +162,7 @@ jobs:
           # command stands alone so `set -e` sees its status: in `a | b && c`
           # a failing pipeline is ignored and the step goes on green.
           PAYLOAD=$(python3 -c 'import json, sys; sys.path.insert(0, "scripts"); from draw_and_save import SMOKE_ZONES; print(json.dumps(SMOKE_ZONES))')
-          SAVED=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+          SAVED=$(curl -fsS -X POST -H 'Content-Type: application/json' -H "$AUTH" \
             --data "$PAYLOAD" http://127.0.0.1:8000/save_zones)
           python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d.get("status") == "ok", d' "$SAVED"
           echo "OK /save_zones round-trip"
