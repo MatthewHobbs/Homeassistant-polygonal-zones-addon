@@ -73,9 +73,11 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
   - `Content-Security-Policy` present
   - `X-Frame-Options: SAMEORIGIN`
   - `X-Content-Type-Options: nosniff`
-- [ ] AppArmor check: `docker inspect addon_polygonal_zones | grep -i apparmor` → `apparmor=addon_polygonal_zones` (not `docker-default`).
-- [ ] Non-root check: `docker exec addon_polygonal_zones id` → `uid=1001(app)`.
-- [ ] `/data/options.json` perms: `docker exec addon_polygonal_zones ls -l /data/options.json` → `-rw-r----- app app` (0640, not world-readable).
+The container's name carries a repository-specific prefix; find it with `docker ps --filter name=polygonal_zones` and use it as `<container>` below.
+
+- [ ] AppArmor check: `docker inspect <container> | grep -i apparmor` → the add-on's own profile, named after its slug (ending `_polygonal_zones`), not `docker-default`.
+- [ ] Non-root check: `docker exec <container> id` → `uid=1001(app)`.
+- [ ] `/data/options.json` perms: `docker exec <container> ls -l /data/options.json` → `-rw-r----- app app` (0640, not world-readable).
 
 ### Save-token flow
 
@@ -95,7 +97,7 @@ Only relevant if you enable the LAN port (`Configuration → Network → set a h
 
 ### Upgrade path
 
-- [ ] Install an older version (e.g. `0.2.14`). Draw and save some zones.
+- [ ] Restore a partial backup of the add-on taken on an earlier release (**Settings → System → Backups**); a chosen version cannot be installed any other way (see `docs/RUNBOOK.md`). Draw and save some zones.
 - [ ] Upgrade to the branch under test. Confirm existing zones are preserved and the addon starts clean.
 - [ ] Rollback by restoring the add-on's pre-update partial backup (`ha apps update <slug> --backup`, then restore it; the slug ends in `_polygonal_zones`; `ha apps` lists it): confirm zones survive.
 
