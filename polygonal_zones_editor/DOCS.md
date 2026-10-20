@@ -211,6 +211,7 @@ The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Home
 The add-on serves `/zones.json` from local disk; the companion integration reads it on demand. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
 
 - **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the OSError / traceback via `_LOGGER.exception`. The Docker `HEALTHCHECK` also fails, because `/healthz` checks that the zones file is readable rather than only that the process is alive, so Docker marks the container unhealthy.
+- **The Supervisor** polls the same `/healthz` as the add-on's watchdog, and restarts the add-on when the check fails or the web service has stopped. Leave **Watchdog** switched on in the add-on's **Info** tab for this to happen.
 - **The integration** sees the 503 the next time it tries to read zones (on startup or on a `reload_zones` call). Its default behaviour is to retain its last-known-good state — zone-based automations continue to fire based on the zone definitions it last successfully fetched, rather than silently losing geofencing coverage. If the add-on is down entirely (process gone, port unreachable), the integration surfaces an unavailable state; automations that guard on `zone.* != 'unavailable'` will stop firing until the add-on is back.
 
 **Recovery:**
