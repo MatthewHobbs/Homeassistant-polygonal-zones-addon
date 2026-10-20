@@ -8,6 +8,13 @@
     const ROOT = document.querySelector('.body');
     let boundMap = null;
 
+    // Applied now, before map.js builds the map: Leaflet measures its
+    // container once, and a sidebar collapsed after that leaves a blank strip.
+    const stored = window.PZStorage ? window.PZStorage.get('pz:sidebar') : null;
+    if (ROOT && (stored === 'open' || stored === 'collapsed')) {
+        ROOT.setAttribute('data-sidebar', stored);
+    }
+
     function getSidebarState() {
         return ROOT ? ROOT.getAttribute('data-sidebar') : null;
     }
@@ -50,13 +57,6 @@
 
     function initSidebarState(map) {
         boundMap = map;
-        if (!ROOT) return;
-        // Honour a persisted value if present; otherwise the HTML default
-        // ("open") stays.
-        const stored = window.PZStorage ? window.PZStorage.get('pz:sidebar') : null;
-        if (stored === 'open' || stored === 'collapsed') {
-            ROOT.setAttribute('data-sidebar', stored);
-        }
     }
 
     window.PZUiState = {getSidebarState, setSidebarState, initSidebarState};

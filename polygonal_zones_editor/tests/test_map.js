@@ -630,3 +630,21 @@ test('drawing a zone while a rename is open keeps the typed name', () => {
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A2', 'Zone 1']);
     assert.equal(m.layers[0].pm.enabled, false);
 });
+
+const staticJs = (file) => fs.readFileSync(path.join(__dirname, '..', 'app', 'static', 'js', file), 'utf8');
+
+test('a remembered collapsed sidebar is applied before the map is built, and the toggle says so', () => {
+    const body = fakeElement('div');
+    body.setAttribute('data-sidebar', 'open');
+    const button = fakeElement('button');
+    const context = vm.createContext({
+        document: { querySelector: (sel) => ({ '.body': body, '.sidebar-toggle': button })[sel] || null },
+        window: { PZStorage: { get: (k) => (k === 'pz:sidebar' ? 'collapsed' : null), set() {} } },
+    });
+    // index.html's order: ui-state.js, sidebar-toggle.js, then map.js builds the map.
+    vm.runInContext(staticJs('ui-state.js'), context);
+    assert.equal(body.attributes['data-sidebar'], 'collapsed', 'the map would measure an open sidebar');
+    vm.runInContext(staticJs('sidebar-toggle.js'), context);
+    assert.equal(button.attributes['aria-expanded'], 'false');
+    assert.equal(button.attributes['aria-label'], 'Expand sidebar');
+});

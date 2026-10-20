@@ -21,17 +21,13 @@
         button.setAttribute('aria-expanded', state === 'open' ? 'true' : 'false');
     }
 
-    // Initial sync — ui-state.js may have resolved a persisted state on
-    // load, and the HTML default is "open". Mirror whichever ended up on
-    // the DOM so the button's aria-label and aria-expanded are correct
-    // before the first click.
-    const initial = window.PZUiState.getSidebarState() || 'open';
-    syncButton(initial);
+    // ui-state.js has already applied any remembered state; mirror the DOM,
+    // not the HTML default.
+    syncButton(window.PZUiState.getSidebarState());
 
     button.addEventListener('click', () => {
-        const current = window.PZUiState.getSidebarState() || 'open';
-        const next = current === 'open' ? 'collapsed' : 'open';
+        const next = window.PZUiState.getSidebarState() === 'open' ? 'collapsed' : 'open';
         window.PZUiState.setSidebarState(next);
-        syncButton(next);
+        syncButton(window.PZUiState.getSidebarState());
     });
 })();
