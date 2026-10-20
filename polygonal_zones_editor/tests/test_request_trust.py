@@ -165,10 +165,7 @@ def test_lifespan_passes_through_the_peer_layer(tmp_zones_file):
 def open_client(tmp_zones_file):
     import main
 
-    main._auth_failures.clear()
-    app = main.generate_app({})
-    yield TestClient(app, client=(INGRESS, 5000))
-    main._auth_failures.clear()
+    return TestClient(main.generate_app({}), client=(INGRESS, 5000))
 
 
 def test_save_refuses_non_json_media_type(open_client, tmp_zones_file):
@@ -233,7 +230,6 @@ def test_save_accepts_same_origin_and_user_initiated(open_client, site):
 def test_cross_site_refusal_ignores_a_valid_token_and_spends_no_budget(tmp_zones_file):
     import main
 
-    main._auth_failures.clear()
     app = main.generate_app({"save_token": TOKEN})
     client = TestClient(app)
     headers = {"Sec-Fetch-Site": "cross-site", "X-Save-Token": TOKEN}
@@ -242,7 +238,6 @@ def test_cross_site_refusal_ignores_a_valid_token_and_spends_no_budget(tmp_zones
     # Refusals of browser cross-site requests must not lock the client out.
     r = client.post("/save_zones", json=_valid_payload(), headers={"X-Save-Token": TOKEN})
     assert r.status_code == 200
-    main._auth_failures.clear()
 
 
 # --- Startup log --------------------------------------------------------------
@@ -365,7 +360,6 @@ def test_forged_ingress_failures_cannot_rate_limit_real_ingress(boot, path):
 def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     import main
 
-    main._auth_failures.clear()
     app = main.generate_app({"trusted_proxies": PROXY_RANGE, "save_token": TOKEN})
     client = TestClient(app, client=HOST_IN_PROXY_RANGE)
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 5)
@@ -378,15 +372,12 @@ def test_expired_failure_records_are_swept(tmp_zones_file, monkeypatch):
     client.get("/zones.json", headers={"X-Forwarded-For": "192.0.2.200"})
     # The 29 expired clients are gone; only the newest failure remains.
     assert list(main._auth_failures) == ["192.0.2.200"]
-    main._auth_failures.clear()
 
 
 def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkeypatch):
     import main
 
-    main._auth_failures.clear()
     monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_KEYS", 2)
-    monkeypatch.setattr(main, "_last_sweep", 0.0)
     clock = [1_000_000.0]
     monkeypatch.setattr(main.time, "monotonic", lambda: clock[0])
     sweeps = []
@@ -408,7 +399,6 @@ def test_failure_record_sweep_runs_at_most_once_a_second(request_factory, monkey
     clock[0] += 0.5
     main._record_auth_failure(request_factory("192.0.2.201"))
     assert sweeps[3:] == [1_000_001.0] * 51
-    main._auth_failures.clear()
 
 
 def test_real_ingress_with_forwarded_header_is_still_ingress(boot):

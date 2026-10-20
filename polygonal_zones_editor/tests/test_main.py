@@ -14,17 +14,6 @@ import pytest
 from starlette.testclient import TestClient
 
 
-@pytest.fixture(autouse=True)
-def reset_save_rate_limit():
-    """Each test gets a clean rate-limit state. Without this, accumulated
-    failures leak between tests and later suites spuriously hit 429."""
-    import main
-
-    main._auth_failures.clear()
-    yield
-    main._auth_failures.clear()
-
-
 @pytest.fixture
 def app_factory(tmp_zones_file):
     import main
@@ -660,8 +649,7 @@ def test_save_zones_accepts_unnamed_duplicates(ingress_client, tmp_zones_file):
 
 
 def test_save_zones_accepts_multipolygon(ingress_client, tmp_zones_file):
-    """MultiPolygon is an accepted geometry type alongside Polygon. Exercises
-    the branch in _is_valid_feature_collection that allows MultiPolygon."""
+    """MultiPolygon is an accepted geometry type alongside Polygon."""
     payload = {
         "type": "FeatureCollection",
         "features": [
@@ -870,54 +858,6 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
         assert r.headers.get("cache-control") == expected_cache_control, name
 
 
-def test_zones_json_ingress_bypasses_token(app_factory, tmp_zones_file):
-    """Ingress (172.30.32.2) reads remain unauthenticated even when a
-    token is set — the HA UI's zones.json fetch must keep working."""
-    import main
-
-    app = main.generate_app({"save_token": "sekrit"})
-    client = TestClient(app)
-    import helpers
-
-    original_allowed_ip_helpers = helpers.allowed_ip
-    original_allowed_ip_main = main.allowed_ip
-    try:
-        helpers.allowed_ip = lambda req: True
-        main.allowed_ip = lambda req: True
-        r = client.get("/zones.json")
-        assert r.status_code == 200
-    finally:
-        helpers.allowed_ip = original_allowed_ip_helpers
-        main.allowed_ip = original_allowed_ip_main
-
-
-def test_save_token_ingress_bypass(app_factory, tmp_zones_file):
-    """Ingress (172.30.32.2) is always allowed even when a token is set —
-    the HA UI Save button must keep working without knowing the token."""
-    from starlette.testclient import TestClient as TC
-
-    import main
-
-    app = main.generate_app({"save_token": "s3cret"})
-    # Simulate a request from the ingress IP.
-    client = TC(app, base_url="http://172.30.32.2")
-    # TestClient doesn't expose a way to set request.client.host directly, so
-    # we monkeypatch allowed_ip to confirm the bypass works in principle.
-    import helpers
-
-    original_allowed_ip = helpers.allowed_ip
-    main_allowed_ip = main.allowed_ip
-    try:
-        # Force allowed_ip to True for this client.
-        helpers.allowed_ip = lambda req: True
-        main.allowed_ip = lambda req: True
-        r = client.post("/save_zones", json=_valid_payload())
-        assert r.status_code == 200
-    finally:
-        helpers.allowed_ip = original_allowed_ip
-        main.allowed_ip = main_allowed_ip
-
-
 def test_index_serves_static_html(ingress_client):
     response = ingress_client.get("/")
     assert response.status_code == 200
@@ -1103,8 +1043,7 @@ def test_save_zones_rate_limits_after_10_failures(app_factory, tmp_zones_file):
 
 def test_save_zones_rate_limit_window_expires(app_factory, tmp_zones_file, monkeypatch):
     """Failures older than the window are evicted on the next check. Without
-    this, a client hitting the limit would be locked out forever. Exercises
-    the `failures.popleft()` branch in `_rate_limit_exceeded`.
+    this, a client hitting the limit would be locked out forever.
     """
     import main
 
