@@ -8,6 +8,10 @@ let editableLayers;
 // on /save_zones so a concurrent edit by another tab can't silently overwrite
 // us — the server returns 412 and we surface a conflict notice.
 let zones_etag = null;
+// Whether the editor knows what is on disk: the saved zones loaded, or a bulk
+// load replaced them on purpose. Until then a save could overwrite zones the
+// editor never showed, so save_zones refuses.
+let zones_loaded = false;
 // isDirty flips to true on any edit the user hasn't flushed to the server
 // (draw, delete, rename, bulk-load). Cleared on a successful save. Drives
 // the beforeunload prompt below so HA's ingress shell can't silently discard
@@ -531,6 +535,13 @@ function save_zones() {
     // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
     // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
     // a single-ring Polygon, losing every ring beyond the first.
+    if (!zones_loaded) {
+        if (save_btn) save_btn.classList.add('error');
+        if (save_status) save_status.textContent =
+            "The saved zones haven't loaded, so saving now could overwrite them. Reload the page and try again.";
+        return Promise.resolve();
+    }
+
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
@@ -549,16 +560,13 @@ function save_zones() {
     const headers = {'Content-Type': 'application/json'};
     if (zones_etag) headers['If-Match'] = zones_etag;
 
-    fetch('./save_zones', {
+    return fetch('./save_zones', {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(geojson)
     }).then(response => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
-        const new_etag = response.headers.get('ETag');
-        if (new_etag) zones_etag = new_etag;
-
         if (response.status === 412) {
             elem.classList.remove('success')
             elem.classList.add('error')
@@ -572,6 +580,11 @@ function save_zones() {
             elem.classList.remove('error')
             elem.classList.add('success')
             if (status) status.textContent = 'Zones saved.';
+            // Only a save that landed moves the editor to the new version: a
+            // 412 carries the other session's ETag, and adopting it would let
+            // the next click overwrite their edits.
+            const new_etag = response.headers.get('ETag');
+            if (new_etag) zones_etag = new_etag;
             mark_clean();
             // Success auto-clears at 2s. Errors below persist until the next
             // save click (top of save_zones()): 2s is too short for a user
@@ -614,6 +627,7 @@ function show_transient_error(message) {
  * the fetch was in flight rather than replacing it. */
 function load_saved_zones(data, restoredViewport) {
     const {skipped} = add_zones(data, false);
+    zones_loaded = true;
     render_zone_list();
     if (skipped) {
         show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
@@ -692,6 +706,7 @@ function load_bulk_json() {
                 show_transient_error('The selected file has no zones in it.');
                 return;
             }
+            zones_loaded = true;
             render_zone_list();
             mark_dirty();
             map.setView(editableLayers.getBounds().getCenter(), 13);

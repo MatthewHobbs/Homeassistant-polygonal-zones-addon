@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.7 — 2026-10-20
+
+- **Fixed: a second Save after a conflict no longer overwrites the other
+  session's zones.** When another session had saved first, Save was refused,
+  but the editor quietly took that session's version as its own, so clicking
+  Save again went through and replaced their changes. It now keeps refusing
+  until you reload, and the reason is shown under the Save button, not only
+  to screen readers.
+- **Fixed: Save refuses until your saved zones have loaded.** If loading
+  `zones.json` failed, or you saved before it finished, the save went out
+  unchecked and the file was replaced by whatever was on screen. Save now
+  says the zones haven't loaded; a bulk load from a file still saves, since
+  replacing the zones is then the point.
+
 ## 0.5.6 — 2026-10-20
 
 - **Fixed: loading zones from a file now tells you when it can't.** A file

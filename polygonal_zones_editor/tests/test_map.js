@@ -27,6 +27,7 @@ function fakeElement(tag) {
         textContent: '',
         // Like the DOM: attribute values are stored as strings.
         setAttribute(k, v) { this.attributes[k] = String(v); },
+        classList: { add() {}, remove() {} },
         removeAttribute(k) { delete this.attributes[k]; },
         appendChild(child) { this.children.push(child); return child; },
         addEventListener(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); },
@@ -88,7 +89,10 @@ function geoJSON(data, options) {
 function loadMap() {
     const errors = [];
     const calls = [];
-    const elements = { '.zone-list': fakeElement('div') };
+    const elements = { '.zone-list': fakeElement('div'), '.save-btn': fakeElement('button') };
+    const status = fakeElement('p');
+    const posts = [];
+    let reply = { status: 200, etag: null };
     let pendingFile = null;
 
     const layers = [];
@@ -110,6 +114,7 @@ function loadMap() {
 
     const document = {
         querySelector: (sel) => elements[sel] || null,
+        getElementById: (id) => (id === 'save-status' ? status : null),
         querySelectorAll: () => [],
         createElement(tag) {
             const el = fakeElement(tag);
@@ -126,7 +131,15 @@ function loadMap() {
     const context = vm.createContext({
         window: { addEventListener() {}, ZONE_COLOUR: 'green' },
         document,
-        fetch: () => new Promise(() => {}),
+        fetch: (url, opts) => {
+            if (url !== './save_zones') return new Promise(() => {});
+            posts.push(opts);
+            return Promise.resolve({
+                status: reply.status,
+                ok: reply.status >= 200 && reply.status < 300,
+                headers: { get: (h) => (h.toLowerCase() === 'etag' ? reply.etag : null) },
+            });
+        },
         setTimeout: () => 0,
         console,
         L: { geoJSON, Polygon },
@@ -147,6 +160,11 @@ function loadMap() {
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
         zoneList: elements['.zone-list'],
+        posts,
+        status,
+        reply: (s, etag = null) => { reply = { status: s, etag }; },
+        setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
+        save: () => vm.runInContext('save_zones', context)(),
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         editZone: (detail) => vm.runInContext('edit_zone_event', context)({ detail, target: fakeElement('zone-entry') }),
         loadSaved: (data, restored = false) => vm.runInContext('load_saved_zones', context)(data, restored),
@@ -304,4 +322,40 @@ test('first load of no zones offers the load button', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection()));
     assert.ok(m.calls.includes('create_load_btn'));
+});
+
+test('after a 412, the next save still sends the ETag the editor loaded', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(412, '"theirs"');
+    await m.save();
+    m.reply(200, '"next"');
+    await m.save();
+    assert.equal(m.posts.length, 2);
+    assert.equal(m.posts[1].headers['If-Match'], '"loaded"', 'a retry must not adopt the conflicting version');
+});
+
+test('a successful save adopts the new ETag', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.setEtag('"loaded"');
+    m.reply(200, '"saved"');
+    await m.save();
+    await m.save();
+    assert.equal(m.posts[1].headers['If-Match'], '"saved"');
+});
+
+test('save refuses until the saved zones have loaded', async () => {
+    const m = loadMap();
+    await m.save();
+    assert.equal(m.posts.length, 0, 'saved without knowing what was on disk');
+    assert.ok(m.status.textContent.length > 0, 'the refusal is shown');
+});
+
+test('save is allowed after a bulk load even if the first load failed', async () => {
+    const m = loadMap();
+    m.bulkLoad(collection(polygon('A')));
+    await m.save();
+    assert.equal(m.posts.length, 1);
 });
