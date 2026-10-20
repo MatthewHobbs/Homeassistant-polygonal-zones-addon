@@ -10,6 +10,11 @@ on:
   # hole that bit 0.2.16–0.2.22 (AppArmor profile broke container boot; CI
   # passed because test.yml + lint.yml don't exercise the image).
   workflow_call:
+    outputs:
+      include:
+        # release.yml's publish matrix, so there is one arch table, not two.
+        description: Arch matrix generated from build.yaml and base-images.yaml
+        value: ${{ jobs.matrix.outputs.include }}
 
 permissions:
   contents: read

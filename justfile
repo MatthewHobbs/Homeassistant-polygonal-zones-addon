@@ -24,9 +24,10 @@ lint:
     # Same scope as lint.yml's ruff-action: the repo root, so scripts/ is covered.
     ruff check
     ruff format --check
-    shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh
+    shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh
 
 test: venv
     cd polygonal_zones_editor && ../.venv/bin/python -m pytest -v
     scripts/test-release-merge.sh
+    scripts/test-check-published-revision.sh
     cd polygonal_zones_editor && node --test tests/test_trackers.js
