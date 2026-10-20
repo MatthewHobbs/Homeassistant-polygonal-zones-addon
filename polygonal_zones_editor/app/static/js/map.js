@@ -289,7 +289,18 @@ function generate_map(zones_url) {
         _loading_list.textContent = 'Loading zones…';
     }
 
-    fetch(zones_url)
+    load_zones(zones_url, restoredViewport);
+
+    // Opt-in tracker overlay. Resolves to nothing when overlay_entities is
+    // unset, which is the default.
+    if (typeof setup_tracker_overlay === 'function') setup_tracker_overlay(map);
+
+    return {map, editableLayers};
+}
+
+/* The first load of the saved zones. Save stays refused until it succeeds. */
+function load_zones(zones_url, restoredViewport) {
+    return fetch(zones_url)
         .then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             zones_etag = response.headers.get('ETag');
@@ -313,12 +324,6 @@ function generate_map(zones_url) {
             }
             create_load_btn();
         });
-
-    // Opt-in tracker overlay. Resolves to nothing when overlay_entities is
-    // unset, which is the default.
-    if (typeof setup_tracker_overlay === 'function') setup_tracker_overlay(map);
-
-    return {map, editableLayers};
 }
 
 function setup_editing(map, editableLayers) {

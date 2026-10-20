@@ -135,6 +135,13 @@ function loadMap({ noAbortTimeout = false } = {}) {
     const status = fakeElement('p');
     const posts = [];
     let reply = { status: 200, etag: null };
+    let zonesReply = { hang: true };
+    // Like fetch: an already-aborted signal rejects at once.
+    const hangUntilAborted = (opts) => {
+        const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
+        if (opts.signal.aborted) return Promise.reject(aborted());
+        return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
+    };
     const timers = [];
     const cleared = [];
     let pendingFile = null;
@@ -184,19 +191,25 @@ function loadMap({ noAbortTimeout = false } = {}) {
         window: { addEventListener() {}, ZONE_COLOUR: 'green' },
         document,
         fetch: (url, opts) => {
+            if (url === './zones.json') {
+                if (zonesReply.reject) return Promise.reject(new TypeError('Failed to fetch'));
+                if (zonesReply.hang) return hangUntilAborted(opts);
+                return Promise.resolve({
+                    status: 200,
+                    ok: true,
+                    headers: { get: (h) => (h.toLowerCase() === 'etag' ? zonesReply.etag : null) },
+                    text: async () => zonesReply.text,
+                });
+            }
             if (url !== './save_zones') return new Promise(() => {});
             posts.push(opts);
             if (reply.throwSync) throw new TypeError('fetch threw');
-            if (reply.hang) {
-                // Like fetch: an already-aborted signal rejects at once.
-                const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
-                if (opts.signal.aborted) return Promise.reject(aborted());
-                return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
-            }
+            if (reply.hang) return hangUntilAborted(opts);
             return Promise.resolve({
                 status: reply.status,
                 ok: reply.status >= 200 && reply.status < 300,
                 headers: { get: (h) => (h.toLowerCase() === 'etag' ? reply.etag : null) },
+                json: async () => reply.body ?? {},
             });
         },
         setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
@@ -226,7 +239,9 @@ function loadMap({ noAbortTimeout = false } = {}) {
         zoneList: elements['.zone-list'],
         posts,
         status,
-        reply: (s, etag = null) => { reply = { status: s, etag }; },
+        reply: (s, etag = null, body) => { reply = { status: s, etag, body }; },
+        zonesReply: (r) => { zonesReply = r; },
+        loadZones: (restored = false) => vm.runInContext('load_zones', context)('./zones.json', restored),
         hang: () => { reply = { hang: true }; },
         throwSync: () => { reply = { throwSync: true }; },
         timers,
@@ -704,6 +719,25 @@ test('bulk load gives a null id a fresh one, as the server does', () => {
     m.bulkLoad(collection(unnamed({ id: null })));
     assert.deepEqual(m.errors, []);
     assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
+});
+
+test('a first load that fails marks the zones unloaded and offers the load button', async () => {
+    const m = loadMap();
+    m.zonesReply({ reject: true });
+    await m.loadZones();
+    assert.match(m.zoneList.textContent, /^Couldn't load zones/);
+    assert.ok(m.calls.includes('create_load_btn'));
+    await m.save();
+    assert.match(m.status.textContent, /couldn't be loaded/);
+});
+
+test('a first load shows the saved zones and adopts their ETag', async () => {
+    const m = loadMap();
+    m.zonesReply({ text: collection(polygon('A')), etag: '"disk"' });
+    await m.loadZones();
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A']);
+    await m.save();
+    assert.equal(m.posts[0].headers['If-Match'], '"disk"');
 });
 
 test('first load gives a zone whose id is not text a fresh one', () => {
