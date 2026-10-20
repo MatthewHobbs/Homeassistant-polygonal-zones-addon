@@ -19,6 +19,8 @@ Operational procedures for the release pipeline. For routine releases, use `scri
 
 Supervisor picks up the new version within minutes via its addon-update check.
 
+**The version window.** The Supervisor reads `config.yaml` from `main`, so merging a version bump offers the update before its images exist, for about the length of the release run. An update in that window fails to pull. If **publish** fails, every user who tries the update sees it fail until the run is fixed and re-run (**Partial-matrix publish failure**) or a fix version ships. That is the accepted cost of this flow; `release-merge.sh` keeps the window to one release run by tagging straight after the merge.
+
 **publish** and **release** run only when the run's ref is a `v*` tag and it is not a dry run. Every other run stops after the gates and pushes nothing. The workflow's default token is read-only; only **publish** (packages, OIDC, attestations), **release** (contents) and **notify-failure** (issues) are granted writes.
 
 ## Dry run

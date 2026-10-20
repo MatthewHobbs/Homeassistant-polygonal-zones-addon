@@ -32,7 +32,7 @@ _Draw polygonal zones on a map and serve them as GeoJSON for the companion Polyg
 
 ## Releasing
 
-For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. This eliminates the gap where a merged version bump might reach HA users before the matching images exist on GHCR.
+For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. A merged version bump still reaches HA users before its images exist on GHCR, for about one release run; see the version window in [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 **From a shell:**
 
