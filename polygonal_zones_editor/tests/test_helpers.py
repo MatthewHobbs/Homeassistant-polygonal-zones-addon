@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -271,3 +272,27 @@ def test_atomic_write_json_leaves_existing_file_intact_on_write_failure(tmp_path
     assert json.loads(target.read_text()) == original
     siblings = [p.name for p in tmp_path.iterdir()]
     assert siblings == ["zones.json"], f"temp file leaked: {siblings}"
+
+
+def _keys_under(path, section):
+    """The two-space-indented keys of a top-level YAML block; no YAML parser needed."""
+    keys, inside = [], False
+    for line in path.read_text().splitlines():
+        if not line.startswith(" ") and line.strip():
+            inside = line.rstrip() == f"{section}:"
+        elif inside and re.match(r"^  [a-z_]+:", line):
+            keys.append(line.split(":")[0].strip())
+    return keys
+
+
+def test_every_option_has_a_name_and_description_in_the_ui():
+    # A missing entry shows Supervisor users the raw key and no explanation.
+    from tests.conftest import APP_DIR
+
+    addon = APP_DIR.parent
+    schema = _keys_under(addon / "config.yaml", "schema")
+    translated = _keys_under(addon / "translations" / "en.yaml", "configuration")
+    assert "overlay_entities" in schema
+    assert sorted(schema) == sorted(translated)
+    text = (addon / "translations" / "en.yaml").read_text()
+    assert "readable by anyone holding the save_token" in " ".join(text.split())

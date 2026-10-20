@@ -34,6 +34,14 @@ configuration:
       Leave empty unless you front the addon with your own reverse proxy.
       Wildcards (*, 0.0.0.0/0) and the HA ingress IP (172.30.32.2) are
       refused and logged as errors.
+  overlay_entities:
+    name: Trackers to show on the map
+    description: >-
+      Entity ids (e.g. device_tracker.my_car) whose live positions the
+      editor plots over your zones. Empty by default, and while empty
+      the add-on asks Home Assistant for nothing. These positions are
+      readable by anyone holding the save_token, so prefer vehicles
+      over people.
   tracker_refresh_seconds:
     name: Tracker refresh interval
     description: >-
