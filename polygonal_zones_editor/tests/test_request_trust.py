@@ -501,16 +501,29 @@ def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
     assert _send_raw(boot({"save_token": TOKEN}), path) == 403
 
 
-def test_a_decoded_newline_in_the_path_cannot_forge_a_log_line(boot, caplog):
-    # uvicorn decodes %0a into scope["path"], so GET /%0aFAKE arrives as this.
+CONTROL_CHARS = "\n\r\x1b\u2028"
+
+
+@pytest.mark.parametrize("char", list(CONTROL_CHARS), ids=["lf", "cr", "esc", "u2028"])
+def test_a_decoded_control_character_in_the_path_cannot_forge_a_log_line(boot, caplog, char):
+    # uvicorn decodes %0a and the like into scope["path"].
     app = boot({"save_token": TOKEN})
     with caplog.at_level(logging.WARNING):
-        statuses = [_send_raw(app, "/\nFAKE") for _ in range(11)]
+        statuses = [_send_raw(app, f"/{char}FAKE") for _ in range(11)]
     assert statuses[-1] == 429
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("Rejected /") for m in messages)
     assert any(m.startswith("Rate limit hit on /") for m in messages)
-    assert not any("\n" in m or "\r" in m for m in messages)
+    assert not any(c in m for m in messages for c in CONTROL_CHARS)
+
+
+def test_a_control_character_in_the_client_address_is_escaped_in_the_log(boot, caplog):
+    client = _served_client(boot, {"save_token": TOKEN}, ("10.0.0.1\x1b[2K", 5000))
+    with caplog.at_level(logging.WARNING):
+        assert client.get("/zones.json").status_code == 403
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("10.0.0.1\\x1b[2K" in m for m in messages)
+    assert not any("\x1b" in m for m in messages)
 
 
 def test_cross_site_static_loads_never_test_a_token_or_spend_budget(boot):

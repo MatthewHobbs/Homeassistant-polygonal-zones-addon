@@ -13,7 +13,7 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 
 The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
-- `/zones.json` without `X-Save-Token` returning `403`: the runner is a LAN client, so every other probe sends the token
+- `/zones.json` without `X-Save-Token` returning `403`
 - `/zones.json` returning a valid GeoJSON `FeatureCollection`
 - `POST /save_zones` round-trips `SMOKE_ZONES` (a Polygon and a two-part MultiPolygon, from `scripts/draw_and_save.py`)
 - the web service runs as uid 1001 (not root) — regression guard for the s6 privilege-drop fallback
@@ -82,14 +82,14 @@ The container's name carries a repository-specific prefix; find it with `docker 
 
 ### Watchdog
 
-- [ ] With **Watchdog** on in the add-on's **Info** tab, `docker exec <container> pkill -f 'python main.py'` → the add-on restarts by itself. The pilot's `watchdog` phase checks this, and that nothing restarts within 30 seconds with the watchdog off. Neither covers the unhealthy path (`/healthz` failing three times), which rests on the Supervisor's source.
+- [ ] With **Watchdog** on in the add-on's **Info** tab, `docker exec <container> pkill -f 'python main.py'` → the add-on restarts.
 
 ### Save-token flow
 
 Only relevant if you enable the LAN port (`Configuration → Network → set a host port for 8000/tcp`).
 
-- [ ] With `allow_all_ips: true`, LAN `curl .../zones.json` **without** the header → `403`: it grants nothing, and the log says so at startup.
-- [ ] Opening `http://<ha-host>:8000/` in a LAN browser → `403`: a browser cannot send the header, so the editor is used through ingress.
+- [ ] With `allow_all_ips: true`, LAN `curl .../zones.json` **without** the header → `403`.
+- [ ] Opening `http://<ha-host>:8000/` in a LAN browser → `403`.
 - [ ] With `save_token: "abc"` set, LAN `curl -X POST .../save_zones` **without** the header → `403` (uniform rejection, ADR 0002 row 3).
 - [ ] Same with header `X-Save-Token: abc` → `200`.
 - [ ] Trailing whitespace: `X-Save-Token: abc ` → `200` (strip-symmetric behaviour).

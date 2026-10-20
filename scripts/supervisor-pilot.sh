@@ -431,10 +431,9 @@ cmd_probe() {
   # any other non-ingress client under this run's default options
   # (no save_token). DOCS.md must not claim this path is "through ingress"
   # or usable without save_token.
-  local addon_host="$ADDON_HOST"
   core_reaches_healthz ||
-    fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
-  log "OK Core reaches the add-on via internal hostname $addon_host (no ingress, no LAN port)"
+    fail "Core could not reach the add-on via its internal hostname ($ADDON_HOST) on the hassio network"
+  log "OK Core reaches the add-on via internal hostname $ADDON_HOST (no ingress, no LAN port)"
 
   # /zones.json and /trackers.json share the same authorisation gate, but
   # each is asserted here directly rather than trusted by inference: DOCS.md
@@ -443,7 +442,7 @@ cmd_probe() {
     dc docker exec homeassistant python3 -c "
 import urllib.request, urllib.error
 try:
-    urllib.request.urlopen('http://${addon_host}:8000/${path}', timeout=5)
+    urllib.request.urlopen('http://${ADDON_HOST}:8000/${path}', timeout=5)
     raise SystemExit('expected 403, got 200')
 except urllib.error.HTTPError as e:
     assert e.code == 403, e.code
@@ -507,6 +506,9 @@ cmd_watchdog() {
   ha_ok apps start "$SLUG" >/dev/null || fail "start of $SLUG failed"
   poll "$SLUG started again by hand" 120 3 addon_restarted_since "$before" ||
     fail "the add-on did not come back after a manual start"
+  # A kill while the Supervisor still holds the start job may not be watched.
+  poll "Supervisor reports $SLUG started" 180 3 \
+    bash -c "docker exec '$NAME' ha apps info '$SLUG' --raw-json | jq -e '.data.state == \"started\"'"
 
   set_watchdog true
   before="$(addon_started_at)"
@@ -515,6 +517,8 @@ cmd_watchdog() {
   poll "Supervisor watchdog restarted $SLUG and Core reaches /healthz" 120 2 \
     addon_restarted_since "$before" ||
     fail "the Supervisor did not restart the add-on within 120s of its web process dying, watchdog on"
+  # A restart slower than the off leg's wait would make that leg prove nothing.
+  (( SECONDS - t < 30 )) || fail "watchdog restart took $((SECONDS - t))s, not under the off leg's 30s"
   log "OK watchdog restart after $((SECONDS - t))s"
 }
 
