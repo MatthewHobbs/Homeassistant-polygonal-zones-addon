@@ -1,2 +1,2 @@
-starlette>=1.7.0,<1.8
+starlette>=1.8.0,<1.9
 uvicorn>=0.54.0,<0.55
