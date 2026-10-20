@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.8 — 2026-10-20
+
+- **Breaking: LAN access needs `save_token`.** Every request that does not
+  come through Home Assistant must send `X-Save-Token: <value>`, reads and
+  writes alike, and with `save_token` empty nothing outside Home Assistant
+  can reach the add-on. `allow_all_ips` no longer grants anything: it stays
+  in the configuration so existing setups still load, and turning it on
+  only logs an error at startup. The editor is used from the Home Assistant
+  sidebar or **Open Web UI**; opening the LAN port in a browser gets `403`,
+  because a browser cannot send the header on a page load. The companion
+  integration needs the same token as its `zone_source_token`, which is not
+  yet in a tagged integration release. `/healthz` stays open.
+- **Fixed: a NaN or Infinity in a save no longer breaks the editor.** Python
+  accepted them anywhere in the body, such as in a zone's properties, and
+  stored them, and the editor could not load the file again. They are now
+  refused with `422` and nothing is written.
+- **Fixed: one bad reply from Home Assistant no longer takes the tracker
+  overlay down.** A garbled or cut-short reply for one entity made
+  `/trackers.json` fail with `500`; that entity is now reported unavailable
+  and the rest still show.
+- **Fixed: the save response always carries the new `ETag`.** It is built
+  from what was written rather than read back from disk, which could return
+  `"etag": null`.
+- **Fixed: a bad `overlay_entities` entry is warned about once,** not on
+  every poll of every open editor.
+- **Fixed: `zone_colour` defaults to purple everywhere.** The add-on fell
+  back to green when the option was missing.
+- **Fixed: the empty zones file written at first start is written
+  atomically,** like every save.
+- **Fixed: `overlay_entities` has a name and description in the add-on
+  configuration,** including that its positions are readable by anyone
+  holding the token.
+- **Changed: the Supervisor restarts the add-on when its health check
+  fails,** through the add-on's watchdog, and every `429` is sent with
+  `Cache-Control: no-store`.
+
 ## 0.5.7 — 2026-10-20
 
 - **Fixed: a second Save after a conflict no longer overwrites the other
