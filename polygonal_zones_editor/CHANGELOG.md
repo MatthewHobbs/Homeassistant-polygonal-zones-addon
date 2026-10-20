@@ -4,14 +4,15 @@
 
 - **Fixed: loading zones from a file now tells you when it can't.** A file
   with no zones in it, JSON that is not GeoJSON, anything other than
-  polygons, or a zone name that is not text is reported with a message at
+  polygons, or a zone name that is neither text nor empty is reported with a message at
   the top of the page, and your current zones are left as they were.
   Before, the zones on screen were cleared before the file was checked, so
   an empty or unusable file wiped them, a file of points loaded as markers,
   and a zone with no properties broke the zone list.
 - **Fixed: saved zones without a name behave.** A saved zone with null
   properties no longer breaks the zone list, a zone without a name is listed
-  with an empty name rather than "undefined" and can be renamed, and
+  with an empty name rather than "undefined" and can be renamed (every
+  loaded zone now gets an id, so the right one is edited), and
   finishing an edit of one with an empty name leaves it unnamed instead of
   naming it "" (two such zones could not be saved). A saved feature that is
   not a polygon, which the add-on has refused to save for a long time, is no

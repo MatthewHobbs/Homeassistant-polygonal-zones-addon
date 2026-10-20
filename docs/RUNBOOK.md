@@ -62,7 +62,7 @@ The `Refuse to overwrite a different build of this version` step in `Publish (<a
 ha apps update <slug> --backup
 ```
 
-`<slug>` is the add-on's installed slug, which ends in `_polygonal_zones` (a repository-specific prefix comes first); `ha apps info` on the add-on shows it.
+`<slug>` is the add-on's installed slug, which ends in `_polygonal_zones` (a repository-specific prefix comes first); `ha apps` lists the installed add-ons with their slugs.
 
 Restoring that backup (**Settings → System → Backups**) puts back the add-on as it was before the update. There is no way to install a chosen earlier version instead: the CLI's `update` takes only `--backup`, and its help says "It is currently not possible to upgrade/downgrade to a specific version."
 

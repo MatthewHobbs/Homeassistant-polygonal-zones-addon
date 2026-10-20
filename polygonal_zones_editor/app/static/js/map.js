@@ -443,14 +443,9 @@ function edit_zone_event(e) {
     editableLayers.eachLayer(layer => { if (layer.pm) layer.pm.disable(); });
     document.querySelectorAll('zone-entry').forEach(zone => zone.setAttribute('editing', 'false'));
 
-    // An unnamed zone's entry reports an empty oldName; it still names this zone.
-    let oldName = e.detail.oldName ?? e.detail.name
-    // Match on the stable id when we have one (two zones can share a display
-    // name); fall back to name for zones from a pre-versioned file with no id.
-    let layer =
-        (e.detail.id &&
-            editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id)) ||
-        editableLayers.getLayers().find(l => (l.feature.properties.name ?? '') === oldName);
+    // Every zone has an id (drawn ones at creation, loaded ones in add_zones),
+    // so the id alone finds it whatever its name.
+    let layer = editableLayers.getLayers().find(l => l.feature.properties.id === e.detail.id);
 
     // if we start editing a zone, enable editing for that zone
     if (e.detail.editing) {
@@ -645,6 +640,9 @@ function add_zones(data, replace) {
         onEachFeature: (feature, layer) => {
             // GeoJSON allows null properties; the editor reads and writes them.
             if (!feature.properties) feature.properties = {};
+            // Every zone gets an id, so its list entry finds it even when names
+            // are missing or repeated. The server keeps an id it is given.
+            if (!feature.properties.id) feature.properties.id = new_zone_id();
             layer.bindPopup(name_popup_element(feature));
             layers.push(layer);
         },

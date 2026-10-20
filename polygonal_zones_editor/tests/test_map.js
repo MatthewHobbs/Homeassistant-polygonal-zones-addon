@@ -130,6 +130,7 @@ function loadMap() {
         setTimeout: () => 0,
         console,
         L: { geoJSON, Polygon },
+        crypto: require('node:crypto').webcrypto,
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
@@ -222,15 +223,18 @@ test('bulk load accepts polygons without a name, as the server does', () => {
     m.bulkLoad(collection(unnamed(null), unnamed({ id: 'abc' })));
     assert.deepEqual(m.errors, []);
     assert.equal(m.layers.length, 2);
-    assert.deepEqual(m.layers.map((l) => JSON.stringify(l.feature.properties)), ['{}', '{"id":"abc"}']);
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), [undefined, undefined]);
+    assert.equal(m.layers[1].feature.properties.id, 'abc', 'a saved id is kept');
+    assert.ok(m.layers[0].feature.properties.id, 'a zone without one gets an id');
 });
 
 test('first load keeps unnamed zones, so a save cannot drop them', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(polygon('A'), unnamed({ id: 'abc' }), unnamed(null))));
     assert.deepEqual(m.errors, []);
-    assert.deepEqual(m.layers.map((l) => l.feature.properties.id || l.feature.properties.name || null),
-        ['A', 'abc', null]);
+    assert.equal(m.layers.length, 3);
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A', undefined, undefined]);
+    assert.equal(m.layers[1].feature.properties.id, 'abc');
 });
 
 test('first load adds to zones already drawn instead of replacing them', () => {
@@ -276,15 +280,18 @@ test('finishing an edit of an unnamed zone with an empty box leaves it unnamed',
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(unnamed({ id: 'a' }), unnamed({ id: 'b' }))));
     for (const id of ['a', 'b']) m.editZone({ editing: false, name: '', oldName: '', id });
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.id), ['a', 'b'], 'saved ids are kept');
     // Two zones named "" would be refused on save as duplicate names.
     assert.deepEqual(m.layers.map((l) => 'name' in l.feature.properties), [false, false]);
 });
 
-test('an unnamed zone without an id can be renamed', () => {
+test('the second of two unnamed zones without ids is the one renamed', () => {
     const m = loadMap();
-    m.loadSaved(JSON.parse(collection(unnamed(null))));
-    m.editZone({ editing: false, name: 'Shed', oldName: '', id: null });
-    assert.equal(m.layers[0].feature.properties.name, 'Shed');
+    m.loadSaved(JSON.parse(collection(unnamed(null), unnamed({}))));
+    const ids = m.layers.map((l) => l.feature.properties.id);
+    assert.ok(ids.every(Boolean) && ids[0] !== ids[1], 'each loaded zone gets its own id');
+    m.editZone({ editing: false, name: 'Shed', oldName: '', id: ids[1] });
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), [undefined, 'Shed']);
 });
 
 test('first load keeps a remembered view instead of centring on the zones', () => {
