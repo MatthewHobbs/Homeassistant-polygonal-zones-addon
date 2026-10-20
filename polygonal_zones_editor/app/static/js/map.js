@@ -16,8 +16,10 @@ let zones_load_failed = false;
 // One save at a time: a second click sends the same If-Match and would be
 // refused as a conflict with its own first save.
 let save_in_flight = false;
-// A save that never answers must not block every later click.
-const SAVE_TIMEOUT_MS = 30000;
+// A request that never answers must not block every later click. Timed with
+// AbortController + setTimeout rather than AbortSignal.timeout, which
+// Safari/iOS before 16 lack.
+const REQUEST_TIMEOUT_MS = 30000;
 let save_status_timer = null;
 const NOT_LOADED_TEXT = {
     pending: 'The saved zones are still loading. Try again in a moment.',
@@ -300,7 +302,10 @@ function generate_map(zones_url) {
 
 /* The first load of the saved zones. Save stays refused until it succeeds. */
 function load_zones(zones_url, restoredViewport) {
-    return fetch(zones_url)
+    // A stalled load would keep Save refused for good.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    return fetch(zones_url, {signal: controller.signal})
         .then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             zones_etag = response.headers.get('ETag');
@@ -323,7 +328,8 @@ function load_zones(zones_url, restoredViewport) {
                     "Couldn't load zones. Check the add-on log (Settings → Add-ons → Polygonal Zones → Log).";
             }
             create_load_btn();
-        });
+        })
+        .finally(() => clearTimeout(timer));
 }
 
 function setup_editing(map, editableLayers) {
@@ -613,11 +619,9 @@ function save_zones() {
     clearTimeout(save_status_timer);
     if (save_btn) save_btn.classList.remove('success');
     if (save_status) save_status.textContent = 'Saving…';
-    // AbortController + setTimeout rather than AbortSignal.timeout, which
-    // Safari/iOS before 16 lack.
     const controller = new AbortController();
     let timed_out = false;
-    const timer = setTimeout(() => { timed_out = true; controller.abort(); }, SAVE_TIMEOUT_MS);
+    const timer = setTimeout(() => { timed_out = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
     // Started inside the chain, so even a synchronous throw reaches .finally
     // and Save is never left blocked.
     return Promise.resolve().then(() => fetch('./save_zones', {

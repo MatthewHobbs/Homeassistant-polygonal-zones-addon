@@ -139,6 +139,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
     // Like fetch: an already-aborted signal rejects at once.
     const hangUntilAborted = (opts) => {
         const aborted = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e; };
+        if (!opts?.signal) return new Promise(() => {});
         if (opts.signal.aborted) return Promise.reject(aborted());
         return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(aborted())));
     };
@@ -726,6 +727,17 @@ test('a first load that fails marks the zones unloaded and offers the load butto
     m.zonesReply({ reject: true });
     await m.loadZones();
     assert.match(m.zoneList.textContent, /^Couldn't load zones/);
+    assert.ok(m.calls.includes('create_load_btn'));
+    await m.save();
+    assert.match(m.status.textContent, /couldn't be loaded/);
+});
+
+test('a first load that gets no answer times out down the failure path', { timeout: 2000 }, async () => {
+    const m = loadMap({ noAbortTimeout: true });
+    m.zonesReply({ hang: true });
+    const pending = m.loadZones();
+    m.fireSaveTimeout();
+    await pending;
     assert.ok(m.calls.includes('create_load_btn'));
     await m.save();
     assert.match(m.status.textContent, /couldn't be loaded/);
