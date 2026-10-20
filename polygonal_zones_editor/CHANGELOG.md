@@ -2,6 +2,8 @@
 
 ## 0.5.5 — 2026-10-20
 
+Update promptly if you set `trusted_proxies` or `allow_all_ips`.
+
 - **Security: Home Assistant ingress is now recognised only by the address
   that actually connects to the add-on**, never by a forwarded header, even
   from a host listed in `trusted_proxies`. `trusted_proxies` still decides
@@ -9,12 +11,20 @@
   your reverse proxies by its own IP rather than by a range: every address
   you list is believed about which client it forwards for.
 - **Security: `POST /save_zones` now refuses requests a browser marks as
-  coming from another site, and bodies that are not `application/json`.**
+  not coming from the editor's own page, and bodies that are not
+  `application/json`.**
   A cross-site request gets the same `403` as any other refusal; a request
   with any other content type gets `415`. The editor's own Save button and
   the documented `curl` restore already send `application/json`, so they are
   unaffected. If you have a script that posts zones with a different
   content type (or none), add `-H 'Content-Type: application/json'`.
+- **Security: the failed-attempt limit can no longer be turned against the
+  Home Assistant UI**, and a client behind a trusted proxy can no longer
+  dodge it by varying its forwarded address: failures count against the
+  proxy too. A `trusted_proxies` range written with host bits set (such as
+  `192.168.1.5/24`) is now applied as its network instead of silently
+  trusting nothing. Reads a browser fetches on another site's behalf no
+  longer use up your failed-attempt budget.
 - **Security: a tracker's name is shown on the map as plain text.** Its
   hover label is now built the same way as zone popups, so a friendly name
   containing markup is displayed as written rather than interpreted.

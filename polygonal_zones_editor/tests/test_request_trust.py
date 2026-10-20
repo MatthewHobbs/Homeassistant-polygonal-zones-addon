@@ -362,3 +362,50 @@ def test_peer_layer_records_none_without_a_client():
 
     asyncio.run(main.TransportPeerMiddleware(inner)({"type": "http"}, None, None))
     assert seen[main.TRANSPORT_PEER_SCOPE_KEY] is None
+
+
+@pytest.mark.parametrize("path", ["/zones.json", "/trackers.json"])
+def test_forged_ingress_failures_cannot_rate_limit_real_ingress(boot, path):
+    options = {"trusted_proxies": PROXY_RANGE, "save_token": TOKEN}
+    forged = _served_client(boot, options, HOST_IN_PROXY_RANGE)
+    for _ in range(12):
+        assert forged.get(path, headers={"X-Forwarded-For": INGRESS}).status_code in (403, 429)
+    ingress = TestClient(forged.app, client=(INGRESS, 5000))
+    assert ingress.get(path).status_code == 200
+
+
+def test_rotating_forwarded_clients_share_the_proxy_peer_budget(boot):
+    options = {"trusted_proxies": PROXY_RANGE, "save_token": TOKEN}
+    client = _served_client(boot, options, HOST_IN_PROXY_RANGE)
+    codes = [
+        client.get(
+            "/zones.json",
+            headers={"X-Forwarded-For": f"192.0.2.{i}", "X-Save-Token": "wrong"},
+        ).status_code
+        for i in range(1, 40)
+    ]
+    assert 429 in codes
+
+
+def test_real_ingress_with_forwarded_header_is_still_ingress(boot):
+    options = {"trusted_proxies": PROXY_RANGE, "save_token": TOKEN}
+    ingress = _served_client(boot, options, (INGRESS, 5000))
+    assert ingress.get("/zones.json", headers={"X-Forwarded-For": "192.168.1.9"}).status_code == 200
+
+
+def test_host_bit_cidr_is_applied_as_its_network(boot, caplog):
+    options = {"trusted_proxies": "192.168.1.5/24", "save_token": TOKEN}
+    client = _served_client(boot, options, HOST_IN_PROXY_RANGE)
+    with caplog.at_level(logging.WARNING):
+        client.get("/zones.json", headers={"X-Forwarded-For": "192.0.2.1"})
+    # Trusted, so the forwarded client is the one logged, not the proxy.
+    assert "from 192.0.2.1" in caplog.text
+
+
+def test_cross_site_reads_spend_no_failure_budget(boot):
+    options = {"save_token": TOKEN, "allow_all_ips": True}
+    client = _served_client(boot, options, ("192.168.7.7", 5000))
+    for path in ("/zones.json", "/trackers.json"):
+        for _ in range(15):
+            assert client.get(path, headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    assert client.get("/zones.json", headers={"X-Save-Token": TOKEN}).status_code == 200

@@ -63,27 +63,51 @@ _LOGGER = logging.getLogger(__name__)
 # writes, same as on /save_zones.
 AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
 
-# Rate limit on /save_zones authorisation failures. Protects against brute-
-# forcing save_token when the port is exposed on LAN. Only failures count;
-# a client presenting a valid token or coming from ingress never increments
-# the counter.
+# Rate limit on authorisation failures across the three gated routes.
+# Protects against brute-forcing save_token when the port is exposed on LAN.
+# Only failures count. A request whose TCP peer is ingress is never limited,
+# so failures recorded against a forwarded "172.30.32.2" cannot lock the HA UI
+# out. A proxied request is charged to both the forwarded client and the
+# proxy's own address, so rotating X-Forwarded-For values from one host
+# still exhausts that host's budget.
 _SAVE_FAILURE_LIMIT = 10
 _SAVE_FAILURE_WINDOW_SECONDS = 60
 _save_failures: dict[str, deque] = defaultdict(deque)
 
 
-def _rate_limit_exceeded(client_host: str) -> bool:
-    """Check whether client_host has hit the failure budget in the window."""
-    now = time.time()
-    cutoff = now - _SAVE_FAILURE_WINDOW_SECONDS
-    failures = _save_failures[client_host]
+def _failure_keys(request: Request) -> tuple[str, ...]:
+    client = request.client.host if request.client and request.client.host else "unknown"
+    peer = request.scope.get(TRANSPORT_PEER_SCOPE_KEY)
+    if peer and peer != client:
+        return (client, f"peer:{peer}")
+    return (client,)
+
+
+def _prune(key: str, cutoff: float) -> int:
+    failures = _save_failures.get(key)
+    if failures is None:
+        return 0
     while failures and failures[0] < cutoff:
         failures.popleft()
-    return len(failures) >= _SAVE_FAILURE_LIMIT
+    if not failures:
+        # Drop empty buckets so one entry per address ever seen can't pile up.
+        del _save_failures[key]
+        return 0
+    return len(failures)
 
 
-def _record_save_failure(client_host: str) -> None:
-    _save_failures[client_host].append(time.time())
+def _rate_limit_exceeded(request: Request) -> bool:
+    """Whether this request's client or proxy has used its failure budget."""
+    if allowed_ip(request):
+        return False
+    cutoff = time.time() - _SAVE_FAILURE_WINDOW_SECONDS
+    return any(_prune(key, cutoff) >= _SAVE_FAILURE_LIMIT for key in _failure_keys(request))
+
+
+def _record_save_failure(request: Request) -> None:
+    now = time.time()
+    for key in _failure_keys(request):
+        _save_failures[key].append(now)
 
 
 def _etag_for_bytes(body: bytes) -> str:
@@ -475,10 +499,16 @@ def _normalise_feature_collection(obj: dict) -> dict:
 _SAVE_FETCH_SITES = frozenset({"same-origin", "none"})
 
 
+def _browser_cross_origin(request: Request) -> bool:
+    """Whether a browser marked this request as not from the editor's origin."""
+    site = request.headers.get("sec-fetch-site")
+    return site is not None and site not in _SAVE_FETCH_SITES
+
+
 def save_zones_generator(options: dict):
     async def save_zones(request: Request):
         client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(client_host):
+        if _rate_limit_exceeded(request):
             _LOGGER.warning(
                 "Rate limit hit on /save_zones for %s (%d failures in %ds). "
                 "Further attempts refused for the remainder of the window.",
@@ -494,14 +524,13 @@ def save_zones_generator(options: dict):
         # refused whatever it carries. Not counted as a failure: the client
         # did not choose to send it, and counting would let any web page lock
         # the user's own browser out.
-        sec_fetch_site = request.headers.get("sec-fetch-site")
-        if sec_fetch_site is not None and sec_fetch_site not in _SAVE_FETCH_SITES:
+        if _browser_cross_origin(request):
             _LOGGER.warning("Rejected /save_zones from %s: not a same-origin request", client_host)
             return _auth_rejection_response()
 
         ok, reason = authorise_save(options, request)
         if not ok:
-            _record_save_failure(client_host)
+            _record_save_failure(request)
             _LOGGER.warning(
                 "Rejected /save_zones from %s: %s",
                 client_host,
@@ -750,11 +779,14 @@ def trackers_json_generator(options: dict):
         # Same read gate as /zones.json — this returns positions, so it must
         # not be reachable on terms the zones file isn't.
         client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(client_host):
+        if _rate_limit_exceeded(request):
             return _uncached({"error": "too many failed attempts"}, status_code=429)
         ok, reason = authorise_read(options, request)
         if not ok:
-            _record_save_failure(client_host)
+            # A page can make the browser fetch this (an <img>, say); don't
+            # let that spend the visitor's own failure budget.
+            if not _browser_cross_origin(request):
+                _record_save_failure(request)
             _LOGGER.warning(
                 "Rejected /trackers.json read from %s: %s",
                 client_host,
@@ -820,7 +852,7 @@ def zones_json_generator(options: dict):
         # /save_zones so an attacker can't rotate between GET and POST
         # to double their guess budget.
         client_host = request.client.host or "unknown"
-        if _rate_limit_exceeded(client_host):
+        if _rate_limit_exceeded(request):
             _LOGGER.warning(
                 "Rate limit hit on /zones.json for %s (%d failures in %ds). "
                 "Further attempts refused for the remainder of the window.",
@@ -834,7 +866,10 @@ def zones_json_generator(options: dict):
             )
         ok, reason = authorise_read(options, request)
         if not ok:
-            _record_save_failure(client_host)
+            # A page can make the browser fetch this (an <img>, say); don't
+            # let that spend the visitor's own failure budget.
+            if not _browser_cross_origin(request):
+                _record_save_failure(request)
             _LOGGER.warning(
                 "Rejected /zones.json read from %s: %s",
                 client_host,
@@ -1036,7 +1071,9 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
                 "the addon configuration."
             )
             continue
-        safe.append(entry)
+        # uvicorn parses CIDRs strictly, so a host-bit entry such as
+        # 192.168.1.5/24 would silently trust nothing; hand it the network.
+        safe.append(str(net) if "/" in entry else entry)
     return safe
 
 
