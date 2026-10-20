@@ -15,7 +15,7 @@ Operational procedures for the release pipeline. For routine releases, use `scri
    - **build** — reusable call to `build.yml` — multi-arch docker build + per-arch boot-smoke + Playwright smoke (`scripts/ui_smoke.py`: draw→save round-trip, a11y aria-labels, tile-picker assertions). Added in PR #108 so a tag can't publish an image that hasn't booted cleanly at least once. Its arch matrix is also the one **publish** uses.
    - **publish** — per arch: refuses to push if `<version>` is already on GHCR from a different commit (see **Publish refuses: version already published from another commit**), then builds and pushes `ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version>`, labelled `org.opencontainers.image.revision=<commit>`, and attaches a Sigstore build-provenance attestation (keyless, via GitHub OIDC — no secret required).
    - **release** — extracts the CHANGELOG section for the version and creates/updates the GitHub Release.
-   - **notify-failure** — opens a GitHub issue if any upstream job failed.
+   - **notify-failure** — opens a GitHub issue if any upstream job of a real (tag, not dry-run) release failed.
 
 Supervisor picks up the new version within minutes via its addon-update check.
 
@@ -23,7 +23,7 @@ Supervisor picks up the new version within minutes via its addon-update check.
 
 ## Dry run
 
-Rehearse a release without publishing: **Actions → Release addon → Run workflow**, pick a branch (or the tag), enter the `version` (must equal `config.yaml`'s), and leave **dry_run** ticked (the default). It runs **version**, **tests**, **lint** and **build** exactly as a release would, then skips **publish** and **release**. A failed dry run opens a "Release dry run failed" issue rather than a release-failure one.
+Rehearse a release without publishing: **Actions → Release addon → Run workflow**, pick a branch (or the tag), enter the `version` (must equal `config.yaml`'s), and leave **dry_run** ticked (the default). It runs **version**, **tests**, **lint** and **build** as a release would, then skips **publish** and **release**. One difference: on a branch, **lint** also runs the network-dependent `ha-floor` check, which a tag run skips, so a branch dry run can fail where the release would not. A failed dry run opens no issue; read the run page.
 
 A dispatch publishes only when it is run on the `vX.Y.Z` tag itself with **dry_run** unticked; that is the manual equivalent of a tag push. Run on a branch, it never publishes, whatever **dry_run** says.
 
@@ -115,7 +115,7 @@ Same recovery as above — `version` job catches it and fails before `publish`. 
 
 ## Never do this
 
-- **Don't force-push a tag** to a different commit after any image has been pushed under it. `:latest` has been removed so there's no floating-tag drift risk, but re-publishing a different image under an existing `vX.Y.Z` tag breaks the reproducibility promise. `publish` refuses it (see **Publish refuses** above), so the moved tag's release would fail rather than overwrite.
+- **Don't force-push a tag** to a different commit after any image has been pushed under it. `:latest` has been removed so there's no floating-tag drift risk, but re-publishing a different image under an existing `vX.Y.Z` tag breaks the reproducibility promise. `publish` refuses it for every arch already pushed under the old commit (see **Publish refuses** above). An arch that never got pushed has nothing to compare against and would publish the new commit, splitting one version across two commits, so cut a new patch version instead.
 - **Don't amend the version-bump commit** after tagging. Create a new commit + new tag.
 - **Don't merge non-version-bump PRs on top of an in-flight release.** They don't affect the release directly but they muddy the CHANGELOG if you need to cut a hotfix.
 

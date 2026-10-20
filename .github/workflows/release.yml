@@ -45,12 +45,13 @@ jobs:
           else
             VERSION="${GITHUB_REF#refs/tags/v}"
           fi
-          echo "Resolved version: $VERSION"
-          # It becomes an image tag and a release name, so hold it to X.Y.Z.
+          # It becomes an image tag and a release name, so hold it to X.Y.Z,
+          # and print it only once it is known to be just that.
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version '$VERSION' is not X.Y.Z"
+            echo "::error::version is not X.Y.Z"
             exit 1
           fi
+          echo "Resolved version: $VERSION"
           # A dispatch on a tag must name that tag's version, or it could
           # publish one version's images from another version's commit.
           if [[ "$GITHUB_REF" == refs/tags/* ]] && [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
@@ -124,7 +125,9 @@ jobs:
     # Only a v* tag publishes, and a dispatch only when dry_run is unticked.
     # On a push, inputs.dry_run is null, which is not true.
     if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
-    runs-on: ubuntu-latest
+    # Native runner per arch, as build.yml uses: no QEMU emulator image in a
+    # job that holds packages:write and id-token:write.
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write       # push images to ghcr.io
@@ -138,7 +141,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to GHCR
@@ -184,8 +186,9 @@ jobs:
           # See docs/RUNBOOK.md for the release-recovery procedure.
           tags: |
             ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Built from scratch: the gate jobs write the shared build cache and
+          # run unverified downloads, so publish must not read it.
+          no-cache: true
 
       # Sign the pushed image with a Sigstore build-provenance attestation
       # (keyless, via GitHub OIDC — no secret to manage). Replaces the
@@ -249,7 +252,9 @@ jobs:
     # partial release (some arches pushed, others failed) doesn't go silent
     # and drift into "users on different versions depending on arch".
     name: Notify on failure
-    if: failure()
+    # Real releases only: a failed dry run publishes nothing and its run page
+    # already shows what broke.
+    if: failure() && startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
     needs: [version, tests, lint, build, publish, release]
     runs-on: ubuntu-latest
     permissions:
@@ -262,16 +267,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           VERSION: ${{ needs.version.outputs.version }}
-          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           # version may not have run (e.g. lint failed first) so fall back to
           # the ref name rather than failing the notify step too.
-          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [ "$DRY_RUN" != "true" ]; then
-            TAG="v${VERSION:-${GITHUB_REF#refs/tags/v}}"
-            TITLE="Release $TAG failed"
-            BODY="The release workflow failed for $TAG. See the run: ${RUN_URL}. Check which jobs failed; a partial publish may have pushed some arches but not others. Recover by re-running the failed jobs after fixing the cause."
-          else
-            TITLE="Release dry run failed on ${GITHUB_REF#refs/*/}"
-            BODY="A release dry run failed; nothing was published. See the run: ${RUN_URL}."
-          fi
-          gh issue create --title "$TITLE" --body "$BODY" --label bug
+          TAG="v${VERSION:-${GITHUB_REF#refs/tags/v}}"
+          gh issue create --title "Release $TAG failed" --label bug \
+            --body "The release workflow failed for $TAG. See the run: ${RUN_URL}. Check which jobs failed; a partial publish may have pushed some arches but not others. Recover by re-running the failed jobs after fixing the cause."

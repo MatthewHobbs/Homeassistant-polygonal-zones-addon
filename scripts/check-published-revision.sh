@@ -26,7 +26,9 @@ err_file="$(mktemp)"
 trap 'rm -f "$err_file"' EXIT
 
 if ! inspected="$("$docker_bin" buildx imagetools inspect "$image" --format '{{json .Image}}' 2>"$err_file")"; then
-  if grep -qiE '(^|[^[:alnum:]])not found' "$err_file"; then
+  # Only buildx's own "<image>: not found" line means unpublished; any other
+  # "not found" (a missing docker binary, missing credentials) must refuse.
+  if grep -qxF "ERROR: $image: not found" "$err_file"; then
     echo "OK $image is not published yet"
     exit 0
   fi

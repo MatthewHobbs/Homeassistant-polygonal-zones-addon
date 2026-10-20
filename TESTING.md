@@ -14,7 +14,7 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
 - `/zones.json` returning a valid GeoJSON `FeatureCollection`
-- `POST /save_zones` round-trips a minimal Polygon payload
+- `POST /save_zones` round-trips `SMOKE_ZONES` (a Polygon and a two-part MultiPolygon, from `scripts/draw_and_save.py`)
 - the web service runs as uid 1001 (not root) — regression guard for the s6 privilege-drop fallback
 - no Python traceback in the container log
 - the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`, drawn and saved through the real Geoman toolbar on both a secure and a non-secure origin

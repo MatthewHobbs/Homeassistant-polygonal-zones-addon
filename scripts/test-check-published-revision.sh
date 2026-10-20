@@ -24,6 +24,8 @@ case "$STUB_MODE" in
     echo "ERROR: $4: not found" >&2; exit 1 ;;
   denied)
     echo "ERROR: failed to authorize: 403 Forbidden" >&2; exit 1 ;;
+  no-credentials)
+    echo "error getting credentials - err: exit status 1, out: credentials not found in native keychain" >&2; exit 1 ;;
   same)
     echo "{\"architecture\":\"amd64\",\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}}" ;;
   same-index)
@@ -63,6 +65,12 @@ check "index whose platforms disagree: refuse" mixed 1
 check "published without the revision label: refuse" unlabelled 1
 check "published with no labels at all: refuse" no-labels 1
 check "registry error other than not-found: refuse" denied 1
+check "a 'not found' that is not the image: refuse" no-credentials 1
+
+# No docker at all must refuse too, not read "command not found" as unpublished.
+got_exit=0
+DOCKER="$STUB_DIR/no-such-docker" "$TARGET" "ghcr.io/example/amd64-addon-polygonal_zones:1.2.3" "$SHA" >/dev/null 2>&1 || got_exit=$?
+if [ "$got_exit" = 1 ]; then echo "ok - docker missing: refuse"; else echo "not ok - docker missing: refuse (exit $got_exit, wanted 1)"; fails=$((fails + 1)); fi
 
 if [ "$fails" -gt 0 ]; then
   echo "FAILED: $fails check(s)" >&2
