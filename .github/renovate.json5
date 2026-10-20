@@ -40,6 +40,16 @@
     },
     {
       "customType": "regex",
+      // build.yaml carries the same base tags without digests (the HA linter reads it);
+      // the base-image group below bumps both files in one PR, so the drift check holds.
+      "managerFilePatterns": ["/^polygonal_zones_editor/build\\.yaml$/"],
+      "matchStrings": [
+        "(?<depName>ghcr\\.io/home-assistant/[a-z0-9]+-base):(?<currentValue>[\\d.]+)\\s",
+      ],
+      "datasourceTemplate": "docker",
+    },
+    {
+      "customType": "regex",
       // TEMPIO_REF pins the tempio build stage by immutable commit SHA. No manifest declares
       // it, so Dependabot cannot see it at all.
       //
