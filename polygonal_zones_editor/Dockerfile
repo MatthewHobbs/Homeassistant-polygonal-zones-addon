@@ -9,7 +9,6 @@ ARG BUILD_FROM
 # x/crypto >= 0.52.0 and overwrite the base copy below. Verified: trivy reports 0 CVEs
 # on the result. Tracking upstream fix: https://github.com/home-assistant/tempio/issues/132
 # Remove this stage (and the COPY below) once a patched tempio ships in the base image.
-# 1.27-alpine
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS tempio
 # Pinned to an immutable commit for reproducible builds. The SHA is an upstream *release*
 # rather than an arbitrary main commit, so Renovate can follow it: the version comment and the
@@ -44,9 +43,9 @@ ENV VIRTUAL_ENV=/opt/venv \
 # Overwrite the base image's vulnerable /usr/bin/tempio with the patched build above.
 COPY --from=tempio /tempio /usr/bin/tempio
 
-# The venv's own pip (from the base image's Python) does the hashed install
-# below; an unpinned `--upgrade pip` would be the one unhashed download here.
-RUN apk add --no-cache python3 py3-pip \
+# The venv's own pip, bundled by ensurepip, does the hashed install below; an
+# unpinned `--upgrade pip` would be the one unhashed download here.
+RUN apk add --no-cache python3 \
  && python3 -m venv "$VIRTUAL_ENV"
 
 # Install pinned, hash-verified deps from the generated lock file.
