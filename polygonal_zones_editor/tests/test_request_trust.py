@@ -294,6 +294,20 @@ def test_loggable_options_shape():
     assert main.loggable_options({"overlay_entities": {"not": "a list"}})["overlay_entities"] == 0
 
 
+def test_first_boot_seeds_the_zones_file_atomically(boot, tmp_zones_file, monkeypatch):
+    import helpers
+
+    real_write = helpers.atomic_write_json
+    seen = []
+    monkeypatch.setattr(
+        helpers, "atomic_write_json", lambda path, data: seen.append(path) or real_write(path, data)
+    )
+    tmp_zones_file.unlink()
+    boot({})
+    assert seen == [str(tmp_zones_file)]
+    assert json.loads(tmp_zones_file.read_text()) == {"type": "FeatureCollection", "features": []}
+
+
 # --- Startup log for the retired allow_all_ips --------------------------------
 
 

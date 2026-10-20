@@ -1054,8 +1054,7 @@ if __name__ == "__main__":  # pragma: no cover
 
     os.makedirs(DATA_FOLDER, exist_ok=True)
     if not os.path.exists(ZONES_FILE):
-        with open(ZONES_FILE, "w") as f:
-            json.dump({"type": "FeatureCollection", "features": []}, f)
+        atomic_write_json(ZONES_FILE, {"type": "FeatureCollection", "features": []})
 
     options = load_options()
     configure_logging(resolve_log_level(options.get("log_level")))
