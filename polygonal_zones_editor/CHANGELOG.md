@@ -3,16 +3,18 @@
 ## 0.5.6 — 2026-10-20
 
 - **Fixed: loading zones from a file now tells you when it can't.** A file
-  with no zones in it, JSON that is not GeoJSON, or anything other than
-  polygons is reported with a message at the top of the page, and
+  with no zones in it, JSON that is not GeoJSON, anything other than
+  polygons, or a zone name that is not text is reported with a message at the top of the page, and
   your current zones are left as they were. Before, the zones on screen
   were cleared before the file was checked, so an empty or unusable file
   wiped them, a file of points loaded as markers, and a zone with no
   properties broke the zone list.
 - **Fixed: a zone drawn while the saved zones were still loading is kept.**
-  Before, the arriving zones replaced it. A saved zone without a name or
-  properties now loads too; a saved feature that is not a polygon (which the
-  add-on has refused to save for a long time) is skipped with a message.
+  Before, the arriving zones replaced it. A saved zone with null
+  properties now loads too, and a zone without a name is listed with an
+  empty name rather than "undefined"; a saved feature that is not a polygon
+  (which the add-on has refused to save for a long time) is skipped with a
+  message.
 - **Changed: every range listed in `trusted_proxies` now logs a warning**,
   since every address in it is believed about which client it forwards for.
   List each proxy's own IP to silence it. A range written in a non-canonical

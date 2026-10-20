@@ -25,7 +25,8 @@ function fakeElement(tag) {
         children: [],
         innerHTML: '',
         textContent: '',
-        setAttribute(k, v) { this.attributes[k] = v; },
+        // Like the DOM: attribute values are stored as strings.
+        setAttribute(k, v) { this.attributes[k] = String(v); },
         removeAttribute(k) { delete this.attributes[k]; },
         appendChild(child) { this.children.push(child); return child; },
         addEventListener(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); },
@@ -143,6 +144,7 @@ function loadMap() {
         errors,
         calls,
         isDirty: () => vm.runInContext('isDirty', context),
+        zoneList: elements['.zone-list'],
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         loadSaved: (data) => vm.runInContext('load_saved_zones', context)(data, false),
         bulkLoad(text) {
@@ -243,4 +245,20 @@ test('first load keeps the polygon zones and says what it skipped', () => {
     })));
     assert.deepEqual(m.errors, ['1 saved feature(s) are not polygon zones and were not loaded.']);
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A']);
+});
+
+test('bulk load refuses a zone name that is not text, before clearing', () => {
+    const m = withExistingZone();
+    m.bulkLoad(collection(unnamed({ name: 5 })));
+    assert.equal(m.errors.length, 1);
+    assert.ok(!m.calls.includes('clearLayers'));
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home']);
+});
+
+test('an unnamed zone is listed with an empty name, not "undefined"', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed({ id: 'abc' }))));
+    const entries = m.zoneList.children.filter((c) => c.tagName === 'ZONE-ENTRY');
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].attributes.name, '');
 });

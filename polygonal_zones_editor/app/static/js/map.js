@@ -483,7 +483,8 @@ function render_zone_list() {
     editableLayers.eachLayer(layer => {
         // render a zone-entry element and set attribute name
         let zone_entry = document.createElement('zone-entry');
-        zone_entry.setAttribute('name', layer.feature.properties.name);
+        // A zone may have no name; an absent attribute value would read "undefined".
+        zone_entry.setAttribute('name', layer.feature.properties.name ?? '');
         // Stable id (if present) so edit events can target the exact layer even
         // when display names collide.
         if (layer.feature.properties.id) {
@@ -649,6 +650,10 @@ function add_zones(data, replace) {
     const skipped = layers.length - zones.length;
     if (replace) {
         if (skipped) throw new Error('not polygon zones');
+        // The server only stores text names; refuse now rather than at save.
+        if (zones.some(layer => !['string', 'undefined'].includes(typeof layer.feature.properties.name))) {
+            throw new Error('zone name is not text');
+        }
         if (!zones.length) return {count: 0, skipped: 0};
         editableLayers.clearLayers();
     }
