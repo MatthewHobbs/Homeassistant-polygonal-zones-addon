@@ -30,19 +30,13 @@ on:
         default: false
   schedule:
     - cron: "37 3 * * *"
-  # Row 5 will call this from release.yml before publishing.
-  workflow_call:
-    inputs:
-      floor_core:
-        description: Override the floor leg's Core version (default is config.yaml's homeassistant:)
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  # Prefixed so a call from release.yml, which inherits the caller's
-  # github.workflow and github.ref, does not cancel a sibling there.
+  # Prefixed so that, if this is ever made reusable, a caller's inherited
+  # github.workflow and github.ref cannot cancel a sibling there.
   group: supervisor-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 

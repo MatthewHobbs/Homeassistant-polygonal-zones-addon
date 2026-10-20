@@ -1,5 +1,6 @@
 # Python side of scripts/supervisor_probe.py, installed with --require-hashes inside the
-# Playwright image, which ships the browsers but not this package. Regenerate with
+# Playwright image, which ships the browsers but not this package. build.yml installs it
+# the same way for scripts/ui_smoke.py, then fetches the matching browser. Regenerate with
 #   echo playwright==X.Y.Z | uv pip compile - --universal --python-version 3.12 --generate-hashes
 # where X.Y.Z is the image tag, or the package and browsers will not match.
 greenlet==3.5.6 \

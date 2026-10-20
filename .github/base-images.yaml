@@ -1,5 +1,5 @@
-# Digest-pinned HA base images per architecture. Used by the matrix
-# generators in build.yml and release.yml to produce a BUILD_FROM
+# Digest-pinned HA base images per architecture. Used by build.yml's matrix
+# generator (whose output release.yml also publishes from) to produce a BUILD_FROM
 # reference that docker pins by sha256. Keeps rebuilds of the same git
 # SHA bit-identical regardless of GHA cache warm-up or a mutable-tag
 # repush upstream.

@@ -25,13 +25,15 @@ REPO="MatthewHobbs/Homeassistant-polygonal-zones-addon"
 CONFIG="polygonal_zones_editor/config.yaml"
 
 # Required CI checks. If any of these is missing from the PR's status rollup,
-# or hasn't reached SUCCESS, the script refuses to merge. Update this list
-# when adding/removing CI jobs.
+# or hasn't reached SUCCESS, the script refuses to merge. Keep it equal to the
+# checks main's branch protection requires.
 REQUIRED_CHECKS=(
+  "pytest"
+  "lint"
+  "shellcheck"
   "Build (amd64)"
   "Build (aarch64)"
-  "lint"
-  "pytest"
+  "apparmor"
 )
 
 EXIT_USAGE=2

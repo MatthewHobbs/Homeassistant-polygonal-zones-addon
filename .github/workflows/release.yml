@@ -7,39 +7,57 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (without v prefix, e.g. 0.2.12)"
+        description: "Version to check (without v prefix, e.g. 0.2.12); must equal config.yaml's"
         required: true
+      dry_run:
+        description: "Run every gate but push nothing. Publishing also needs the run to be on a v* tag."
+        type: boolean
+        default: true
 
+# Read-only unless a job below asks for more.
 permissions:
-  contents: write       # create the GitHub Release
-  packages: write       # push images to ghcr.io
-  issues: write         # notify-failure job opens an issue on release failure
-  id-token: write       # keyless Sigstore signing via GitHub OIDC
-  attestations: write   # publish build-provenance attestations
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  matrix:
-    name: Resolve build matrix and version
+  version:
+    name: Resolve version
     runs-on: ubuntu-latest
     outputs:
-      include: ${{ steps.gen.outputs.include }}
       version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Resolve version
         id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION="${GITHUB_REF#refs/tags/v}"
           fi
+          # It becomes an image tag and a release name, so hold it to X.Y.Z,
+          # and print it only once it is known to be just that.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version is not X.Y.Z"
+            exit 1
+          fi
           echo "Resolved version: $VERSION"
+          # A dispatch on a tag must name that tag's version, or it could
+          # publish one version's images from another version's commit.
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && [ "$GITHUB_REF" != "refs/tags/v$VERSION" ]; then
+            echo "::error::version '$VERSION' does not match the ref $GITHUB_REF"
+            exit 1
+          fi
           # Sanity-check: must match the version in config.yaml so we don't
           # publish images that disagree with what the Supervisor expects.
           CONFIG_VERSION=$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml)
@@ -54,8 +72,9 @@ jobs:
         # blocks the build before any image is pushed to ghcr.io. The same
         # awk extraction runs again in the `release` job to produce the
         # notes file.
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
           NOTES=$(awk -v v="## $VERSION" '
             $0 ~ "^"v" " || $0 == v {found=1; next}
             found && /^## / {exit}
@@ -65,38 +84,6 @@ jobs:
             echo "::error::No CHANGELOG entry found for version $VERSION in polygonal_zones_editor/CHANGELOG.md"
             exit 1
           fi
-
-      - name: Generate matrix
-        id: gen
-        # Arch list comes from polygonal_zones_editor/build.yaml (the
-        # HA-linter-approved file with plain tags). Digest-pinned base
-        # refs come from .github/base-images.yaml. The two files must
-        # agree on arch keys; we fail fast otherwise.
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, yaml
-          with open("polygonal_zones_editor/build.yaml") as f:
-              tags = yaml.safe_load(f)["build_from"]
-          with open(".github/base-images.yaml") as f:
-              refs = yaml.safe_load(f)["build_from"]
-          if tags.keys() != refs.keys():
-              raise SystemExit(
-                  f"arch mismatch: build.yaml={sorted(tags)} "
-                  f"vs base-images.yaml={sorted(refs)}"
-              )
-          arch_to_platform = {
-              "aarch64": "linux/arm64",
-              "amd64":   "linux/amd64",
-          }
-          missing = set(tags) - set(arch_to_platform)
-          if missing:
-              raise SystemExit(f"unknown arches: {sorted(missing)}")
-          includes = [
-              {"arch": arch, "platform": arch_to_platform[arch], "base": refs[arch]}
-              for arch in tags
-          ]
-          print("include=" + json.dumps(includes))
-          PY
 
   tests:
     name: Tests
@@ -126,21 +113,34 @@ jobs:
     # It catches exactly the class of regression that
     # bit 0.2.16–0.2.22 (AppArmor profile broke container boot; unit tests
     # and the HA addon linter passed, so the release gate was green).
+    # Its `include` output is the arch matrix publish uses, so the two cannot
+    # disagree on which arches exist.
     uses: ./.github/workflows/build.yml
     permissions:
       contents: read
 
   publish:
     name: Publish (${{ matrix.arch }})
-    needs: [matrix, tests, lint, build]
-    runs-on: ubuntu-latest
+    needs: [version, tests, lint, build]
+    # Only a v* tag publishes, and a dispatch only when dry_run is unticked.
+    # On a push, inputs.dry_run is null, which is not true.
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    # Native runner per arch, as build.yml uses: no QEMU emulator image in a
+    # job that holds packages:write and id-token:write.
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write       # push images to ghcr.io
+      id-token: write       # keyless Sigstore signing via GitHub OIDC
+      attestations: write   # publish build-provenance attestations
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.matrix.outputs.include) }}
+        include: ${{ fromJson(needs.build.outputs.include) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+        with:
+          persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to GHCR
@@ -150,9 +150,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase owner
-        id: owner
-        run: echo "name=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - name: Resolve image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          owner=$(tr '[:upper:]' '[:lower:]' <<< "$OWNER")
+          echo "repo=ghcr.io/$owner/$ARCH-addon-polygonal_zones" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to overwrite a different build of this version
+        # A re-run of a partial publish re-pushes the same commit and passes;
+        # anything else already under this tag stops the leg before the push.
+        env:
+          IMAGE: ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
+          REVISION: ${{ github.sha }}
+        run: scripts/check-published-revision.sh "$IMAGE" "$REVISION"
 
       - name: Build and push polygonal_zones image
         id: build
@@ -162,6 +175,9 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BUILD_FROM=${{ matrix.base }}
+          # Read back by check-published-revision.sh on any later run.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
           push: true
           # Supervisor resolves the addon image tag from config.yaml's
           # `version:` field, not from `:latest`. Pushing :latest only
@@ -169,9 +185,10 @@ jobs:
           # :latest pointing at mixed versions across arches). Removed.
           # See docs/RUNBOOK.md for the release-recovery procedure.
           tags: |
-            ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.arch }}-addon-polygonal_zones:${{ needs.matrix.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
+          # Built from scratch: the gate jobs write the shared build cache and
+          # run unverified downloads, so publish must not read it.
+          no-cache: true
 
       # Sign the pushed image with a Sigstore build-provenance attestation
       # (keyless, via GitHub OIDC — no secret to manage). Replaces the
@@ -183,21 +200,27 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.arch }}-addon-polygonal_zones
+          subject-name: ${{ steps.image.outputs.repo }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
   release:
     name: Create GitHub Release
-    needs: [matrix, publish]
+    needs: [version, publish]
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # create the GitHub Release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Extract changelog section
         id: changelog
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          VERSION="${{ needs.matrix.outputs.version }}"
           # Pick everything between "## VERSION" (with a literal space after to
           # avoid prefix collision like "0.2.1" matching "0.2.10") and the next "## " line.
           awk -v v="## $VERSION" '
@@ -213,8 +236,8 @@ jobs:
       - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          VERSION="${{ needs.matrix.outputs.version }}"
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --notes-file /tmp/release-notes.md --title "$TAG"
@@ -229,20 +252,24 @@ jobs:
     # partial release (some arches pushed, others failed) doesn't go silent
     # and drift into "users on different versions depending on arch".
     name: Notify on failure
-    if: failure()
-    needs: [matrix, tests, lint, build, publish, release]
+    # Real releases only: a failed dry run publishes nothing and its run page
+    # already shows what broke.
+    if: failure() && startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    needs: [version, tests, lint, build, publish, release]
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - name: Open an issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout here, so gh has no git remote to find the repo from.
+          GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          VERSION: ${{ needs.matrix.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          # matrix may not have run (e.g. lint failed first) so fall back to
-          # the ref-derived tag name rather than failing the notify step too.
-          TAG="${VERSION:-${GITHUB_REF#refs/tags/v}}"
-          gh issue create \
-            --title "Release v${TAG} failed" \
-            --body "The release workflow failed for v${TAG}. See the run: ${RUN_URL}. Check which jobs failed; a partial publish may have pushed some arches but not others. Recover by re-running the failed jobs after fixing the cause." \
-            --label bug
+          # version may not have run (e.g. lint failed first) so fall back to
+          # the ref name rather than failing the notify step too.
+          TAG="v${VERSION:-${GITHUB_REF#refs/tags/v}}"
+          gh issue create --title "Release $TAG failed" --label bug \
+            --body "The release workflow failed for $TAG. See the run: ${RUN_URL}. Check which jobs failed; a partial publish may have pushed some arches but not others. Recover by re-running the failed jobs after fixing the cause."

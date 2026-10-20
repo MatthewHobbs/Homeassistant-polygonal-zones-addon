@@ -8,13 +8,13 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 |---|---|---|
 | `Tests` | `pytest -v` (100% line coverage gated by `--cov-fail-under=100`) | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
 | `Lint addon` | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within its bound (ADR 0001 row 12), and `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
-| `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
+| `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches (`scripts/ui_smoke.py`) | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
 | `Supervisor pilot` (nightly / on demand, not yet required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer, on both arches | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
 
 The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
 - `/zones.json` returning a valid GeoJSON `FeatureCollection`
-- `POST /save_zones` round-trips a minimal Polygon payload
+- `POST /save_zones` round-trips `SMOKE_ZONES` (a Polygon and a two-part MultiPolygon, from `scripts/draw_and_save.py`)
 - the web service runs as uid 1001 (not root) — regression guard for the s6 privilege-drop fallback
 - no Python traceback in the container log
 - the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`, drawn and saved through the real Geoman toolbar on both a secure and a non-secure origin
