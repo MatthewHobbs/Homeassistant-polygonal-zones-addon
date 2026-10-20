@@ -13,6 +13,7 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 
 The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
+- `/zones.json` without `X-Save-Token` returning `403`: the runner is a LAN client, so every other probe sends the token
 - `/zones.json` returning a valid GeoJSON `FeatureCollection`
 - `POST /save_zones` round-trips `SMOKE_ZONES` (a Polygon and a two-part MultiPolygon, from `scripts/draw_and_save.py`)
 - the web service runs as uid 1001 (not root) — regression guard for the s6 privilege-drop fallback
@@ -29,7 +30,7 @@ The full matrix (both arches, both legs) runs weekly on Friday, on demand (`work
 
 ## Manual — live HA OS
 
-The Supervisor pilot now covers install, setting a *valid* option through the Supervisor API, ingress, and AppArmor enforcement — but on a devcontainer, not HA OS itself, and only the happy path. Some things still only show up under a real HA OS install, or need a case the pilot doesn't probe:
+The Supervisor pilot now covers install, setting a *valid* option through the Supervisor API, ingress, AppArmor enforcement, and the watchdog restarting the add-on when its web process dies — but on a devcontainer, not HA OS itself, and only the happy path. Some things still only show up under a real HA OS install, or need a case the pilot doesn't probe:
 
 - `config.yaml` schema *rejection* (e.g. `zone_colour: match(...)` refusing `""` or `rgb(...)`) — the pilot only round-trips a valid value.
 - `backup: hot` behaviour requires triggering a Supervisor snapshot.
@@ -56,7 +57,7 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
 
 ### Config-surface
 
-- [ ] In **Settings → Add-ons → Polygonal Zones → Configuration**, confirm option labels are in plain English (not raw YAML keys). Descriptions explain `save_token`, `allow_all_ips`, `trusted_proxies` trade-offs.
+- [ ] In **Settings → Add-ons → Polygonal Zones → Configuration**, confirm option labels are in plain English (not raw YAML keys). Descriptions explain the `save_token`, `trusted_proxies` and `overlay_entities` trade-offs, and say `allow_all_ips` no longer grants anything.
 - [ ] Try setting `zone_colour: ""` — Supervisor should reject at save time with a schema error.
 - [ ] Try `zone_colour: "rgb(255,0,0)"` — also rejected.
 - [ ] `zone_colour: "#ff00aa"` — accepted, zones render in that colour.
@@ -79,10 +80,16 @@ The container's name carries a repository-specific prefix; find it with `docker 
 - [ ] Non-root check: `docker exec <container> id` → `uid=1001(app)`.
 - [ ] `/data/options.json` perms: `docker exec <container> ls -l /data/options.json` → `-rw-r----- app app` (0640, not world-readable).
 
+### Watchdog
+
+- [ ] With **Watchdog** on in the add-on's **Info** tab, `docker exec <container> pkill -f 'python main.py'` → the add-on restarts by itself. The pilot's `watchdog` phase checks this, and that nothing restarts within 30 seconds with the watchdog off. Neither covers the unhealthy path (`/healthz` failing three times), which rests on the Supervisor's source.
+
 ### Save-token flow
 
 Only relevant if you enable the LAN port (`Configuration → Network → set a host port for 8000/tcp`).
 
+- [ ] With `allow_all_ips: true`, LAN `curl .../zones.json` **without** the header → `403`: it grants nothing, and the log says so at startup.
+- [ ] Opening `http://<ha-host>:8000/` in a LAN browser → `403`: a browser cannot send the header, so the editor is used through ingress.
 - [ ] With `save_token: "abc"` set, LAN `curl -X POST .../save_zones` **without** the header → `403` (uniform rejection, ADR 0002 row 3).
 - [ ] Same with header `X-Save-Token: abc` → `200`.
 - [ ] Trailing whitespace: `X-Save-Token: abc ` → `200` (strip-symmetric behaviour).

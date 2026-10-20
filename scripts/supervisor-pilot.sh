@@ -429,8 +429,8 @@ cmd_probe() {
   # sidecar (172.30.32.2). So this path exists and needs no LAN port or
   # ingress, but is not automatically trusted: it is blocked exactly like
   # any other non-ingress client under this run's default options
-  # (allow_all_ips off, no save_token). DOCS.md must not claim this path is
-  # "through ingress" or usable without allow_all_ips/save_token.
+  # (no save_token). DOCS.md must not claim this path is "through ingress"
+  # or usable without save_token.
   local addon_host="$ADDON_HOST"
   core_reaches_healthz ||
     fail "Core could not reach the add-on via its internal hostname ($addon_host) on the hassio network"
@@ -447,9 +447,9 @@ try:
     raise SystemExit('expected 403, got 200')
 except urllib.error.HTTPError as e:
     assert e.code == 403, e.code
-" || fail "internal-hostname access to /${path} was not blocked as expected (allow_all_ips off, no token)"
+" || fail "internal-hostname access to /${path} was not blocked as expected (no save_token)"
   done
-  log "OK internal-hostname reads (/zones.json, /trackers.json) are blocked like any non-ingress client without allow_all_ips/save_token"
+  log "OK internal-hostname reads (/zones.json, /trackers.json) are blocked like any non-ingress client without save_token"
 
   local base
   base="$(core_url)" || fail "Core is not answering on 8123 or 80"
