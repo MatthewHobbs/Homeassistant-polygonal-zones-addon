@@ -92,16 +92,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # On a failed phase, `all` writes diagnostics to $PILOT_WORKDIR/diagnostics.
       - name: Run the add-on under the stable Supervisor
         env:
           PILOT_WORKDIR: ${{ runner.temp }}/pilot
         run: scripts/supervisor-pilot.sh all
-
-      - name: Collect diagnostics
-        if: failure()
-        env:
-          PILOT_WORKDIR: ${{ runner.temp }}/pilot
-        run: scripts/supervisor-pilot.sh diagnostics "$PILOT_WORKDIR/diagnostics"
 
       - name: Upload diagnostics
         if: failure()
