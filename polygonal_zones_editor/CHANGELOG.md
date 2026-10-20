@@ -280,7 +280,7 @@ Reimplements the intent of an earlier stalled [PR #132](https://github.com/Matth
 
 - **`schema_version: 1`** stamped on every persisted `zones.json` at write time. Purely informational today — readers are expected to ignore unknown top-level keys — but consumers that pin behaviour to a specific shape can branch on this. Optional on input for curl-restore backward compatibility with pre-versioned files; rejected if present-but-not-int (`bool` explicitly rejected because `isinstance(True, int)` is True in Python).
 - **`properties.id`** on every feature — the stable handle HA automations bind to through zone renames. Optional on input; the server **backfills** a fresh `uuid4().hex` for any feature missing one so a curl-restored pre-versioned file still writes cleanly. When supplied by a client (the editor now generates one via `crypto.randomUUID()` on `draw:created`), it must be a non-empty string **and unique** across the collection — duplicate ids would defeat the "stable binding handle" contract.
-- **`docs/EVALUATION.md`** — a review that seeded issues #111–#131 earlier this week. Committed as the provenance record for that arc of work; lands unchanged from the original output.
+- **`docs/EVALUATION.md`** — a review that seeded issues #111–#131 earlier this week. Committed as the provenance record for that arc of work.
 
 ### Contract
 
