@@ -16,6 +16,23 @@ let zones_load_failed = false;
 // One save at a time: a second click sends the same If-Match and would be
 // refused as a conflict with its own first save.
 let save_in_flight = false;
+// A save that never answers must not block every later click.
+const SAVE_TIMEOUT_MS = 30000;
+let save_status_timer = null;
+const NOT_LOADED_TEXT = {
+    pending: 'The saved zones are still loading. Try again in a moment.',
+    failed: "The saved zones couldn't be loaded, so saving now could overwrite them. Reload the page and try again.",
+};
+
+/* Once saving is possible, drop a not-loaded refusal still on screen. */
+function clear_not_loaded_refusal() {
+    const save_btn = document.querySelector('.save-btn');
+    const save_status = document.getElementById('save-status');
+    if (save_status && Object.values(NOT_LOADED_TEXT).includes(save_status.textContent)) {
+        save_status.textContent = '';
+        if (save_btn) save_btn.classList.remove('error');
+    }
+}
 // isDirty flips to true on any edit the user hasn't flushed to the server
 // (draw, delete, rename, bulk-load). Cleared on a successful save. Drives
 // the beforeunload prompt below so HA's ingress shell can't silently discard
@@ -528,6 +545,9 @@ function render_zone_list() {
 }
 
 function save_zones() {
+    // Ignored while a save is on its way, before anything below changes what
+    // the user sees.
+    if (save_in_flight) return Promise.resolve();
     // Clear any prior error state on a fresh save attempt. #123: previous
     // errors persist on screen until the next user action, so this is the
     // "next action" that dismisses them. Success auto-clears at the
@@ -539,12 +559,9 @@ function save_zones() {
         save_status.textContent = '';
     }
 
-    if (save_in_flight) return Promise.resolve();
     if (!zones_loaded) {
         if (save_btn) save_btn.classList.add('error');
-        if (save_status) save_status.textContent = zones_load_failed
-            ? "The saved zones couldn't be loaded, so saving now could overwrite them. Reload the page and try again."
-            : 'The saved zones are still loading. Try again in a moment.';
+        if (save_status) save_status.textContent = zones_load_failed ? NOT_LOADED_TEXT.failed : NOT_LOADED_TEXT.pending;
         return Promise.resolve();
     }
 
@@ -571,10 +588,13 @@ function save_zones() {
 
     save_in_flight = true;
     const sent_seq = edit_seq;
+    clearTimeout(save_status_timer);
+    if (save_status) save_status.textContent = 'Saving…';
     return fetch('./save_zones', {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify(geojson)
+        body: JSON.stringify(geojson),
+        signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
     }).then(response => {
         let elem = document.querySelector('.save-btn');
         let status = document.getElementById('save-status');
@@ -601,7 +621,7 @@ function save_zones() {
             // Success auto-clears at 2s. Errors below persist until the next
             // save click (top of save_zones()): 2s is too short for a user
             // not looking at the button, especially on mobile.
-            setTimeout(() => {
+            save_status_timer = setTimeout(() => {
                 elem.classList.remove('success');
                 if (status && status.textContent === 'Zones saved.') status.textContent = '';
             }, 2000);
@@ -640,6 +660,7 @@ function show_transient_error(message) {
 function load_saved_zones(data, restoredViewport) {
     const {skipped} = add_zones(data, false);
     zones_loaded = true;
+    clear_not_loaded_refusal();
     render_zone_list();
     if (skipped) {
         show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
@@ -719,6 +740,7 @@ function load_bulk_json() {
                 return;
             }
             zones_loaded = true;
+            clear_not_loaded_refusal();
             render_zone_list();
             mark_dirty();
             map.setView(editableLayers.getBounds().getCenter(), 13);

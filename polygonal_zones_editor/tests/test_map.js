@@ -27,7 +27,11 @@ function fakeElement(tag) {
         textContent: '',
         // Like the DOM: attribute values are stored as strings.
         setAttribute(k, v) { this.attributes[k] = String(v); },
-        classList: { add() {}, remove() {} },
+        classes: new Set(),
+        get classList() {
+            const s = this.classes;
+            return { add: (c) => s.add(c), remove: (c) => s.delete(c), contains: (c) => s.has(c) };
+        },
         removeAttribute(k) { delete this.attributes[k]; },
         appendChild(child) { this.children.push(child); return child; },
         addEventListener(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); },
@@ -141,9 +145,11 @@ function loadMap() {
             });
         },
         setTimeout: () => 0,
+        clearTimeout: () => {},
         console,
         L: { geoJSON, Polygon },
         crypto: require('node:crypto').webcrypto,
+        AbortSignal,
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
         },
@@ -165,6 +171,8 @@ function loadMap() {
         reply: (s, etag = null) => { reply = { status: s, etag }; },
         setEtag: (e) => vm.runInContext('(e) => { zones_etag = e; }', context)(e),
         save: () => vm.runInContext('save_zones', context)(),
+        saveBtn: elements['.save-btn'],
+        setLoadFailed: () => vm.runInContext('zones_load_failed = true', context),
         markDirty: () => vm.runInContext('mark_dirty', context)(),
         addZones: (data, replace) => vm.runInContext('add_zones', context)(data, replace),
         editZone: (detail) => vm.runInContext('edit_zone_event', context)({ detail, target: fakeElement('zone-entry') }),
@@ -397,4 +405,39 @@ test('while the saved zones are still loading, save asks you to wait', async () 
     const m = loadMap();
     await m.save();
     assert.match(m.status.textContent, /still loading/);
+});
+
+test('a save says it is saving, and a click meanwhile leaves that in place', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    const first = m.save();
+    assert.equal(m.status.textContent, 'Saving…');
+    const second = m.save();
+    assert.equal(m.status.textContent, 'Saving…', 'the ignored click wiped the status');
+    await Promise.all([first, second]);
+    assert.equal(m.status.textContent, 'Zones saved.');
+});
+
+test('a save is bounded in time', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    await m.save();
+    assert.ok(m.posts[0].signal, 'a hung request would block every later save');
+});
+
+test('after a failed load, save says the zones could not be loaded', async () => {
+    const m = loadMap();
+    m.setLoadFailed();
+    await m.save();
+    assert.match(m.status.textContent, /couldn't be loaded/);
+});
+
+test('the not-loaded refusal clears once the zones load', async () => {
+    const m = loadMap();
+    await m.save();
+    assert.ok(m.saveBtn.classList.contains('error'));
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    assert.equal(m.status.textContent, '');
+    assert.ok(!m.saveBtn.classList.contains('error'));
 });

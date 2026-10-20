@@ -13,9 +13,11 @@
   unchecked and the file was replaced by whatever was on screen. Save now
   says the zones are still loading (or couldn't be loaded); a bulk load from
   a file still saves, since replacing the zones is then the point.
-- **Fixed: a double click on Save no longer reports a conflict with itself,**
-  and an edit made while a save is on its way stays marked as unsaved instead
-  of being shown as saved.
+- **Fixed: a double click on Save no longer reports a conflict with itself.**
+  Save shows "Saving…" while a save is on its way and ignores further clicks;
+  a save that gets no answer gives up after 30 seconds and says so. A zone
+  drawn, deleted or renamed while a save is on its way stays marked as
+  unsaved instead of being shown as saved.
 
 ## 0.5.6 — 2026-10-20
 
