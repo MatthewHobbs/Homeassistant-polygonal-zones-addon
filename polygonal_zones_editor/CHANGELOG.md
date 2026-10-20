@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.6 — 2026-10-20
+
+- **Fixed: loading zones from a file now tells you when it can't.** A file
+  with no zones in it, JSON that is not GeoJSON, or shapes that are not
+  polygons are reported with a message at the top of the page, and your
+  current zones are left as they were. Before, the load failed silently,
+  and a file that was not GeoJSON cleared the zones on screen first.
+- **Changed: every range listed in `trusted_proxies` now logs a warning**,
+  since every address in it is believed about which client it forwards for.
+  List each proxy's own IP to silence it. A range written in a non-canonical
+  IPv6 spelling (such as `2001:DB8::/32`) no longer draws the host-bits
+  warning.
+- **Changed: a client hitting the failed-attempt limit on `GET /trackers.json`
+  is now logged**, as it already was on `/zones.json` and `/save_zones`.
+- **Changed: the record of failed attempts is swept at most once a second**,
+  so a flood of failures from many addresses no longer costs a full sweep
+  each.
+- **Docs:** rolling back to a chosen earlier version is not possible — the
+  Supervisor's `update` takes no version — so the runbook now offers a
+  forward fix or the add-on's own pre-update backup. The `homeassistant_api`
+  grant is described as it is: applied at install and not read-only, with an
+  empty `overlay_entities` meaning only that it goes unused. A failing health
+  check marks the container unhealthy; the claim that Supervisor then
+  restarts it was unverified and is removed. A new **Privacy and data**
+  section says what backups, map tiles, your browser and the log keep.
+- Internal: one authorisation gate for the three gated routes, and dead code
+  and stale comments removed.
+
 ## 0.5.5 — 2026-10-20
 
 Update promptly if you set `trusted_proxies` or `allow_all_ips`.
