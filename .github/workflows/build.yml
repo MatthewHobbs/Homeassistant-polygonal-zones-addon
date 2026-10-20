@@ -40,7 +40,7 @@ jobs:
         # Arch list comes from polygonal_zones_editor/build.yaml (the
         # HA-linter-approved file with plain tags). Digest-pinned base
         # refs come from .github/base-images.yaml. The two files must
-        # agree on arch keys; we fail fast otherwise.
+        # agree on arch keys and on each tag; we fail fast otherwise.
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, yaml
@@ -53,6 +53,9 @@ jobs:
                   f"arch mismatch: build.yaml={sorted(tags)} "
                   f"vs base-images.yaml={sorted(refs)}"
               )
+          stale = {a: (tags[a], refs[a]) for a in tags if refs[a].split("@")[0] != tags[a]}
+          if stale:
+              raise SystemExit(f"base image tag mismatch (build.yaml, base-images.yaml): {stale}")
           arch_to_platform = {
               "aarch64": "linux/arm64",
               "amd64":   "linux/amd64",

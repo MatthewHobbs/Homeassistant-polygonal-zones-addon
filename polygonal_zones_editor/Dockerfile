@@ -53,7 +53,7 @@ RUN apk add --no-cache python3 \
 #   uv pip compile requirements.txt --generate-hashes \
 #     --python-version 3.12 -o requirements-lock.txt
 # The --python-version must match the python3 shipped by the HA base image
-# (Alpine 3.21 → Python 3.12) so transitive deps like typing_extensions
+# so transitive deps like typing_extensions
 # are included even when the maintainer regenerates on a newer host.
 COPY requirements-lock.txt /app/requirements-lock.txt
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements-lock.txt
