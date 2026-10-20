@@ -133,8 +133,7 @@ def _current_zones_etag() -> str | None:
 
 
 def _loggable(value: str) -> str:
-    # uvicorn decodes %0a and the like into the path; escaped, no value can
-    # forge or hide a log line.
+    # For any client-supplied value: escaped, it cannot forge or hide a log line.
     return value.encode("unicode_escape").decode()
 
 

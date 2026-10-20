@@ -421,16 +421,8 @@ cmd_probe() {
     fail "web service runs as uid=${uid:-?}(${user:-?}) under the Supervisor, expected uid=1001(app)"
   log "OK web service runs as uid=$uid($user) under the Supervisor"
 
-  # Reachability from Core over the internal hassio network (ADR 0002 row 1):
-  # established 2026-09-27 that Core runs with --network host, not on the
-  # hassio bridge, so it reaches the add-on's slug-derived hostname alias
-  # over routing, not Docker DNS from network membership — but the request
-  # arrives from the hassio bridge gateway (172.30.32.1), not the ingress
-  # sidecar (172.30.32.2). So this path exists and needs no LAN port or
-  # ingress, but is not automatically trusted: it is blocked exactly like
-  # any other non-ingress client under this run's default options
-  # (no save_token). DOCS.md must not claim this path is "through ingress"
-  # or usable without save_token.
+  # Core reaches the add-on by hostname, but from the bridge gateway, not
+  # ingress, so it is gated like any LAN client.
   core_reaches_healthz ||
     fail "Core could not reach the add-on via its internal hostname ($ADDON_HOST) on the hassio network"
   log "OK Core reaches the add-on via internal hostname $ADDON_HOST (no ingress, no LAN port)"
@@ -506,7 +498,7 @@ cmd_watchdog() {
   ha_ok apps start "$SLUG" >/dev/null || fail "start of $SLUG failed"
   poll "$SLUG started again by hand" 120 3 addon_restarted_since "$before" ||
     fail "the add-on did not come back after a manual start"
-  # A kill while the Supervisor still holds the start job may not be watched.
+  # Settle as install does before the watchdog leg.
   poll "Supervisor reports $SLUG started" 180 3 \
     bash -c "docker exec '$NAME' ha apps info '$SLUG' --raw-json | jq -e '.data.state == \"started\"'"
 

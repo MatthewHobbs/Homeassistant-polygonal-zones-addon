@@ -587,3 +587,16 @@ def test_an_out_of_range_tracker_is_dropped_not_a_crash(attrs, accuracy):
         assert point is None
     else:
         assert point["gps_accuracy"] is accuracy
+
+
+def test_a_control_character_in_if_match_is_escaped_in_the_conflict_log(boot, caplog):
+    client = _served_client(boot, {"save_token": TOKEN}, (INGRESS, 5000))
+    with caplog.at_level(logging.INFO):
+        r = client.post(
+            "/save_zones",
+            content=json.dumps(_valid_payload()),
+            headers={"Content-Type": "application/json", "If-Match": b'"stale"\x85FAKE'},
+        )
+    assert r.status_code == 412
+    conflict = [m for m in (r.getMessage() for r in caplog.records) if m.startswith("Conflict")]
+    assert conflict and "\\x85FAKE" in conflict[0] and "\x85" not in conflict[0]
