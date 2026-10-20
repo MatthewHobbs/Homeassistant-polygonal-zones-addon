@@ -2,9 +2,10 @@
 #
 # `just ci` mirrors the static gates in .github/workflows/{lint,test}.yml, including the
 # same dependency install. NOT covered locally, and remaining remote-only gates: the HA
-# add-on linter, the multi-arch build, the per-arch smoke boot and the Playwright UI tests,
-# and lint.yml's ha-floor job, which reads version.home-assistant.io and so is
-# network-dependent: `just ha-floor` runs it on demand, `just ci` never does.
+# add-on linter, lint.yml's apparmor job (it needs apparmor_parser, which is Linux-only),
+# the multi-arch build, the per-arch smoke boot and the Playwright UI tests, and lint.yml's
+# ha-floor job, which reads version.home-assistant.io and so is network-dependent:
+# `just ha-floor` runs it on demand, `just ci` never does.
 
 # Local CI gate - the same commands remote CI runs, for the checks it covers.
 ci: lint test
@@ -24,7 +25,9 @@ lint:
     # Same scope as lint.yml's ruff-action: the repo root, so scripts/ is covered.
     ruff check
     ruff format --check
+    # Same files as lint.yml's shellcheck job; keep the two lists identical.
     shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh
+    shellcheck -x polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms polygonal_zones_editor/rootfs/etc/services.d/web/run polygonal_zones_editor/rootfs/etc/services.d/web/finish
 
 test: venv
     cd polygonal_zones_editor && ../.venv/bin/python -m pytest -v
