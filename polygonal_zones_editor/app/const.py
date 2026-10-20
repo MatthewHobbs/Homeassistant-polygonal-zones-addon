@@ -6,6 +6,11 @@ ZONES_FILE = os.path.join(DATA_FOLDER, "zones.json")
 
 ALLOWED_IPS = ["172.30.32.2"]
 
+# ASGI scope key holding the TCP peer's host, recorded before any proxy-header
+# rewrite of scope["client"]. Ingress is decided from this, never from a
+# forwarded header.
+TRANSPORT_PEER_SCOPE_KEY = "polygonal_zones.transport_peer"
+
 MAX_SAVE_BYTES = 512 * 1024
 
 # Schema version stamped onto the FeatureCollection on every write. Bump

@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 import uvicorn
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from const import (
     DATA_FOLDER,
@@ -38,6 +39,7 @@ from const import (
     SCHEMA_VERSION,
     SUPERVISOR_API,
     SUPERVISOR_TOKEN_ENV,
+    TRANSPORT_PEER_SCOPE_KEY,
     ZONES_FILE,
 )
 from helpers import (
@@ -182,6 +184,22 @@ _AUTH_REJECTION_LOG_REASON = {
     "token_wrong": "wrong X-Save-Token",
     "not_allowed": "not ingress, no token configured, allow_all_ips off",
 }
+
+
+class TransportPeerMiddleware:
+    """Outermost ASGI layer: records the TCP peer before anything rewrites
+    scope["client"]. Proxy-header handling sits inside it, so allowed_ip()
+    sees the real peer while rate limiting and logging see the resolved client.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "lifespan":
+            client = scope.get("client")
+            scope = {**scope, TRANSPORT_PEER_SCOPE_KEY: client[0] if client else None}
+        await self.app(scope, receive, send)
 
 
 class IPAllowMiddleware(BaseHTTPMiddleware):
@@ -452,6 +470,11 @@ def _normalise_feature_collection(obj: dict) -> dict:
     return obj
 
 
+# Sec-Fetch-Site values a save may carry: the editor's own fetch, or a request
+# the user made directly. Absent (curl, scripts) is also accepted.
+_SAVE_FETCH_SITES = frozenset({"same-origin", "none"})
+
+
 def save_zones_generator(options: dict):
     async def save_zones(request: Request):
         client_host = request.client.host or "unknown"
@@ -467,6 +490,15 @@ def save_zones_generator(options: dict):
                 {"error": "too many failed attempts"},
                 status_code=429,
             )
+        # Checked before the token, so a browser-sent cross-site request is
+        # refused whatever it carries. Not counted as a failure: the client
+        # did not choose to send it, and counting would let any web page lock
+        # the user's own browser out.
+        sec_fetch_site = request.headers.get("sec-fetch-site")
+        if sec_fetch_site is not None and sec_fetch_site not in _SAVE_FETCH_SITES:
+            _LOGGER.warning("Rejected /save_zones from %s: not a same-origin request", client_host)
+            return _auth_rejection_response()
+
         ok, reason = authorise_save(options, request)
         if not ok:
             _record_save_failure(client_host)
@@ -476,6 +508,12 @@ def save_zones_generator(options: dict):
                 _AUTH_REJECTION_LOG_REASON.get(reason, f"unrecognised reason {reason!r}"),
             )
             return _auth_rejection_response()
+
+        # A cross-site HTML form can only send form or text/plain bodies, so
+        # requiring JSON refuses those even from browsers without Sec-Fetch.
+        media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
 
         content_length = request.headers.get("content-length")
         if (
@@ -866,7 +904,12 @@ async def healthz(_request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-def generate_app(options: dict) -> tuple[Starlette, dict]:
+def generate_app(options: dict) -> tuple[TransportPeerMiddleware, dict]:
+    """Build the ASGI app exactly as it is served, plus uvicorn's log config.
+
+    Proxy headers are applied here rather than by uvicorn, inside the layer
+    that records the TCP peer, so serve it with ``proxy_headers=False``.
+    """
     static_folder = "static"
     routes = [
         Route("/save_zones", save_zones_generator(options), methods=["POST"]),
@@ -898,7 +941,22 @@ def generate_app(options: dict) -> tuple[Starlette, dict]:
     ]
 
     app = Starlette(debug=False, routes=routes, middleware=middleware)
-    return app, log_config
+
+    proxy_ip_allowlist = _parse_trusted_proxies(options)
+    if proxy_ip_allowlist:
+        # Log the count only, not the list contents. `proxy_ip_allowlist` is
+        # derived from the `trusted_proxies` option, and CodeQL's
+        # py/clear-text-logging-sensitive-data rule flags any options-sourced
+        # value logged via %s — same reason _parse_trusted_proxies itself
+        # logs rejection reasons as constant strings. TESTING.md already
+        # documents the count-based format as the expected operator-visible
+        # output, so this aligns code with docs.
+        _LOGGER.info(
+            "Honouring X-Forwarded-For from %d configured proxy/proxies.",
+            len(proxy_ip_allowlist),
+        )
+        app = ProxyHeadersMiddleware(app, trusted_hosts=proxy_ip_allowlist)
+    return TransportPeerMiddleware(app), log_config
 
 
 # Values that, when handed to uvicorn's forwarded_allow_ips, would let any
@@ -982,6 +1040,59 @@ def _parse_trusted_proxies(options: dict) -> list[str]:
     return safe
 
 
+# Options logged verbatim at startup. An allowlist, so an option added later
+# (or an unexpected key in options.json) is never logged by default.
+_LOGGED_OPTION_KEYS = (
+    "allow_all_ips",
+    "log_level",
+    "theme",
+    "tracker_refresh_seconds",
+    "zone_colour",
+)
+
+
+def _entry_count(value) -> int:
+    if isinstance(value, str):
+        value = re.split(r"[,\n]", value)
+    if not isinstance(value, list):
+        return 0
+    return sum(1 for item in value if str(item).strip())
+
+
+def loggable_options(options: dict) -> dict:
+    """The options as they may appear in the add-on log.
+
+    The token is reduced to whether it is set; entity ids and proxy addresses
+    identify devices and hosts, so only their counts are logged.
+    """
+    out = {key: options[key] for key in _LOGGED_OPTION_KEYS if key in options}
+    # "***" is the form DOCS.md and TESTING.md tell users to look for.
+    out["save_token"] = "***" if (options.get("save_token") or "").strip() else "not set"
+    out["overlay_entities"] = _entry_count(options.get("overlay_entities"))
+    out["trusted_proxies"] = _entry_count(options.get("trusted_proxies"))
+    return out
+
+
+def log_open_access(options: dict) -> None:
+    """Say at startup what allow_all_ips exposes without a token."""
+    if not allow_all_ips(options):
+        return
+    if (options.get("save_token") or "").strip():
+        _LOGGER.info(
+            "allow_all_ips is on; /save_zones, /zones.json and /trackers.json "
+            "require X-Save-Token from non-ingress clients."
+        )
+        return
+    reads = "/zones.json and /trackers.json are" if overlay_entities(options) else "/zones.json is"
+    _LOGGER.warning(
+        "allow_all_ips is enabled and no save_token is set — any client on your network "
+        "can overwrite zones through /save_zones, and %s readable by any client on your "
+        "network. Set the save_token option to require an X-Save-Token header on "
+        "non-ingress requests.",
+        reads,
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     # The entrypoint block is covered by the build.yml smoke test (boots
     # the container under docker, probes /healthz + /zones.json), not by
@@ -998,8 +1109,7 @@ if __name__ == "__main__":  # pragma: no cover
 
     options = load_options()
     configure_logging(resolve_log_level(options.get("log_level")))
-    redacted = {k: ("***" if k == "save_token" and v else v) for k, v in options.items()}
-    _LOGGER.info("Loaded options: %s", redacted)
+    _LOGGER.info("Loaded options: %s", loggable_options(options))
     if os.getuid() == 0:
         # The s6 init in rootfs/etc/services.d/web/run is supposed to drop
         # privileges to the 'app' user. If we got here as root, one of its
@@ -1012,37 +1122,16 @@ if __name__ == "__main__":  # pragma: no cover
             "dropping privileges to the 'app' user — check the service log "
             "for a warning explaining which condition fired."
         )
-    if allow_all_ips(options):
-        if (options.get("save_token") or "").strip():
-            _LOGGER.info(
-                "allow_all_ips is on; /save_zones requires X-Save-Token from non-ingress clients."
-            )
-        else:
-            _LOGGER.warning(
-                "allow_all_ips is enabled and no save_token is set — /save_zones is reachable from any IP. "
-                "Set the save_token option to require an X-Save-Token header on non-ingress requests."
-            )
-
-    proxy_ip_allowlist = _parse_trusted_proxies(options)
-    if proxy_ip_allowlist:
-        # Log the count only, not the list contents. `proxy_ip_allowlist` is
-        # derived from the `trusted_proxies` option, and CodeQL's
-        # py/clear-text-logging-sensitive-data rule flags any options-sourced
-        # value logged via %s — same reason _parse_trusted_proxies itself
-        # logs rejection reasons as constant strings. TESTING.md already
-        # documents the count-based format as the expected operator-visible
-        # output, so this aligns code with docs.
-        _LOGGER.info(
-            "Honouring X-Forwarded-For from %d configured proxy/proxies.",
-            len(proxy_ip_allowlist),
-        )
+    log_open_access(options)
 
     app, log_config = generate_app(options)
+    # generate_app applies trusted_proxies itself, inside the layer that
+    # records the TCP peer; uvicorn's own proxy handling (on by default)
+    # would rewrite the client before that record is taken.
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
         log_config=log_config,
-        proxy_headers=bool(proxy_ip_allowlist),
-        forwarded_allow_ips=",".join(proxy_ip_allowlist) if proxy_ip_allowlist else None,
+        proxy_headers=False,
     )

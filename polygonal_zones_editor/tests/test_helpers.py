@@ -47,6 +47,19 @@ def test_allowed_ip_blocks_missing_host(request_factory):
     assert helpers.allowed_ip(request_factory(None)) is False
 
 
+def test_allowed_ip_uses_transport_peer_not_resolved_client(request_factory):
+    from const import TRANSPORT_PEER_SCOPE_KEY
+    import helpers
+
+    forwarded = request_factory("172.30.32.2")
+    forwarded.scope = {TRANSPORT_PEER_SCOPE_KEY: "192.168.1.50"}
+    assert helpers.allowed_ip(forwarded) is False
+
+    unrecorded = request_factory("172.30.32.2")
+    unrecorded.scope = {}
+    assert helpers.allowed_ip(unrecorded) is False
+
+
 def test_allow_request_opens_when_allow_all(monkeypatch, request_factory):
     import helpers
 

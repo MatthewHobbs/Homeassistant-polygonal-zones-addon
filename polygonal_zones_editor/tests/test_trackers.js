@@ -126,3 +126,66 @@ test('MultiPolygon: a point inside one part stays inside even when another part 
     const m = pz_measure_zone(tracker, layer);
     assert.equal(m.inside, true, 'inside part 1 must not be overturned by a nearer part 2 edge');
 });
+
+// Leaflet renders a string tooltip as HTML, so the tooltip must be a node
+// whose text is the name, never the name string itself. Drives the real
+// overlay setup with minimal stand-ins for fetch, Leaflet and the DOM.
+test('tracker tooltip carries the name as text, not markup', async () => {
+    const { setup_tracker_overlay } = require(
+        path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js')
+    );
+    const name = '<b>Car</b>';
+    const created = [];
+    const tooltips = [];
+    const saved = {
+        fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document,
+    };
+
+    function fakeElement(tag) {
+        const el = { tagName: tag.toUpperCase(), markupAssigned: false, _text: '' };
+        Object.defineProperty(el, 'textContent', {
+            get() { return this._text; },
+            set(v) { this._text = String(v); },
+        });
+        Object.defineProperty(el, 'innerHTML', {
+            get() { return this._text; },
+            set() { this.markupAssigned = true; },
+        });
+        created.push(el);
+        return el;
+    }
+    const layer = () => ({ addTo() { return this; }, clearLayers() {} });
+
+    globalThis.document = { createElement: fakeElement, querySelector: () => null };
+    globalThis.L = {
+        layerGroup: layer,
+        circle: layer,
+        circleMarker: () => ({
+            bindTooltip(content) { tooltips.push(content); return this; },
+            addTo() { return this; },
+        }),
+    };
+    globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            configured: true,
+            trackers: [{
+                entity_id: 'device_tracker.car', name, state: 'home',
+                latitude: 1, longitude: 2, gps_accuracy: null,
+            }],
+            unavailable: [],
+        }),
+    });
+    try {
+        await setup_tracker_overlay({ on() {} });
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+
+    assert.equal(tooltips.length, 1);
+    const content = tooltips[0];
+    assert.notEqual(typeof content, 'string', 'a string tooltip is parsed as HTML');
+    assert.ok(created.includes(content), 'tooltip must be a created DOM node');
+    assert.equal(content.textContent, name);
+    assert.equal(content.markupAssigned, false);
+});

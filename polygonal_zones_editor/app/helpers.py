@@ -7,7 +7,7 @@ import tempfile
 
 from starlette.requests import Request
 
-from const import ALLOWED_IPS, OPTIONS_FILE
+from const import ALLOWED_IPS, OPTIONS_FILE, TRANSPORT_PEER_SCOPE_KEY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,10 +55,14 @@ def allow_all_ips(options: dict) -> bool:
 
 
 def allowed_ip(request: Request) -> bool:
-    """Check if the request's client IP is allowed to access the web interface."""
-    if not request.client.host:
-        return False
-    return request.client.host in ALLOWED_IPS
+    """Whether the request's TCP peer is the HA ingress sidecar.
+
+    Reads the peer recorded before proxy headers are applied, so a forwarded
+    header can never make a request look like ingress. With no recorded peer
+    (the app served without its outer layer) nothing is ingress.
+    """
+    peer = request.scope.get(TRANSPORT_PEER_SCOPE_KEY)
+    return bool(peer) and peer in ALLOWED_IPS
 
 
 def allow_request(options: dict, request: Request) -> bool:
