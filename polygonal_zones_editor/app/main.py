@@ -67,10 +67,13 @@ AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trac
 # UI out. Behind a trusted proxy the budget is per forwarded client.
 _AUTH_FAILURE_LIMIT = 10
 _AUTH_FAILURE_WINDOW_SECONDS = 60
-# Above this many tracked clients, expired entries are swept on each failure,
-# so forwarded addresses that are never seen again don't accumulate.
+# Above this many tracked clients, expired entries are swept, so forwarded
+# addresses that are never seen again don't accumulate. At most one sweep a
+# second: a flood of failures would otherwise walk every key on each one.
 _AUTH_FAILURE_MAX_KEYS = 1024
+_SWEEP_INTERVAL_SECONDS = 1.0
 _auth_failures: dict[str, deque] = defaultdict(deque)
+_last_sweep = 0.0
 
 
 def _failure_key(request: Request) -> str:
@@ -100,8 +103,14 @@ def _rate_limit_exceeded(request: Request) -> bool:
 
 
 def _record_auth_failure(request: Request) -> None:
+    global _last_sweep
     now = time.time()
-    if len(_auth_failures) > _AUTH_FAILURE_MAX_KEYS:
+    # abs(): the wall clock can step backwards, which must not stall sweeps.
+    if (
+        len(_auth_failures) > _AUTH_FAILURE_MAX_KEYS
+        and abs(now - _last_sweep) >= _SWEEP_INTERVAL_SECONDS
+    ):
+        _last_sweep = now
         cutoff = now - _AUTH_FAILURE_WINDOW_SECONDS
         for key in list(_auth_failures):
             _prune(key, cutoff)
