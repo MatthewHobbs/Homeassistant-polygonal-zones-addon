@@ -1532,6 +1532,16 @@ def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypat
     assert r.headers["cache-control"] == "no-store"
 
 
+def test_a_bad_overlay_entity_is_warned_about_once_not_on_every_poll(app_factory, caplog):
+    import logging
+
+    client = _ingress(app_factory({"overlay_entities": ["not an entity"]}))
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            assert client.get("/trackers.json").json()["configured"] is False
+    assert sum("Ignoring overlay entity" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_trackers_json_blocks_unauthorized_client(restricted_client):
     """Positions are at least as sensitive as the zones file — same gate,
     same uniform rejection (ADR 0002 row 3)."""

@@ -742,6 +742,7 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
 
 def trackers_json_generator(options: dict):
     refresh_seconds = tracker_refresh_seconds(options)
+    entities = overlay_entities(options)
 
     # The editor polls this, so a cached copy would freeze every marker at the
     # position of whichever response the browser happened to keep.
@@ -755,7 +756,6 @@ def trackers_json_generator(options: dict):
         if refusal is not None:
             return refusal
 
-        entities = overlay_entities(options)
         if not entities:
             # Opted out (the default). Say so explicitly rather than returning
             # an empty list, so the editor can distinguish "not configured"
