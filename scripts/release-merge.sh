@@ -111,7 +111,9 @@ require_main_base() {
 # A release must be X.Y.Z and above main's $2: a lower one would publish as the
 # newest. Compared field by field, so 0.5.10 is above 0.5.9.
 require_release_version() {
-  local re='^[0-9]+\.[0-9]+\.[0-9]+$' i new old
+  # No leading zeros, and short enough that bash arithmetic cannot wrap.
+  local f='(0|[1-9][0-9]{0,8})' re i new old
+  re="^$f\.$f\.$f\$"
   [[ "$1" =~ $re ]] || fail "bad-pr-version: '$1'" $EXIT_PREFLIGHT
   [[ "$2" =~ $re ]] || fail "bad-main-version: '$2'" $EXIT_PREFLIGHT
   IFS=. read -ra new <<<"$1"
@@ -251,7 +253,7 @@ log "PR head version: $PR_VERSION"
 if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
   say MERGING_NO_RELEASE "#$PR"
   if [ "$DRY_RUN" = 0 ]; then
-    gh -R "$REPO" pr merge "$PR" --squash --delete-branch \
+    gh -R "$REPO" pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA" \
       || fail "merge-failed" $EXIT_MERGE
   else
     log "[dry-run] would: gh pr merge $PR --squash --delete-branch"
@@ -275,7 +277,7 @@ fi
 
 say MERGING "#$PR"
 if [ "$DRY_RUN" = 0 ]; then
-  gh -R "$REPO" pr merge "$PR" --squash --delete-branch \
+  gh -R "$REPO" pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA" \
     || fail "merge-failed" $EXIT_MERGE
 else
   log "[dry-run] would: gh pr merge $PR --squash --delete-branch"

@@ -96,6 +96,12 @@ check "a release version equal to main's is refused" 3 none require_release_vers
 check "a release version below main's is refused" 3 none require_release_version 0.4.9 0.5.9
 check "0.5.9 is below 0.5.10" 3 none require_release_version 0.5.9 0.5.10
 check "0.5.10 is above 0.5.9" 0 none require_release_version 0.5.10 0.5.9
+check "a lower minor stops the comparison, whatever the patch" 3 none require_release_version 0.4.10 0.5.9
+check "a higher minor is above" 0 none require_release_version 0.6.0 0.5.9
+check "a higher major is above" 0 none require_release_version 1.0.0 0.9.9
+check "an unreadable main version is refused" 3 none require_release_version 0.6.0 ""
+check "a leading zero is refused" 3 none require_release_version 0.5.010 0.5.9
+check "a field too long for bash arithmetic is refused" 3 none require_release_version 0.5.9999999999 0.5.9
 
 # shellcheck disable=SC2034
 DRY_RUN=1

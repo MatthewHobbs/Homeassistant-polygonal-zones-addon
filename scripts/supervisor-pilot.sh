@@ -360,8 +360,8 @@ discover_addon() {
     jq -e --arg s "$SLUG" '(.data.apps // .data.addons)[] | select(.slug == $s)'
 }
 
-# Core answering does not mean the Supervisor has finished its own startup, and
-# until it has, start refuses with system_not_ready_error. Retry only that.
+# The Supervisor refuses start with system_not_ready_error until its own
+# startup ends; retry only that.
 start_addon() {
   local out start=$SECONDS
   until out="$(ha_ok apps start "$SLUG")"; do
