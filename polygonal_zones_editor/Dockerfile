@@ -51,7 +51,7 @@ RUN apk add --no-cache python3 \
 # Install pinned, hash-verified deps from the generated lock file.
 # requirements.txt remains the high-level spec; regenerate the lock with
 #   uv pip compile requirements.txt --generate-hashes \
-#     --python-version 3.12 -o requirements-lock.txt
+#     --python-version 3.14 -o requirements-lock.txt
 # The --python-version must match the python3 shipped by the HA base image
 # so transitive deps like typing_extensions
 # are included even when the maintainer regenerates on a newer host.

@@ -17,9 +17,9 @@ ha-floor:
 venv:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv venv --python 3.12 --quiet --allow-existing .venv
-    uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements.txt
+    uv venv --python 3.14 --quiet --allow-existing .venv
     uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements-dev.txt
+    uv pip install --python .venv --quiet --require-hashes -r polygonal_zones_editor/requirements-lock.txt
 
 lint:
     # Same scope as lint.yml's ruff-action: the repo root, so scripts/ is covered.
