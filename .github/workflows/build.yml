@@ -166,6 +166,11 @@ jobs:
             --data "$PAYLOAD" http://127.0.0.1:8000/save_zones)
           python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d.get("status") == "ok", d' "$SAVED"
           echo "OK /save_zones round-trip"
+          # SMOKE_ZONES carry no ids, so the server must have filled one in
+          # for each: the integration binds automations to it.
+          STORED=$(curl -fsS -H "$AUTH" http://127.0.0.1:8000/zones.json)
+          python3 -c 'import json, re, sys; fs = json.loads(sys.argv[1])["features"]; ids = [(f.get("properties") or {}).get("id") or "" for f in fs]; assert len(fs) == 2 and len(set(ids)) == 2 and all(re.fullmatch("[0-9a-f]{32}", i) for i in ids), fs' "$STORED"
+          echo "OK the server gave every saved zone an id"
 
           # The web service must run as the Dockerfile's `app` user, uid 1001.
           # Regression guard for #14. Rejecting only uid 0 would pass a drop to

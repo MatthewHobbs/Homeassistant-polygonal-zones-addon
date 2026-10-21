@@ -446,7 +446,7 @@ def _normalise_feature_collection(obj: dict) -> dict:
     automations to across renames. Mutates and returns ``obj``.
     """
     # The integration's version guard reads polygonal_zones.schema_version
-    # (docs/ZONES_FORMAT.md) and nothing else.
+    # and nothing else.
     pz = obj.get("polygonal_zones")
     if not isinstance(pz, dict):
         pz = {}
