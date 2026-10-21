@@ -2,8 +2,7 @@
 
 ## 0.5.9 — 2026-10-21
 
-- **Fixed: values a client sends are escaped in the add-on's log,** so a
-  request can no longer add a misleading line to it.
+- **Fixed: values a client sends are shown escaped in the add-on's log.**
 - **Changed: the web framework is updated to Starlette 1.8.0.**
 
 ## 0.5.8 — 2026-10-20
