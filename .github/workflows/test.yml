@@ -47,6 +47,8 @@ jobs:
         run: scripts/test-check-published-revision.sh
       - name: Run ha-floor-check.sh bound checks
         run: scripts/test-ha-floor-check.sh
+      - name: Run check-version-order.sh checks
+        run: scripts/test-check-version-order.sh
       - name: Run trackers.js tests
         # node is preinstalled on ubuntu-latest, same as shellcheck in
         # lint.yml — no explicit version pin, matching that precedent.

@@ -14,6 +14,7 @@ on:
       - .github/workflows/test.yml
       - .github/workflows/lint.yml
       - scripts/check-published-revision.sh
+      - scripts/check-version-order.sh
   workflow_dispatch:
     inputs:
       version:
@@ -76,6 +77,11 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]] && ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$GITHUB_REF is not on main"
             exit 1
+          fi
+          # Supervisor offers the highest version, so a tag below an earlier
+          # release would publish a downgrade. Re-running its own tag passes.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            git tag -l 'v*' | scripts/check-version-order.sh "$VERSION"
           fi
           # Sanity-check: must match the version in config.yaml so we don't
           # publish images that disagree with what the Supervisor expects.
