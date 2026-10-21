@@ -229,7 +229,7 @@ def test_save_zones_persists_valid_geojson(ingress_client, tmp_zones_file):
         assert isinstance(got["properties"]["id"], str)
         assert len(got["properties"]["id"]) == 32
     # schema_version stamped in the canonical foreign-member location the
-    # companion integration reads (docs/ZONES_FORMAT.md), NOT bare top-level.
+    # companion integration reads, NOT bare top-level.
     assert stored["polygonal_zones"]["schema_version"] == 1
     assert "schema_version" not in stored
 
