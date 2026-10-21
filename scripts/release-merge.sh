@@ -12,7 +12,7 @@
 #   0  success
 #   2  usage error
 #   3  pre-flight failure (PR state, base not main, checks, mergeability,
-#      version mismatch, or a resume whose version is not main's)
+#      a bad or lower version, or a resume whose version is not main's)
 #   4  merge failed
 #   5  tag creation failed, or the merge commit is unknown
 #   6  release workflow failed
@@ -106,6 +106,21 @@ merge_commit_of() {
 # publish a commit that main never contains.
 require_main_base() {
   [ "$1" = "main" ] || fail "pr-base-$1-not-main" $EXIT_PREFLIGHT
+}
+
+# A release must be X.Y.Z and above main's $2: a lower one would publish as the
+# newest. Compared field by field, so 0.5.10 is above 0.5.9.
+require_release_version() {
+  local re='^[0-9]+\.[0-9]+\.[0-9]+$' i new old
+  [[ "$1" =~ $re ]] || fail "bad-pr-version: '$1'" $EXIT_PREFLIGHT
+  [[ "$2" =~ $re ]] || fail "bad-main-version: '$2'" $EXIT_PREFLIGHT
+  IFS=. read -ra new <<<"$1"
+  IFS=. read -ra old <<<"$2"
+  for i in 0 1 2; do
+    ((10#${new[i]} > 10#${old[i]})) && return 0
+    ((10#${new[i]} < 10#${old[i]})) && break
+  done
+  fail "version-not-above-main: $1, main is $2" $EXIT_PREFLIGHT
 }
 
 # Tag PR $2's merge commit v$1, find the resulting release run, and watch it.
@@ -247,9 +262,9 @@ fi
 
 # ───── bump path: merge, tag, watch ────────────────────────────────
 
-# Checked before the merge, so an unreadable version never leaves a merged PR
-# with a junk tag to clean up.
-[[ "$PR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "bad-pr-version: '$PR_VERSION'" $EXIT_PREFLIGHT
+# Checked before the merge, so an unreadable or lower version never leaves a
+# merged PR with a junk tag to clean up.
+require_release_version "$PR_VERSION" "$MAIN_VERSION"
 TAG="v$PR_VERSION"
 say PLANNED_RELEASE "${MAIN_VERSION} -> ${PR_VERSION} as $TAG"
 
