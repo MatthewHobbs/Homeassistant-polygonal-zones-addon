@@ -1722,7 +1722,7 @@ def test_fetch_state_parses_a_good_response(monkeypatch):
     import main
 
     class _Resp:
-        def read(self):
+        def read(self, _limit=-1):
             return json.dumps({"state": "home", "attributes": {}}).encode()
 
         def __enter__(self):
@@ -1875,6 +1875,17 @@ def test_here_since_threshold_grows_with_the_anchor_accuracy():
     assert main._here_since(reply, WS) == (_ts(reply, 1), False)
 
 
+def test_a_reply_over_the_size_cap_is_refused(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 10)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **k: _Body(b'{"state": "home"}'))
+    assert main._get_json("states/x", "t") is None
+    monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 100)
+    assert main._get_json("states/x", "t") == {"state": "home"}
+
+
 @pytest.mark.parametrize(
     "bad",
     [
@@ -1885,14 +1896,58 @@ def test_here_since_threshold_grows_with_the_anchor_accuracy():
         "not a dict",
     ],
 )
-def test_here_since_a_state_without_valid_coordinates_ends_the_run(bad):
+def test_here_since_skips_a_state_without_valid_coordinates(bad):
     import main
 
-    reply = _hist((*HERE, 10), (*HERE, 10), (*HERE, 10), start=WS)
-    reply[0][1]["attributes"] = bad
-    assert main._here_since(reply, WS) == (_ts(reply, 2), False)
-    reply[0][1] = "not a state"
-    assert main._here_since(reply, WS) == (_ts(reply, 2), False)
+    # A gap (the tracker unavailable, say) is not a move: the run carries on past it.
+    reply = _hist((*FAR, 10), (*HERE, 10), (*HERE, 10), (*HERE, 10), start=WS)
+    reply[0][2]["attributes"] = bad
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+    reply[0][2] = "not a state"
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_compares_each_fix_with_the_newest_not_its_neighbour():
+    import main
+
+    # ~15 m steps: each is within 20 m of the next, but the first is ~30 m out.
+    reply = _hist((51.50027, -0.12, 1), (51.500135, -0.12, 1), (*HERE, 1), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_threshold_comes_from_the_newest_fix_accuracy():
+    import main
+
+    # The newest fix's 2 x 60 m reaches the ~111 m point; the older fix's 5 m would not.
+    assert main._here_since(_hist((*FAR, 5), (*HERE, 60), start=WS), WS) == (None, True)
+
+
+def test_here_since_window_start_allows_a_minute_of_slack():
+    from datetime import timedelta
+
+    import main
+
+    reply = _hist((*HERE, 10), start=WS + timedelta(seconds=30))
+    assert main._here_since(reply, WS) == (None, True)
+
+
+def test_here_since_a_run_that_starts_after_the_oldest_state_is_not_over_window():
+    from datetime import timedelta
+
+    import main
+
+    # The run begins at state 1, 30 s into the window, after a far state at its start.
+    reply = _hist((*FAR, 10), (*HERE, 10), start=WS)
+    reply[0][1]["last_updated"] = (WS + timedelta(seconds=30)).isoformat()
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_reads_a_timestamp_without_a_zone_as_utc():
+    import main
+
+    reply = _hist((*HERE, 10), start=WS)
+    reply[0][0]["last_updated"] = WS.replace(tzinfo=None).isoformat()
+    assert main._here_since(reply, WS) == (None, True)
 
 
 def test_here_since_anchors_on_the_newest_state_with_coordinates():

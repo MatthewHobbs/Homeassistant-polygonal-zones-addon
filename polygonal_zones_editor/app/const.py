@@ -47,6 +47,9 @@ OVERLAY_TIMEOUT_SECONDS = 5.0
 # the Supervisor calls in flight for the whole add-on, however many editors
 # are open; polls queue behind it and report what misses their deadline.
 OVERLAY_FETCH_WORKERS = 8
+# A day of history for a tracker that reports every few seconds fits well
+# inside this; anything larger is refused rather than parsed.
+MAX_HA_REPLY_BYTES = 8 * 1024 * 1024
 
 # Ceiling on how many entities the overlay will fetch, whatever the option
 # says. Each is a separate Supervisor call; an accidental 200-entity list

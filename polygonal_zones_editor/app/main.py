@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,7 @@ from const import (
     ALLOWED_IPS,
     DATA_FOLDER,
     DEFAULT_TRACKER_REFRESH_SECONDS,
+    MAX_HA_REPLY_BYTES,
     MAX_OVERLAY_ENTITIES,
     MAX_SAVE_BYTES,
     MAX_TRACKER_REFRESH_SECONDS,
@@ -712,7 +714,10 @@ def _get_json(path: str, token: str):
     )
     try:
         with urllib.request.urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            raw = resp.read(MAX_HA_REPLY_BYTES + 1)
+        if len(raw) > MAX_HA_REPLY_BYTES:
+            raise ValueError("reply over the size cap")
+        return json.loads(raw.decode("utf-8"))
     # URLError and TimeoutError are OSErrors; HTTPException covers a garbled
     # or truncated reply.
     except (OSError, ValueError, http.client.HTTPException) as err:
@@ -787,15 +792,19 @@ def _here_since(reply, window_start: datetime) -> tuple[str | None, bool]:
     """When the tracker reached its newest fix, from oldest-first history, and
     whether it has been there for the whole window."""
     states = reply[0] if isinstance(reply, list) and reply and isinstance(reply[0], list) else []
-    fixes = [_fix(s.get("attributes")) if isinstance(s, dict) else None for s in states]
-    i = next((n for n in range(len(fixes) - 1, -1, -1) if fixes[n]), None)
-    if i is None:
+    # A state without coordinates (the tracker unavailable, say) is a gap, not
+    # a move, so it is skipped rather than ending the run.
+    fixed = [
+        (st, fix) for st in states if isinstance(st, dict) and (fix := _fix(st.get("attributes")))
+    ]
+    if not fixed:
         return None, False
-    lat, lon, acc = fixes[i]
+    lat, lon, acc = fixed[-1][1]
     limit = max(2 * (acc or 0), _STILL_MIN_METRES)
-    while i > 0 and fixes[i - 1] and _metres_between(lat, lon, *fixes[i - 1][:2]) <= limit:
+    i = len(fixed) - 1
+    while i > 0 and _metres_between(lat, lon, *fixed[i - 1][1][:2]) <= limit:
         i -= 1
-    since = states[i].get("last_updated")
+    since = fixed[i][0].get("last_updated")
     if not isinstance(since, str):
         return None, False
     # The whole window only if the run reaches its start; history that begins
@@ -804,9 +813,16 @@ def _here_since(reply, window_start: datetime) -> tuple[str | None, bool]:
         at = datetime.fromisoformat(since)
     except ValueError:
         return None, False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
     if i == 0 and at <= window_start + timedelta(minutes=1):
         return None, True
     return since, False
+
+
+# Its own small pool: a history read is heavy, and the shared threadpool also
+# serves /zones.json for the integration.
+_HISTORY_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="history")
 
 
 def here_since_generator(options: dict, entities: list[str]):
@@ -826,7 +842,8 @@ def here_since_generator(options: dict, entities: list[str]):
         start = urllib.parse.quote(window_start.isoformat())
         # No end_time: Home Assistant ends the period a day after its start, which is now.
         # No minimal_response or no_attributes: both drop the coordinates.
-        reply = await run_in_threadpool(
+        reply = await asyncio.get_running_loop().run_in_executor(
+            _HISTORY_POOL,
             _get_json,
             f"history/period/{start}?filter_entity_id={urllib.parse.quote(entity_id)}",
             os.environ.get(SUPERVISOR_TOKEN_ENV, ""),
