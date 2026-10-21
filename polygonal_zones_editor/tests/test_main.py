@@ -815,7 +815,7 @@ def test_zones_json_rate_limit_shared_with_save_failures(app_factory, tmp_zones_
 
 
 def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zones_file):
-    """ADR 0002 row 3: every authorisation failure on /zones.json,
+    """Every authorisation failure on /zones.json,
     /trackers.json and /save_zones gets the same status, body and headers,
     whatever the reason (IP not allowed, token missing, token wrong) and
     whichever endpoint — so a client can't infer from the response alone
@@ -1484,7 +1484,7 @@ def test_a_bad_overlay_entity_is_warned_about_once_not_on_every_poll(app_factory
 
 def test_trackers_json_blocks_unauthorized_client(restricted_client):
     """Positions are at least as sensitive as the zones file — same gate,
-    same uniform rejection (ADR 0002 row 3)."""
+    same uniform rejection."""
     r = restricted_client.get("/trackers.json")
     assert r.status_code == 403
     assert r.json() == {"error": "not authorised"}

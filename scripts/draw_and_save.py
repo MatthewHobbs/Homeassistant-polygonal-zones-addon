@@ -2,7 +2,7 @@
 own save_zones(), and confirm it reached /zones.json.
 
 Shared by build.yml's standalone smoke and scripts/supervisor_probe.py's
-ingress-path check (ADR 0002 row 8) — previously duplicated between the
+ingress-path check — previously duplicated between the
 two, which let a fix to one (such as #46's non-secure-origin leg) land in
 only one copy. The pilot's own ingress-specific setup (Core login, the
 ingress session, the option check) stays in supervisor_probe.py; only this
@@ -110,7 +110,7 @@ async def draw_and_save(page, label, errors, fail):
 
 
 async def draw_rectangle_and_save(page, errors, fail):
-    """Rectangle-drawing regression guard (ADR 0002 row 11). drawRectangle
+    """Rectangle-drawing regression guard. drawRectangle
     was collateral-disabled in #36 and turned back on later — this
     exercises the mode neither smoke touched before, so a regression that
     hides or breaks the button, or makes Geoman emit anything other than a

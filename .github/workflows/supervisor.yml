@@ -1,8 +1,8 @@
 name: Supervisor pilot
 
-# ADR 0001: install, configure and use the add-on under a real stable-channel
+# Install, configure and use the add-on under a real stable-channel
 # Supervisor and Core, in the official add-on devcontainer. NOT a required
-# check until ADR row 5 promotes it.
+# check yet.
 # All of the logic is in scripts/supervisor-pilot.sh, which runs the same
 # way locally.
 
@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   floor:
-    # The floor leg tests the Core the add-on declares (ADR rows 10 and 11),
+    # The floor leg tests the Core the add-on declares,
     # read from config.yaml so it cannot drift from what the Supervisor
     # enforces on users. The floor_core input only overrides it.
     name: Resolve the floor
@@ -80,8 +80,8 @@ jobs:
       matrix:
         arch: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["amd64"]' || '["amd64", "aarch64"]') }}
         # "stable" is whatever stable.json names today; the other leg pins
-        # Core to the declared floor under the same stable Supervisor (ADR
-        # row 11), resolved by the floor job above.
+        # Core to the declared floor under the same stable Supervisor, resolved
+        # by the floor job above.
         core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["stable"]' || format('["stable", "{0}"]', needs.floor.outputs.core)) }}
     env:
       CORE_VERSION: ${{ matrix.core }}

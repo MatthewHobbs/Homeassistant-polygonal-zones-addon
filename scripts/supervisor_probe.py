@@ -5,9 +5,9 @@ devcontainer's network namespace, so Core is on 127.0.0.1. Logs in to
 Core (onboarding the first user if needed), asks Core for an ingress session
 over the websocket API exactly as the frontend does, then runs build.yml's
 smoke probes and draw_and_save (scripts/draw_and_save.py, shared with
-build.yml's own smoke — ADR 0002 row 8) against the ingress URL.
+build.yml's own smoke) against the ingress URL.
 
-tracker_refresh() proves the tracker overlay (ADR 0001, issue #47) end to end:
+tracker_refresh() proves the tracker overlay end to end:
 a real Core service call moves `zone.home`, and the check watches the editor's
 own polling — not a stub — pick the new position up without a reload. The
 container-verify stub in the addon PR covers every edge case (outages,
@@ -198,7 +198,7 @@ async def wait_for_tracker(page, entity_id, timeout_s):
 async def tracker_refresh(page, base, token, entity_id, refresh_seconds):
     """Move `zone.home` through Core's own service call and confirm the
     editor's next poll — through the real Supervisor and Core, not a stub —
-    picks up the new position without a reload (#47, ADR 0001)."""
+    picks up the new position without a reload (#47)."""
     before = await wait_for_tracker(page, entity_id, 20)
     if before is None:
         fail(f"tracker overlay never showed {entity_id} within 20s of the page loading")

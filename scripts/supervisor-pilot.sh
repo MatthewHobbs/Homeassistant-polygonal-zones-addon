@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install, configure and probe the add-on under a real stable-channel
-# Supervisor and Core, inside the official add-on devcontainer (ADR 0001).
+# Supervisor and Core, inside the official add-on devcontainer.
 #
 # One script for CI (.github/workflows/supervisor.yml) and for a local run:
 #
@@ -57,7 +57,7 @@ REGISTRY_TAG="pz-pilot-registry:local"
 # through the Supervisor reached the app.
 PROBE_COLOUR="#1a2b3c"
 # zone.home always exists and carries live latitude/longitude, so the tracker
-# overlay (#47, ADR 0001) can be proven end to end without a real
+# overlay (#47) can be proven end to end without a real
 # device_tracker. Fixed, not PILOT_-overridable like the rest of this file's
 # knobs: the only way this script moves it is homeassistant.set_location,
 # which changes Home Assistant's configured home location and so only ever
@@ -283,7 +283,7 @@ cmd_copy_addon() {
   log "Add-on copy: $(dc grep -E '^(version|image|apparmor):' "$dest/$ADDON_DIR/config.yaml" | tr '\n' ' ')"
 }
 
-# --- versions: running Supervisor/Core against stable.json (ADR row 2) -------
+# --- versions: running Supervisor/Core against stable.json -------
 cmd_versions() {
   local want_sup want_core machine got_sup got_core channel sup_img core_img rc=0
   [[ -s "$WORKDIR/stable.json" ]] || fail "no stable.json in $WORKDIR (run 'up' first)"
@@ -315,7 +315,7 @@ cmd_versions() {
   log "OK versions match"
 }
 
-# --- the floor leg (ADR row 11) ----------------------------------------------
+# --- the floor leg ----------------------------------------------
 # `ha core update --version` cannot pin a floor: it starts the older Core on
 # .storage the newer one already wrote, which it refuses
 # (UnsupportedStorageVersionError), and the Supervisor rolls back to stable
@@ -385,7 +385,7 @@ cmd_install() {
   ha_cli apps info "$SLUG" --raw-json | jq -c '.data | {version, state, ingress, ingress_url, options}'
 }
 
-# --- provenance: the running container came from this checkout (ADR row 3) ---
+# --- provenance: the running container came from this checkout ---
 cmd_provenance() {
   local got image want_rev
   [[ -s "$WORKDIR/build.env" ]] || fail "no build.env in $WORKDIR (run 'build' first)"
@@ -404,7 +404,7 @@ cmd_provenance() {
   log "OK the running add-on is this run's build of $want_rev"
 }
 
-# --- probe: smoke probes and Playwright through Core's ingress (ADR row 4) ----
+# --- probe: smoke probes and Playwright through Core's ingress ----
 cmd_probe() {
   local ingress pid uid
   ingress="$(ha_cli apps info "$SLUG" --raw-json | jq -er .data.ingress_url)" || fail "no ingress_url"
