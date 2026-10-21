@@ -215,13 +215,9 @@ async def main():
         await draw_and_save(insecure, "non-secure origin", errors, fail)
         await insecure.close()
 
-        # Contract-marker regression guard. Assert the server stamps
-        # schema_version: 1 in the canonical foreign-member location
-        # (polygonal_zones.schema_version, per docs/ZONES_FORMAT.md — this is
-        # what the HA integration reads) and NOT bare top-level, plus
-        # backfills a properties.id for every feature that hit the save path
-        # above — the integration binds automations to id across renames, so a
-        # regression here silently breaks downstream bindings.
+        # The server stamps schema_version where the integration reads it
+        # (polygonal_zones.schema_version, not top-level), and every saved
+        # feature keeps an id: the integration binds automations to it.
         persisted = await page.evaluate(
             "async () => (await fetch('./zones.json').then(r => r.json()))"
         )
