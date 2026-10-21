@@ -463,14 +463,9 @@ def test_host_bit_entry_is_still_flagged(caplog):
     assert sum("host bits set" in w for w in warnings) == 1
 
 
-@pytest.mark.parametrize(
-    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
-)
-def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
-    # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse
-    # reads them as a fragment or query and sees an exempt path. The test
-    # client would normalise the dots away, so the scope is sent directly.
-    app = boot({"save_token": TOKEN})
+def _send_raw(app, path):
+    """The response status for ``path`` sent as a raw ASGI scope, which the
+    test client would normalise."""
     sent = []
 
     async def receive():
@@ -494,7 +489,41 @@ def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
         "server": ("addon", 8000),
     }
     asyncio.run(app(scope, receive, send))
-    assert sent[0]["status"] == 403
+    return sent[0]["status"]
+
+
+@pytest.mark.parametrize(
+    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
+)
+def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
+    # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse
+    # reads them as a fragment or query and sees an exempt path.
+    assert _send_raw(boot({"save_token": TOKEN}), path) == 403
+
+
+CONTROL_CHARS = "\n\r\x1b\u2028"
+
+
+@pytest.mark.parametrize("char", list(CONTROL_CHARS), ids=["lf", "cr", "esc", "u2028"])
+def test_a_decoded_control_character_in_the_path_cannot_forge_a_log_line(boot, caplog, char):
+    # uvicorn decodes %0a and the like into scope["path"].
+    app = boot({"save_token": TOKEN})
+    with caplog.at_level(logging.WARNING):
+        statuses = [_send_raw(app, f"/{char}FAKE") for _ in range(11)]
+    assert statuses[-1] == 429
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("Rejected /") for m in messages)
+    assert any(m.startswith("Rate limit hit on /") for m in messages)
+    assert not any(c in m for m in messages for c in CONTROL_CHARS)
+
+
+def test_a_control_character_in_the_client_address_is_escaped_in_the_log(boot, caplog):
+    client = _served_client(boot, {"save_token": TOKEN}, ("10.0.0.1\x1b[2K", 5000))
+    with caplog.at_level(logging.WARNING):
+        assert client.get("/zones.json").status_code == 403
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("10.0.0.1\\x1b[2K" in m for m in messages)
+    assert not any("\x1b" in m for m in messages)
 
 
 def test_cross_site_static_loads_never_test_a_token_or_spend_budget(boot):
@@ -558,3 +587,16 @@ def test_an_out_of_range_tracker_is_dropped_not_a_crash(attrs, accuracy):
         assert point is None
     else:
         assert point["gps_accuracy"] is accuracy
+
+
+def test_a_control_character_in_if_match_is_escaped_in_the_conflict_log(boot, caplog):
+    client = _served_client(boot, {"save_token": TOKEN}, (INGRESS, 5000))
+    with caplog.at_level(logging.INFO):
+        r = client.post(
+            "/save_zones",
+            content=json.dumps(_valid_payload()),
+            headers={"Content-Type": "application/json", "If-Match": b'"stale"\x85FAKE'},
+        )
+    assert r.status_code == 412
+    conflict = [m for m in (r.getMessage() for r in caplog.records) if m.startswith("Conflict")]
+    assert conflict and "\\x85FAKE" in conflict[0] and "\x85" not in conflict[0]

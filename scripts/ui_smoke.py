@@ -125,6 +125,32 @@ async def main():
         if not input_aria:
             fail(f"zone-entry rename input missing aria-label; got: {input_aria!r}", errors)
 
+        # A name typed in one row is kept when the user opens another row
+        # instead of pressing Done, and is what Save writes.
+        rows = page.locator("zone-entry")
+        renamed = "smoke renamed"
+        renamed_id = await rows.nth(0).get_attribute("zone-id")
+        await rows.nth(0).locator("input[type=text]").fill(renamed)
+        await rows.nth(1).locator(".edit-btn").click()
+        listed = await rows.nth(0).locator(".zone-name").text_content()
+        if listed != renamed:
+            fail(f"typed name lost on opening another row: list shows {listed!r}", errors)
+        async with page.expect_response(
+            lambda r: r.url.endswith("/save_zones") and r.request.method == "POST"
+        ) as saved:
+            await page.click(".save-btn")
+        if (await saved.value).status != 200:
+            fail(f"save after rename returned {(await saved.value).status}", errors)
+        persisted = await page.evaluate(
+            "async () => (await fetch('./zones.json').then(r => r.json()))"
+        )
+        saved_names = {
+            (f.get("properties") or {}).get("id"): (f.get("properties") or {}).get("name")
+            for f in persisted.get("features") or []
+        }
+        if saved_names.get(renamed_id) != renamed:
+            fail(f"saved zones.json does not carry the typed name: {saved_names!r}", errors)
+
         # Tile-picker regression guard (#31, 0.2.28). Asserts the <select>
         # exists, carries the expected four options in order (auto + three
         # basemaps), defaults to 'auto' on a fresh load, and that switching to

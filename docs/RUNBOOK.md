@@ -112,7 +112,7 @@ Note: `test.yml` and `lint.yml` use distinct concurrency-group prefixes (`tests-
 
 The `version` job fails at the version-match check. The release run dies before any image is pushed.
 
-1. Delete the bad tag: `git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`.
+1. Delete the bad tag. Release tags are protected, so set the tag ruleset (**Settings → Rules → Rulesets**) to **Disabled**, run `git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`, then set it back to **Active** and check that it shows Active.
 2. Bump `config.yaml` on `main` (or in a PR), merge.
 3. Re-tag: `git tag vX.Y.Z <merge-commit> && git push origin vX.Y.Z`.
 

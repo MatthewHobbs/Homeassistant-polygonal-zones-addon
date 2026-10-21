@@ -132,6 +132,11 @@ def _current_zones_etag() -> str | None:
         return None
 
 
+def _loggable(value: str) -> str:
+    # For any client-supplied value: escaped, it cannot forge or hide a log line.
+    return value.encode("unicode_escape").decode()
+
+
 def authorise(options: dict, request: Request) -> str | None:
     """None if the request may proceed, otherwise why not, for the log only.
 
@@ -195,7 +200,9 @@ class AuthoriseMiddleware(BaseHTTPMiddleware):
         # into it, and a URL re-parse would read "/healthz%23/../x" as /healthz.
         path = request.scope["path"]
         if path not in AUTHZ_EXEMPT_PATHS:
-            refusal = _gate(self.options, request, path, check_origin=not allowed_ip(request))
+            refusal = _gate(
+                self.options, request, _loggable(path), check_origin=not allowed_ip(request)
+            )
             if refusal is not None:
                 return refusal
         return await call_next(request)
@@ -469,7 +476,7 @@ def _gate(options: dict, request: Request, label: str, check_origin=True) -> Res
 
     ``label`` names the route in the log.
     """
-    client_host = request.client.host or "unknown"
+    client_host = _loggable(request.client.host or "unknown")
     if _rate_limit_exceeded(request):
         _LOGGER.warning(
             "Rate limit hit on %s for %s (%d failures in %ds). "
@@ -552,8 +559,8 @@ def save_zones_generator(options: dict):
             if current != if_match:
                 _LOGGER.info(
                     "Conflict on save from %s: client If-Match=%s, current=%s",
-                    request.client.host,
-                    if_match,
+                    _loggable(request.client.host or "unknown"),
+                    _loggable(if_match),
                     current,
                 )
                 # Omit current_etag from the body when the file is
