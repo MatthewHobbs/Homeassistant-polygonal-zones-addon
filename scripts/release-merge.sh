@@ -75,6 +75,7 @@ find_run_for_tag() {
   gh -R "$REPO" run list \
     --workflow=release.yml \
     --branch="$1" \
+    --event=push \
     --limit=1 \
     --json databaseId \
     --jq '.[0].databaseId // empty'

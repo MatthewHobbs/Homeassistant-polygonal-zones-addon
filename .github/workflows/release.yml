@@ -14,7 +14,6 @@ on:
       - .github/workflows/test.yml
       - .github/workflows/lint.yml
       - scripts/check-published-revision.sh
-      - scripts/check-version-order.sh
   workflow_dispatch:
     inputs:
       version:
@@ -78,8 +77,8 @@ jobs:
             echo "::error::$GITHUB_REF is not on main"
             exit 1
           fi
-          # Supervisor offers the highest version, so a tag below an earlier
-          # release would publish a downgrade. Re-running its own tag passes.
+          # A tag below an earlier release would publish a downgrade. Re-running
+          # its own tag passes.
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             git tag -l 'v*' | scripts/check-version-order.sh "$VERSION"
           fi

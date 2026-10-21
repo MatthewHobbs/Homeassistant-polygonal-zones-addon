@@ -4,21 +4,27 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 fails=0
+# want: pass, or refuse (a non-zero exit that printed the ::error:: line).
 check() {
-  local name="$1" want="$2" version="$3" tags="$4" got=0
-  printf '%s\n' "$tags" | ./check-version-order.sh "$version" >/dev/null 2>&1 || got=$?
-  [ "$got" -ne 0 ] && got=1
-  if [ "$got" = "$want" ]; then echo "ok - $name"; else echo "not ok - $name (exit $got, wanted $want)"; fails=$((fails + 1)); fi
+  local name="$1" want="$2" version="$3" input="$4" got=pass err
+  err=$(printf '%b' "$input" | ./check-version-order.sh "$version" 2>&1 >/dev/null) || got=crash
+  [ "$got" = crash ] && [[ "$err" == "::error::"* ]] && got=refuse
+  if [ "$got" = "$want" ]; then echo "ok - $name"; else echo "not ok - $name (got $got, wanted $want: $err)"; fails=$((fails + 1)); fi
 }
-TAGS=$'v0.5.8\nv0.5.9\nv0.6.0'
-check "a version above every tag passes" 0 0.6.1 "$TAGS"
-check "a re-run for the latest tag passes" 0 0.6.0 "$TAGS"
-check "a version below the latest is refused" 1 0.5.10 "$TAGS"
-check "an older version re-run after a newer one is refused" 1 0.5.9 "$TAGS"
-check "fields compare as numbers" 0 0.6.10 $'v0.6.9\nv0.6.2'
-check "a lower major with a higher minor is refused" 1 0.9.0 $'v1.0.0'
-check "tags that are not X.Y.Z are ignored" 0 0.1.0 $'vtest\nv1.0\nnot-a-tag'
-check "no tags at all passes" 0 0.1.0 ""
-check "a version that is not X.Y.Z is refused" 1 0.6 "$TAGS"
+TAGS='v0.5.8\nv0.5.9\nv0.6.0\n'
+check "a version above every tag passes" pass 0.6.1 "${TAGS}v0.6.1\n"
+check "a re-run for the latest tag passes" pass 0.6.0 "$TAGS"
+check "a version below the latest is refused" refuse 0.5.10 "${TAGS}v0.5.10\n"
+check "an older version re-run after a newer one is refused" refuse 0.5.9 "$TAGS"
+check "fields compare as numbers" pass 0.6.10 'v0.6.9\nv0.6.2\nv0.6.10\n'
+check "a lower major with a higher minor is refused" refuse 0.9.0 'v1.0.0\nv0.9.0\n'
+check "tags that are not X.Y.Z are ignored" pass 0.1.0 'vtest\nv1.0\nv0.1.0\n'
+check "a first release, its own tag alone, passes" pass 0.1.0 'v0.1.0\n'
+check "a list without its own tag is refused (tags not fetched)" refuse 0.6.1 "$TAGS"
+check "empty input is refused" refuse 0.1.0 ''
+check "a last line without a newline is still checked" refuse 0.5.10 'v0.5.10\nv0.6.0'
+check "a tag field too long to compare is refused" refuse 0.0.2 'v0.0.2\nv0.0.18446744073709551617\n'
+check "a version with a leading zero is refused" refuse 0.6.01 'v0.6.01\n'
+check "a version that is not X.Y.Z is refused" refuse 0.6 "$TAGS"
 if [ "$fails" -gt 0 ]; then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "All check-version-order.sh checks passed"
