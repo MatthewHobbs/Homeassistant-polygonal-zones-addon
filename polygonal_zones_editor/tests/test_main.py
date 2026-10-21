@@ -821,6 +821,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
     whichever endpoint — so a client can't infer from the response alone
     whether a token is even configured. Covers all three endpoints, with a
     token set and with none."""
+    import main
+
     expected_status = 403
     expected_body = {"error": "not authorised"}
     expected_cache_control = "no-store"
@@ -842,6 +844,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
         assert r.json() == expected_body, name
         assert r.headers.get("cache-control") == expected_cache_control, name
 
+    # Each phase is a fresh client; reset the per-client failure budget.
+    main._auth_failures.clear()
     # Token configured, none presented.
     client = TestClient(app_factory({"save_token": "sekrit"}))
     for name, do in requests_for(client):
@@ -850,6 +854,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
         assert r.json() == expected_body, name
         assert r.headers.get("cache-control") == expected_cache_control, name
 
+    # Each phase is a fresh client; reset the per-client failure budget.
+    main._auth_failures.clear()
     # Token configured, wrong one presented.
     client = TestClient(app_factory({"save_token": "sekrit"}))
     for name, do in requests_for(client):
