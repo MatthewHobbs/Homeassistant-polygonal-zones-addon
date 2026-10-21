@@ -27,6 +27,8 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 const PZ_TRACKER_ENDPOINT = './trackers.json';
+const PZ_HERE_SINCE_ENDPOINT = './trackers/here_since';
+const PZ_HERE_SINCE_TIMEOUT_MS = 10000;
 
 /* Re-measure at most this often while the user drags a vertex. The maths is
  * cheap, but rebuilding the readout DOM on every mousemove is not. */
@@ -204,6 +206,47 @@ function pz_render_readout() {
     panel.appendChild(note);
 }
 
+/* "over 24 h", "unknown", or the arrival time, with the date when not today. */
+function pz_here_since_text(body, now = new Date()) {
+    if (body && body.over_window) return 'over 24 h';
+    const since = new Date(body && typeof body.since === 'string' ? body.since : NaN);
+    if (Number.isNaN(since.getTime())) return 'unknown';
+    const time = since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return since.toDateString() === now.toDateString() ? time : `${since.toLocaleDateString()} ${time}`;
+}
+
+/* Resolves to the lookup's body, or null on any failure. AbortController +
+ * setTimeout rather than AbortSignal.timeout, which Safari/iOS before 16 lack. */
+function pz_fetch_here_since(entity_id) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PZ_HERE_SINCE_TIMEOUT_MS);
+    return fetch(`${PZ_HERE_SINCE_ENDPOINT}?entity_id=${encodeURIComponent(entity_id)}`, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+    })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)
+        .finally(() => clearTimeout(timer));
+}
+
+/* Built from text nodes: names come from Home Assistant. */
+function pz_tracker_popup(tracker) {
+    const box = document.createElement('div');
+    const line = (tag, text) => {
+        const el = box.appendChild(document.createElement(tag));
+        el.textContent = text;
+        return el;
+    };
+    line('strong', tracker.name);
+    if (Number.isFinite(tracker.gps_accuracy)) line('div', `±${pz_format_metres(tracker.gps_accuracy)}`);
+    if (Number.isFinite(tracker.battery_level)) line('div', `Battery ${tracker.battery_level}%`);
+    const since = line('div', 'Here since checking…');
+    pz_fetch_here_since(tracker.entity_id).then((body) => {
+        since.textContent = `Here since ${pz_here_since_text(body)}`;
+    });
+    return box;
+}
+
 function pz_render_markers() {
     if (!pz_tracker_layer) return;
     pz_tracker_layer.clearLayers();
@@ -221,6 +264,8 @@ function pz_render_markers() {
         }
         L.circleMarker(latlng, { radius: 6, className: 'tracker-marker', pmIgnore: true })
             .bindTooltip(text_element(tracker.name), { permanent: false })
+            // Leaflet calls this on each open, so every click looks afresh.
+            .bindPopup(() => pz_tracker_popup(tracker))
             .addTo(pz_tracker_layer);
     });
 }
@@ -314,5 +359,6 @@ function setup_tracker_overlay(mapInstance) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         pz_layer_polygons, pz_layer_area_m2, pz_measure_zone, pz_format_metres, setup_tracker_overlay,
+        pz_tracker_popup, pz_here_since_text,
     };
 }
