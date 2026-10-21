@@ -64,6 +64,9 @@ PROBE_COLOUR="#1a2b3c"
 # moves zone.home. Pointing overlay_entities at a different entity would just
 # make the probe time out waiting for a position that never changes.
 TRACKER_ENTITY="zone.home"
+# A device_tracker the probe creates through Core's REST API: zone history is
+# not recorded, so the here-since lookup needs a real tracker domain.
+HISTORY_ENTITY="device_tracker.pilot_probe"
 TRACKER_REFRESH_SECONDS="${PILOT_TRACKER_REFRESH_SECONDS:-10}"
 PROVENANCE_LABEL="io.github.matthewhobbs.polygonal-zones.pilot-build"
 
@@ -384,11 +387,11 @@ cmd_install() {
   # The Supervisor validates the whole set, so change several keys of the current one.
   local options
   options="$(ha_cli apps info "$SLUG" --raw-json |
-    jq -ce --arg c "$PROBE_COLOUR" --arg e "$TRACKER_ENTITY" --argjson secs "$TRACKER_REFRESH_SECONDS" '
+    jq -ce --arg c "$PROBE_COLOUR" --arg e "$TRACKER_ENTITY" --arg h "$HISTORY_ENTITY" --argjson secs "$TRACKER_REFRESH_SECONDS" '
       {options: (.data.options + {
         zone_colour: $c,
         log_level: "debug",
-        overlay_entities: [$e],
+        overlay_entities: [$e, $h],
         tracker_refresh_seconds: $secs,
       })}')" ||
     fail "could not read the add-on's current options"
@@ -471,7 +474,8 @@ except urllib.error.HTTPError as e:
     bash -c 'pip install --quiet --no-cache-dir --break-system-packages --require-hashes \
         -r /probe/requirements.txt && exec python3 /probe/probe.py "$@"' probe \
     --base "$base" --ingress "$ingress" --expect-colour "$PROBE_COLOUR" \
-    --tracker-entity "$TRACKER_ENTITY" --tracker-refresh-seconds "$TRACKER_REFRESH_SECONDS"
+    --tracker-entity "$TRACKER_ENTITY" --tracker-refresh-seconds "$TRACKER_REFRESH_SECONDS" \
+    --history-entity "$HISTORY_ENTITY"
 }
 
 # --- watchdog: the Supervisor restarts the add-on when its web process dies --
