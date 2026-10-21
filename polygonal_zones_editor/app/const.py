@@ -47,6 +47,9 @@ OVERLAY_TIMEOUT_SECONDS = 5.0
 # the Supervisor calls in flight for the whole add-on, however many editors
 # are open; polls queue behind it and report what misses their deadline.
 OVERLAY_FETCH_WORKERS = 8
+# An upper bound on any one reply from Home Assistant; a larger one is refused
+# rather than parsed, and here since then shows unknown.
+MAX_HA_REPLY_BYTES = 8 * 1024 * 1024
 
 # Ceiling on how many entities the overlay will fetch, whatever the option
 # says. Each is a separate Supervisor call; an accidental 200-entity list

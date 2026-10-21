@@ -181,7 +181,9 @@ test('a non-zero gps_accuracy reaches the readout, measured against the zone', a
         fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document,
         editableLayers: globalThis.editableLayers,
     };
-    const layer = () => ({ addTo() { return this; }, clearLayers() {}, bindTooltip() { return this; } });
+    const layer = () => ({
+        addTo() { return this; }, clearLayers() {}, eachLayer() {}, bindTooltip() { return this; }, bindPopup() { return this; },
+    });
     globalThis.document = {
         createElement: fakeNode,
         querySelector: (sel) => (sel === '.tracker-readout' ? panel : null),
@@ -241,7 +243,7 @@ test('tracker tooltip carries the name as text, not markup', async () => {
         created.push(el);
         return el;
     }
-    const layer = () => ({ addTo() { return this; }, clearLayers() {} });
+    const layer = () => ({ addTo() { return this; }, clearLayers() {}, eachLayer() {} });
 
     globalThis.document = { createElement: fakeElement, querySelector: () => null };
     globalThis.L = {
@@ -249,6 +251,7 @@ test('tracker tooltip carries the name as text, not markup', async () => {
         circle: layer,
         circleMarker: () => ({
             bindTooltip(content) { tooltips.push(content); return this; },
+            bindPopup() { return this; },
             addTo() { return this; },
         }),
     };
@@ -285,7 +288,9 @@ test('Geoman ignores the tracker dots, so delete mode and snapping skip them', a
     const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
     const layer = (_latlng, opts) => {
         if (opts) options.push(opts);
-        return { addTo() { return this; }, clearLayers() {}, bindTooltip() { return this; } };
+        return {
+            addTo() { return this; }, clearLayers() {}, eachLayer() {}, bindTooltip() { return this; }, bindPopup() { return this; },
+        };
     };
     globalThis.document = { createElement: () => ({}), querySelector: () => null };
     globalThis.L = { layerGroup: layer, circle: layer, circleMarker: layer };
@@ -307,4 +312,230 @@ test('Geoman ignores the tracker dots, so delete mode and snapping skip them', a
     }
     assert.equal(options.length, 2, 'an accuracy circle and a dot');
     assert.ok(options.every((o) => o.pmIgnore === true));
+});
+
+// --- Marker popup -----------------------------------------------------------
+
+const { pz_tracker_popup, pz_here_since_text } = require(
+    path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js')
+);
+
+const created = [];
+function popupElement(tag) {
+    const el = { tagName: tag.toUpperCase(), children: [], className: '', markupAssigned: false, _text: '' };
+    Object.defineProperty(el, 'textContent', {
+        get() { return this._text; },
+        set(v) { this._text = String(v); },
+    });
+    Object.defineProperty(el, 'innerHTML', {
+        get() { return this._text; },
+        set() { this.markupAssigned = true; },
+    });
+    el.appendChild = (child) => { el.children.push(child); return child; };
+    created.push(el);
+    return el;
+}
+
+const reply = (body, ok = true) => () => Promise.resolve({ ok, json: async () => body });
+
+// The popup's lines when it opens, and once the here-since lookup settles.
+async function openPopup(tracker, respond) {
+    const saved = { fetch: globalThis.fetch, document: globalThis.document };
+    const requests = [];
+    globalThis.document = { createElement: popupElement };
+    globalThis.fetch = (url, opts) => { requests.push({ url, opts }); return respond(); };
+    try {
+        const box = pz_tracker_popup(tracker);
+        const lines = () => box.children.map((c) => c.textContent);
+        const opened = lines();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return { box, opened, settled: lines(), requests };
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+}
+
+const CAR = { entity_id: 'device_tracker.car', name: 'Car', gps_accuracy: 15, battery_level: 80 };
+
+test('the popup shows name, error, battery and here since, checking until it answers', async () => {
+    const { opened, settled, requests } = await openPopup(CAR, reply({ since: null, over_window: true }));
+    assert.deepEqual(opened, ['Car', '±15 m', 'Battery 80%', 'Here since checking…']);
+    assert.equal(settled[3], 'Here since over 24 h');
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, './trackers/here_since?entity_id=device_tracker.car');
+    assert.equal(requests[0].opts.headers.Accept, 'application/json');
+    assert.ok(requests[0].opts.signal instanceof AbortSignal, 'a stalled lookup must be abortable');
+});
+
+test('the popup leaves out battery and error when the tracker has none', async () => {
+    const tracker = { ...CAR, gps_accuracy: null, battery_level: null };
+    const { opened } = await openPopup(tracker, reply({ since: null, over_window: false }));
+    assert.deepEqual(opened, ['Car', 'Here since checking…']);
+});
+
+test('here since is unknown when the lookup has no answer, fails or is refused', async () => {
+    const outcomes = [
+        reply({ since: null, over_window: false }),
+        reply(null, false),
+        () => Promise.reject(new Error('offline')),
+        reply({ since: 'not a time', over_window: false }),
+    ];
+    for (const respond of outcomes) {
+        const { settled } = await openPopup(CAR, respond);
+        assert.equal(settled.at(-1), 'Here since unknown');
+    }
+});
+
+test('here since shows the time today, and the date too before today', async () => {
+    const now = new Date(2026, 9, 21, 15, 0);
+    const today = new Date(2026, 9, 21, 9, 5);
+    const yesterday = new Date(2026, 9, 20, 22, 40);
+    const time = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    assert.equal(pz_here_since_text({ since: today.toISOString() }, now), time(today));
+    assert.equal(
+        pz_here_since_text({ since: yesterday.toISOString() }, now),
+        `${yesterday.toLocaleDateString()} ${time(yesterday)}`,
+    );
+    assert.equal(pz_here_since_text({ since: today.toISOString(), over_window: true }, now), 'over 24 h');
+    assert.equal(pz_here_since_text(null, now), 'unknown');
+
+    const { settled } = await openPopup(CAR, reply({ since: new Date().toISOString(), over_window: false }));
+    assert.match(settled.at(-1), /^Here since \S/);
+    assert.doesNotMatch(settled.at(-1), /unknown|checking/);
+});
+
+test('a name with markup stays text in the popup', async () => {
+    const name = '<img src=x onerror=alert(1)>';
+    created.length = 0;
+    const { box } = await openPopup({ ...CAR, name }, reply({ since: null, over_window: false }));
+    assert.notEqual(typeof box, 'string', 'a string popup is parsed as HTML');
+    assert.equal(box.children[0].textContent, name);
+    assert.ok(created.length > 0 && created.every((el) => !el.markupAssigned));
+});
+
+test('each marker opens the popup on click and keeps its name tooltip', async () => {
+    const { setup_tracker_overlay } = require(
+        path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js')
+    );
+    const bound = { tooltips: 0, popups: [] };
+    const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    const layer = () => ({ addTo() { return this; }, clearLayers() {}, eachLayer() {} });
+    globalThis.document = { createElement: popupElement, querySelector: () => null };
+    globalThis.L = {
+        layerGroup: layer,
+        circle: layer,
+        circleMarker: () => ({
+            bindTooltip() { bound.tooltips += 1; return this; },
+            bindPopup(content) { bound.popups.push(content); return this; },
+            addTo() { return this; },
+        }),
+    };
+    globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => ({ configured: true, trackers: [{ ...CAR, latitude: 1, longitude: 2 }], unavailable: [] }),
+    });
+    try {
+        await setup_tracker_overlay({ on() {} });
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+    assert.equal(bound.tooltips, 1);
+    // A function, so the lookup runs on each click rather than once per poll.
+    assert.equal(bound.popups.length, 1);
+    assert.equal(typeof bound.popups[0], 'function');
+});
+
+test('a refresh reopens only the open popup, without a second history read or a pan', async () => {
+    const trackers = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
+    const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    const BIKE = { ...CAR, entity_id: 'device_tracker.bike', name: 'Bike' };
+    let layers = [];
+    let lookups = 0;
+    const group = {
+        addTo() { return this; },
+        clearLayers() { layers = []; },
+        eachLayer(fn) { layers.forEach(fn); },
+    };
+    globalThis.document = { createElement: popupElement, querySelector: () => null };
+    globalThis.L = {
+        layerGroup: () => group,
+        circle: () => ({ addTo() { return this; } }),
+        circleMarker: () => ({
+            open: false,
+            bindTooltip() { return this; },
+            bindPopup(content, options) { this.content = content; this.options = options || {}; return this; },
+            addTo() { layers.push(this); return this; },
+            isPopupOpen() { return this.open; },
+            // As Leaflet does: the content function runs on every open.
+            openPopup() { this.open = true; this.content(); return this; },
+        }),
+    };
+    const body = (car) => ({ configured: true, trackers: [car, { ...BIKE, latitude: 3, longitude: 4 }], unavailable: [] });
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('here_since')) {
+            lookups += 1;
+            return { ok: true, json: async () => ({ since: null, over_window: true }) };
+        }
+        return { ok: true, json: async () => body({ ...CAR, latitude: 1, longitude: 2 }) };
+    };
+    const marker = (id) => layers.find((l) => l.pz_entity_id === id);
+    try {
+        await trackers.setup_tracker_overlay({ on() {} });
+        marker(CAR.entity_id).openPopup();
+        assert.equal(lookups, 1, 'a click reads the history once');
+
+        trackers.pz_apply_trackers(body({ ...CAR, latitude: 1, longitude: 2 }));
+        assert.equal(marker(CAR.entity_id).open, true, 'the open popup is reopened');
+        assert.equal(marker(BIKE.entity_id).open, false, 'only the open one');
+        assert.equal(marker(CAR.entity_id).options.autoPan, false, 'a reopen does not pan');
+        assert.equal(lookups, 1, 'an unmoved tracker reuses its lookup');
+
+        trackers.pz_apply_trackers(body({ ...CAR, latitude: 1.01, longitude: 2 }));
+        assert.equal(lookups, 2, 'a move reads afresh');
+
+        marker(BIKE.entity_id).openPopup();
+        marker(BIKE.entity_id).open = false;
+        marker(BIKE.entity_id).openPopup();
+        assert.equal(lookups, 4, 'a real click always reads afresh');
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+});
+
+test('a reopen asks again when the last answer was unknown', async () => {
+    const trackers = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
+    const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    let layers = [];
+    let lookups = 0;
+    const group = { addTo() { return this; }, clearLayers() { layers = []; }, eachLayer(fn) { layers.forEach(fn); } };
+    globalThis.document = { createElement: popupElement, querySelector: () => null };
+    globalThis.L = {
+        layerGroup: () => group,
+        circle: () => ({ addTo() { return this; } }),
+        circleMarker: () => ({
+            open: false,
+            bindTooltip() { return this; },
+            bindPopup(content) { this.content = content; return this; },
+            addTo() { layers.push(this); return this; },
+            isPopupOpen() { return this.open; },
+            openPopup() { this.open = true; this.content(); return this; },
+        }),
+    };
+    const body = { configured: true, trackers: [{ ...CAR, entity_id: 'device_tracker.unknown_car', latitude: 1, longitude: 2 }], unavailable: [] };
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('here_since')) {
+            lookups += 1;
+            return { ok: true, json: async () => ({ since: null, over_window: false }) };
+        }
+        return { ok: true, json: async () => body };
+    };
+    try {
+        await trackers.setup_tracker_overlay({ on() {} });
+        layers[0].openPopup();
+        await new Promise((r) => setImmediate(r));
+        trackers.pz_apply_trackers(body);
+        assert.equal(lookups, 2, 'an unknown answer is asked again on the next refresh');
+    } finally {
+        Object.assign(globalThis, saved);
+    }
 });

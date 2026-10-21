@@ -1,5 +1,7 @@
+import asyncio
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, wait
+from datetime import UTC, datetime, timedelta
 from email.utils import formatdate
 import hashlib
 import http.client
@@ -11,6 +13,7 @@ import os
 import re
 import secrets
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -30,6 +33,7 @@ from const import (
     ALLOWED_IPS,
     DATA_FOLDER,
     DEFAULT_TRACKER_REFRESH_SECONDS,
+    MAX_HA_REPLY_BYTES,
     MAX_OVERLAY_ENTITIES,
     MAX_SAVE_BYTES,
     MAX_TRACKER_REFRESH_SECONDS,
@@ -54,9 +58,11 @@ from helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 # Paths the middleware leaves alone. /healthz stays open for the Docker
-# HEALTHCHECK and the Supervisor watchdog; the other three call _gate
+# HEALTHCHECK and the Supervisor watchdog; the others call _gate
 # themselves, so their cross-origin refusal comes before the token check.
-AUTHZ_EXEMPT_PATHS = frozenset({"/healthz", "/save_zones", "/zones.json", "/trackers.json"})
+AUTHZ_EXEMPT_PATHS = frozenset(
+    {"/healthz", "/save_zones", "/zones.json", "/trackers.json", "/trackers/here_since"}
+)
 
 # Rate limit on authorisation failures, shared by every gated path.
 # Protects against brute-forcing save_token when the port is exposed on LAN.
@@ -700,33 +706,33 @@ def tracker_refresh_seconds(options: dict) -> int:
 _OVERLAY_POOL = ThreadPoolExecutor(max_workers=OVERLAY_FETCH_WORKERS, thread_name_prefix="overlay")
 
 
-def _fetch_state(entity_id: str, token: str) -> dict | None:
-    """Fetch one entity's state through the Supervisor proxy. Blocking."""
+def _get_json(path: str, token: str):
+    """GET a Core API path through the Supervisor proxy; None on any failure. Blocking."""
     req = urllib.request.Request(
-        f"{SUPERVISOR_API}/states/{entity_id}",
+        f"{SUPERVISOR_API}/{path}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            raw = resp.read(MAX_HA_REPLY_BYTES + 1)
+        if len(raw) > MAX_HA_REPLY_BYTES:
+            raise ValueError("reply over the size cap")
+        return json.loads(raw.decode("utf-8"))
     # URLError and TimeoutError are OSErrors; HTTPException covers a garbled
     # or truncated reply.
     except (OSError, ValueError, http.client.HTTPException) as err:
         # One unreachable or malformed entity must not fail the whole overlay:
         # the map is still useful with the trackers that did resolve.
-        _LOGGER.debug("Overlay fetch failed for %s: %s", entity_id, err)
+        _LOGGER.debug("Overlay fetch failed for %s: %s", path, err)
         return None
 
 
-def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
-    """Reduce a full HA state object to the few fields the map needs.
+def _fetch_state(entity_id: str, token: str) -> dict | None:
+    return _get_json(f"states/{entity_id}", token)
 
-    Everything else — every other attribute the entity carries — is discarded
-    here rather than at the client, so it never crosses the wire.
-    """
-    if not isinstance(payload, dict):
-        return None
-    attrs = payload.get("attributes")
+
+def _fix(attrs) -> tuple | None:
+    """(latitude, longitude, accuracy or None) from state attributes, or None."""
     if not isinstance(attrs, dict):
         return None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
@@ -738,6 +744,25 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
     acc = attrs.get("gps_accuracy")
     if not (_finite_number(acc) and 0 <= acc <= 1e7):
         acc = None
+    return lat, lon, acc
+
+
+def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
+    """Reduce a full HA state object to the few fields the map needs.
+
+    Everything else — every other attribute the entity carries — is discarded
+    here rather than at the client, so it never crosses the wire.
+    """
+    if not isinstance(payload, dict):
+        return None
+    attrs = payload.get("attributes")
+    fix = _fix(attrs)
+    if fix is None:
+        return None
+    lat, lon, acc = fix
+    battery = attrs.get("battery_level")
+    if not (_finite_number(battery) and 0 <= battery <= 100):
+        battery = None
     return {
         "entity_id": entity_id,
         "name": str(attrs.get("friendly_name") or entity_id),
@@ -745,12 +770,94 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
         "latitude": round(float(lat), OVERLAY_COORD_DECIMALS),
         "longitude": round(float(lon), OVERLAY_COORD_DECIMALS),
         "gps_accuracy": None if acc is None else round(float(acc), 1),
+        "battery_level": None if battery is None else round(battery),
     }
 
 
-def trackers_json_generator(options: dict):
+_HERE_SINCE_WINDOW = timedelta(hours=24)
+# A fix a few metres from the last is GPS noise, not a move.
+_STILL_MIN_METRES = 20
+
+
+def _metres_between(lat1, lon1, lat2, lon2) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (
+        math.sin((p2 - p1) / 2) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    )
+    return 2 * 6_371_000 * math.asin(math.sqrt(a))
+
+
+def _here_since(reply, window_start: datetime) -> tuple[str | None, bool]:
+    """When the tracker reached its newest fix, from oldest-first history, and
+    whether it has been there for the whole window."""
+    states = reply[0] if isinstance(reply, list) and reply and isinstance(reply[0], list) else []
+    # A state without coordinates (the tracker unavailable, say) is a gap, not
+    # a move, so it is skipped rather than ending the run.
+    fixed = [
+        (st, fix) for st in states if isinstance(st, dict) and (fix := _fix(st.get("attributes")))
+    ]
+    if not fixed:
+        return None, False
+    lat, lon, acc = fixed[-1][1]
+    limit = max(2 * (acc or 0), _STILL_MIN_METRES)
+    i = len(fixed) - 1
+    while i > 0 and _metres_between(lat, lon, *fixed[i - 1][1][:2]) <= limit:
+        i -= 1
+    since = fixed[i][0].get("last_updated")
+    if not isinstance(since, str):
+        return None, False
+    # The whole window only if the run reaches its start; history that begins
+    # later means the tracker has been here since then, no longer known.
+    try:
+        at = datetime.fromisoformat(since)
+    except ValueError:
+        return None, False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    if i == 0 and at <= window_start + timedelta(minutes=1):
+        return None, True
+    return since, False
+
+
+# Its own small pool: a history read is heavy, and the shared threadpool also
+# serves /zones.json for the integration.
+_HISTORY_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="history")
+
+
+def here_since_generator(options: dict, entities: list[str]):
+    async def here_since(request: Request) -> Response:
+        refusal = _gate(options, request, "/trackers/here_since")
+        if refusal is not None:
+            return refusal
+        entity_id = request.query_params.get("entity_id")
+        # Location history is read only for a tracker the user opted in to.
+        if entity_id not in entities:
+            return JSONResponse(
+                {"error": "not an overlay entity"},
+                status_code=404,
+                headers={"Cache-Control": "no-store"},
+            )
+        window_start = datetime.now(UTC) - _HERE_SINCE_WINDOW
+        start = urllib.parse.quote(window_start.isoformat())
+        # No end_time: Home Assistant ends the period a day after its start, which is now.
+        # No minimal_response or no_attributes: both drop the coordinates.
+        reply = await asyncio.get_running_loop().run_in_executor(
+            _HISTORY_POOL,
+            _get_json,
+            f"history/period/{start}?filter_entity_id={urllib.parse.quote(entity_id)}",
+            os.environ.get(SUPERVISOR_TOKEN_ENV, ""),
+        )
+        since, over_window = _here_since(reply, window_start)
+        return JSONResponse(
+            {"since": since, "over_window": over_window}, headers={"Cache-Control": "no-store"}
+        )
+
+    return here_since
+
+
+def trackers_json_generator(options: dict, entities: list[str]):
     refresh_seconds = tracker_refresh_seconds(options)
-    entities = overlay_entities(options)
 
     # The editor polls this, so a cached copy would freeze every marker at the
     # position of whichever response the browser happened to keep.
@@ -882,11 +989,14 @@ def generate_app(options: dict) -> TransportPeerMiddleware:
     that records the TCP peer, so serve it with ``proxy_headers=False``.
     """
     static_folder = "static"
+    # Once, so a bad entry is warned about once.
+    entities = overlay_entities(options)
     routes = [
         Route("/save_zones", save_zones_generator(options), methods=["POST"]),
         Route("/zones.json", zones_json_generator(options), methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
-        Route("/trackers.json", trackers_json_generator(options), methods=["GET"]),
+        Route("/trackers.json", trackers_json_generator(options, entities), methods=["GET"]),
+        Route("/trackers/here_since", here_since_generator(options, entities), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
         # html=True makes "/" return index.html. Explicit Routes above take
         # precedence on their exact paths.

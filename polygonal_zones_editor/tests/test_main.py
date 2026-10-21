@@ -821,6 +821,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
     whichever endpoint — so a client can't infer from the response alone
     whether a token is even configured. Covers all three endpoints, with a
     token set and with none."""
+    import main
+
     expected_status = 403
     expected_body = {"error": "not authorised"}
     expected_cache_control = "no-store"
@@ -828,6 +830,7 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
     def requests_for(client):
         yield "GET /zones.json", lambda **kw: client.get("/zones.json", **kw)
         yield "GET /trackers.json", lambda **kw: client.get("/trackers.json", **kw)
+        yield "GET /trackers/here_since", lambda **kw: client.get(HERE_SINCE_URL, **kw)
         yield (
             "POST /save_zones",
             lambda **kw: client.post("/save_zones", json=_valid_payload(), **kw),
@@ -841,6 +844,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
         assert r.json() == expected_body, name
         assert r.headers.get("cache-control") == expected_cache_control, name
 
+    # Each phase is a fresh client; reset the per-client failure budget.
+    main._auth_failures.clear()
     # Token configured, none presented.
     client = TestClient(app_factory({"save_token": "sekrit"}))
     for name, do in requests_for(client):
@@ -849,6 +854,8 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
         assert r.json() == expected_body, name
         assert r.headers.get("cache-control") == expected_cache_control, name
 
+    # Each phase is a fresh client; reset the per-client failure budget.
+    main._auth_failures.clear()
     # Token configured, wrong one presented.
     client = TestClient(app_factory({"save_token": "sekrit"}))
     for name, do in requests_for(client):
@@ -1343,8 +1350,34 @@ def test_overlay_point_keeps_only_map_fields_and_rounds():
         "latitude": 51.9471,
         "longitude": -0.6275,
         "gps_accuracy": 2.3,
+        "battery_level": 42,
     }
-    assert "battery_level" not in p and "secret_note" not in p
+    assert "secret_note" not in p
+
+
+@pytest.mark.parametrize(
+    "battery, expected",
+    [
+        (42, 42),
+        (0, 0),
+        (100, 100),
+        (99.6, 100),
+        (None, None),
+        (-1, None),
+        (101, None),
+        (True, None),
+        ("42", None),
+        (float("nan"), None),
+    ],
+)
+def test_overlay_point_battery(battery, expected):
+    import main
+
+    attrs = {"latitude": 51.9, "longitude": -0.6}
+    if battery is not None:
+        attrs["battery_level"] = battery
+    p = main._overlay_point("device_tracker.a", {"attributes": attrs})
+    assert p["battery_level"] == expected
 
 
 @pytest.mark.parametrize(
@@ -1689,7 +1722,7 @@ def test_fetch_state_parses_a_good_response(monkeypatch):
     import main
 
     class _Resp:
-        def read(self):
+        def read(self, _limit=-1):
             return json.dumps({"state": "home", "attributes": {}}).encode()
 
         def __enter__(self):
@@ -1763,6 +1796,292 @@ def test_trackers_json_survives_every_fetch_failure(app_factory, monkeypatch):
     assert r.json()["unavailable"] == failing
 
 
+# --- Here since (/trackers/here_since) ----------------------------------------
+
+HERE_SINCE_URL = "/trackers/here_since?entity_id=device_tracker.car"
+HERE = (51.5, -0.12)
+# 0.0001° of latitude is about 11 m.
+NEAR = (51.50015, -0.12)  # ~17 m
+FAR = (51.501, -0.12)  # ~111 m
+
+
+def _window_start():
+    from datetime import UTC, datetime, timedelta
+
+    return datetime.now(UTC) - timedelta(hours=24)
+
+
+def _hist(*points, start=None):
+    """An oldest-first history reply for one entity, an hour apart from `start`
+    (default: the start of the 24 h window)."""
+    from datetime import timedelta
+
+    start = start or _window_start()
+    return [
+        [
+            {
+                "state": "not_home",
+                "attributes": {"latitude": lat, "longitude": lon, "gps_accuracy": acc},
+                "last_updated": (start + timedelta(hours=i)).isoformat(),
+            }
+            for i, (lat, lon, acc) in enumerate(points)
+        ]
+    ]
+
+
+def _ts(reply, i):
+    return reply[0][i]["last_updated"]
+
+
+WS = _window_start()
+
+
+def test_here_since_a_mover_arrived_at_the_first_state_of_the_run():
+    import main
+
+    reply = _hist((*FAR, 10), (*FAR, 10), (*HERE, 10), (*NEAR, 10), (*HERE, 10), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 2), False)
+
+
+def test_here_since_stationary_all_window_is_over_window():
+    import main
+
+    assert main._here_since(_hist((*HERE, 10), (*HERE, 10), start=WS), WS) == (None, True)
+
+
+def test_here_since_history_that_begins_inside_the_window_shows_its_start():
+    from datetime import timedelta
+
+    import main
+
+    reply = _hist((*HERE, 10), (*HERE, 10), start=WS + timedelta(hours=3))
+    assert main._here_since(reply, WS) == (_ts(reply, 0), False)
+
+
+def test_here_since_jitter_on_a_precise_fix_does_not_break_the_run():
+    import main
+
+    # 2 x 1 m would be 2 m; the 20 m floor keeps the ~17 m jitter in the run.
+    reply = _hist((*FAR, 1), (*NEAR, 1), (*HERE, 1), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_threshold_grows_with_the_anchor_accuracy():
+    import main
+
+    # 2 x 60 m = 120 m reaches the ~111 m point.
+    assert main._here_since(_hist((*FAR, 60), (*HERE, 60), start=WS), WS) == (None, True)
+    reply = _hist((*FAR, 50), (*HERE, 50), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_a_reply_over_the_size_cap_is_refused(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 10)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
+    # A long number: its truncated prefix still parses, so only the cap refuses it.
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **k: _Body(b"1" * 20))
+    assert main._get_json("states/x", "t") is None
+    monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 100)
+    assert main._get_json("states/x", "t") == int("1" * 20)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {},
+        {"latitude": float("nan"), "longitude": HERE[1]},
+        {"latitude": True, "longitude": HERE[1]},
+        {"latitude": HERE[0], "longitude": False},
+        "not a dict",
+    ],
+)
+def test_here_since_skips_a_state_without_valid_coordinates(bad):
+    import main
+
+    # A gap (the tracker unavailable, say) is not a move: the run carries on past it.
+    reply = _hist((*FAR, 10), (*HERE, 10), (*HERE, 10), (*HERE, 10), start=WS)
+    reply[0][2]["attributes"] = bad
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+    reply[0][2] = "not a state"
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_compares_each_fix_with_the_newest_not_its_neighbour():
+    import main
+
+    # ~15 m steps: each is within 20 m of the next, but the first is ~30 m out.
+    reply = _hist((51.50027, -0.12, 1), (51.500135, -0.12, 1), (*HERE, 1), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_threshold_comes_from_the_newest_fix_accuracy():
+    import main
+
+    # The newest fix's 2 x 60 m reaches the ~111 m point; the older fix's 5 m would not.
+    assert main._here_since(_hist((*FAR, 5), (*HERE, 60), start=WS), WS) == (None, True)
+
+
+def test_here_since_window_start_allows_a_minute_of_slack():
+    from datetime import timedelta
+
+    import main
+
+    reply = _hist((*HERE, 10), start=WS + timedelta(seconds=30))
+    assert main._here_since(reply, WS) == (None, True)
+
+
+def test_here_since_a_run_that_starts_after_the_oldest_state_is_not_over_window():
+    from datetime import timedelta
+
+    import main
+
+    # The run begins at state 1, 30 s into the window, after a far state at its start.
+    reply = _hist((*FAR, 10), (*HERE, 10), start=WS)
+    reply[0][1]["last_updated"] = (WS + timedelta(seconds=30)).isoformat()
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+def test_here_since_reads_a_timestamp_without_a_zone_as_utc():
+    import main
+
+    reply = _hist((*HERE, 10), start=WS)
+    reply[0][0]["last_updated"] = WS.replace(tzinfo=None).isoformat()
+    assert main._here_since(reply, WS) == (None, True)
+
+
+def test_here_since_anchors_on_the_newest_state_with_coordinates():
+    import main
+
+    reply = _hist((*FAR, 10), (*HERE, 10), (*HERE, 10), start=WS)
+    reply[0][2]["attributes"] = {}
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
+@pytest.mark.parametrize("reply", [None, [], [[]], {"a": 1}, ["x"], _hist((None, None, None))])
+def test_here_since_empty_or_unusable_history_is_unknown(reply):
+    import main
+
+    assert main._here_since(reply, WS) == (None, False)
+
+
+@pytest.mark.parametrize("stamp", [12345, "not a time"])
+def test_here_since_an_unreadable_timestamp_is_unknown(stamp):
+    import main
+
+    reply = _hist((*HERE, 10), start=WS)
+    reply[0][0]["last_updated"] = stamp
+    assert main._here_since(reply, WS) == (None, False)
+
+
+def _history_client(app_factory, monkeypatch, outcome, options=None):
+    """An ingress client whose Supervisor raises `outcome`, or answers with it."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append((req.full_url, req.headers.get("Authorization"), timeout))
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _Body(outcome if isinstance(outcome, bytes) else json.dumps(outcome).encode())
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    if options is None:
+        options = {"overlay_entities": ["device_tracker.car"]}
+    app = app_factory(options)
+    return _ingress(app), calls
+
+
+def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    import urllib.parse
+
+    import main
+
+    reply = _hist((*FAR, 10), (*HERE, 10))
+    client, calls = _history_client(app_factory, monkeypatch, reply)
+    r = client.get(HERE_SINCE_URL)
+    assert r.status_code == 200
+    assert r.json() == {"since": _ts(reply, 1), "over_window": False}
+    assert r.headers["cache-control"] == "no-store"
+
+    [(url, auth, timeout)] = calls
+    assert auth == "Bearer stub-token" and timeout == main.OVERLAY_TIMEOUT_SECONDS
+    prefix = f"{main.SUPERVISOR_API}/history/period/"
+    assert url.startswith(prefix)
+    path, query = url[len(prefix) :].split("?")
+    assert query == "filter_entity_id=device_tracker.car"
+    start = datetime.fromisoformat(urllib.parse.unquote(path))
+    expected = datetime.now(UTC) - timedelta(hours=24)
+    assert abs((start - expected).total_seconds()) < 60
+
+
+def test_here_since_endpoint_over_window(app_factory, monkeypatch):
+    client, _ = _history_client(app_factory, monkeypatch, _hist((*HERE, 10), (*HERE, 10)))
+    assert client.get(HERE_SINCE_URL).json() == {"since": None, "over_window": True}
+
+
+@pytest.mark.parametrize("outcome", [*_FETCH_FAILURES.values(), [], [[]]])
+def test_here_since_endpoint_unreachable_or_empty_is_unknown(app_factory, monkeypatch, outcome):
+    client, _ = _history_client(app_factory, monkeypatch, outcome)
+    r = client.get(HERE_SINCE_URL)
+    assert r.status_code == 200
+    assert r.json() == {"since": None, "over_window": False}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "?entity_id=device_tracker.other",
+        "?entity_id=person.me",
+        "?entity_id=device_tracker.car/../../states",
+        "?entity_id=",
+        "",
+    ],
+)
+def test_here_since_never_fetches_an_entity_not_in_the_list(app_factory, monkeypatch, query):
+    client, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
+    r = client.get(f"/trackers/here_since{query}")
+    assert r.status_code == 404
+    assert r.headers["cache-control"] == "no-store"
+    assert calls == []
+
+
+def test_here_since_with_no_overlay_entities_is_404(app_factory, monkeypatch):
+    client, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)), options={})
+    assert client.get(HERE_SINCE_URL).status_code == 404
+    assert calls == []
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Save-Token": "wrong"}])
+def test_here_since_without_the_token_is_refused_before_any_fetch(
+    app_factory, monkeypatch, headers
+):
+    import main
+
+    calls = []
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **_k: calls.append(a))
+    client = TestClient(
+        app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
+    )
+    r = client.get(HERE_SINCE_URL, headers=headers)
+    assert r.status_code == 403
+    assert calls == []
+
+
+def test_here_since_with_the_token_is_served(app_factory, monkeypatch):
+    _, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
+    client = TestClient(
+        app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
+    )
+    r = client.get(HERE_SINCE_URL, headers={"X-Save-Token": "sekrit"})
+    assert r.json() == {"since": None, "over_window": True}
+    assert len(calls) == 1
+
+
 def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file):
     """A failed /trackers.json read counts toward the same per-IP bucket as
     /save_zones and /zones.json, and is refused once the bucket is full.
@@ -1790,7 +2109,9 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     assert r.json() == {"error": "too many failed attempts"}
 
 
-@pytest.mark.parametrize("path", ["/save_zones", "/zones.json", "/trackers.json", "/"])
+@pytest.mark.parametrize(
+    "path", ["/save_zones", "/zones.json", "/trackers.json", "/trackers/here_since", "/"]
+)
 def test_rate_limit_refusal_is_logged_on_every_gated_route(app_factory, caplog, path):
     import logging
 

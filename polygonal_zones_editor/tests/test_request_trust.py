@@ -493,7 +493,13 @@ def _send_raw(app, path):
 
 
 @pytest.mark.parametrize(
-    "path", ["/healthz#/../index.html", "/zones.json?/../js/storage.js", "/healthz?/../index.html"]
+    "path",
+    [
+        "/healthz#/../index.html",
+        "/zones.json?/../js/storage.js",
+        "/healthz?/../index.html",
+        "/trackers/here_since#/../index.html",
+    ],
 )
 def test_an_encoded_hash_or_query_does_not_dodge_the_gate(boot, path):
     # uvicorn decodes %23 and %3F into scope["path"], where a URL re-parse

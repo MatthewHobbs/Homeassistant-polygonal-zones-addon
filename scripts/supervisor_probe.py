@@ -16,6 +16,7 @@ concurrency, hidden tabs); this only has to show the real stack agrees.
 
 import argparse
 import asyncio
+from datetime import UTC, datetime, timedelta
 import json
 import urllib.error
 import urllib.parse
@@ -167,6 +168,70 @@ async def caching(request, url):
     print("OK /zones.json carries an ETag")
 
 
+async def recorded(base, token, entity_id, count, timeout_s=30):
+    """Wait until Core's history holds at least `count` states for the entity."""
+    # Core ends a period a day after its start, so start just before the writes.
+    start = urllib.parse.quote((datetime.now(UTC) - timedelta(minutes=10)).isoformat())
+    url = f"{base}/api/history/period/{start}?filter_entity_id={entity_id}"
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    states = []
+    while asyncio.get_event_loop().time() < deadline:
+        reply = http("GET", url, token=token)
+        states = reply[0] if reply else []
+        if len(states) >= count:
+            return
+        await asyncio.sleep(2)
+    fail(f"Core's history held {len(states)} states for {entity_id}, wanted {count}")
+
+
+def _instant(stamp):
+    return datetime.fromisoformat(stamp).timestamp()
+
+
+async def here_since(request, url, entity_id, want, timeout_s=30):
+    """Poll the click lookup until it reports `want`: the recorder writes
+    history on an interval, so the first read can predate a write."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    body = None
+    while asyncio.get_event_loop().time() < deadline:
+        r = await request.get(f"{url}trackers/here_since?entity_id={entity_id}")
+        body = await r.json() if r.status == 200 else {"status": r.status}
+        # As times: the history and state APIs may format the same instant differently.
+        since = body.get("since")
+        if since and abs(_instant(since) - _instant(want)) < 1:
+            return
+        await asyncio.sleep(2)
+    fail(f"here since for {entity_id}: wanted {want}, last got {body}")
+
+
+async def here_since_live(request, url, base, token, entity_id):
+    """The click lookup reads Core's real history through the Supervisor: a
+    tracker set twice at one spot dates from the first fix, and a move resets it."""
+    path = f"{base}/api/states/{entity_id}"
+    spot = {"latitude": 52.0, "longitude": 4.0, "gps_accuracy": 10}
+    first = http("POST", path, {"state": "not_home", "attributes": spot}, token=token)
+    await asyncio.sleep(2)
+    http(
+        "POST",
+        path,
+        {"state": "not_home", "attributes": {**spot, "battery_level": 50}},
+        token=token,
+    )
+    # Both same-spot states must be in Core's history, or a match on the first
+    # proves nothing about the walk crossing the second.
+    await recorded(base, token, entity_id, 2)
+    await here_since(request, url, entity_id, first["last_updated"])
+    print(f"OK here since dates {entity_id} from its first fix at that spot")
+    moved = http(
+        "POST",
+        path,
+        {"state": "not_home", "attributes": {**spot, "latitude": 52.01}},
+        token=token,
+    )
+    await here_since(request, url, entity_id, moved["last_updated"])
+    print("OK here since resets when the tracker moves about 1 km")
+
+
 async def tracker_position(page, entity_id):
     """The editor's own view of an overlay entity, straight from its live
     `pz_trackers` array — never re-fetch /trackers.json ourselves, or a poll
@@ -258,6 +323,10 @@ async def main():
         "omit to skip the tracker-refresh check",
     )
     ap.add_argument("--tracker-refresh-seconds", type=int, default=10)
+    ap.add_argument(
+        "--history-entity",
+        help="device_tracker to create and check the here-since lookup against; omit to skip",
+    )
     args = ap.parse_args()
     base = args.base.rstrip("/")
     port = urllib.parse.urlsplit(base).port
@@ -286,6 +355,10 @@ async def main():
         print("OK ingress session from Core")
 
         await smoke(context.request, base + args.ingress, args.expect_colour)
+        if args.history_entity:
+            await here_since_live(
+                context.request, base + args.ingress, base, token, args.history_entity
+            )
 
         secure_page = await open_editor(context, base, args.ingress, errors, True)
         await draw_and_save(secure_page, "secure origin", errors, fail)
