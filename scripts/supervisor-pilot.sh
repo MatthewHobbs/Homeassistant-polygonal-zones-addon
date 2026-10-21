@@ -360,6 +360,21 @@ discover_addon() {
     jq -e --arg s "$SLUG" '(.data.apps // .data.addons)[] | select(.slug == $s)'
 }
 
+# The Supervisor refuses start with system_not_ready_error until its own
+# startup ends; retry only that.
+start_addon() {
+  local out start=$SECONDS
+  until out="$(ha_ok apps start "$SLUG")"; do
+    if ! jq -e '.error_key == "system_not_ready_error"' <<<"$out" >/dev/null 2>&1 ||
+      ((SECONDS - start >= 300)); then
+      echo "$out" >&2
+      return 1
+    fi
+    log "Supervisor not ready; retrying start of $SLUG"
+    sleep 5
+  done
+}
+
 cmd_install() {
   # Local add-on discovery is known to be fragile (supervisor#3976).
   poll "$SLUG discovered in the local store" 180 5 discover_addon
@@ -379,7 +394,7 @@ cmd_install() {
     fail "could not read the add-on's current options"
   supervisor_post "/addons/$SLUG/options" "$options" || fail "Supervisor rejected the options"
   log "Starting $SLUG"
-  ha_ok apps start "$SLUG" || fail "start of $SLUG failed"
+  start_addon || fail "start of $SLUG failed"
   poll "Supervisor reports $SLUG started" 180 3 \
     bash -c "docker exec '$NAME' ha apps info '$SLUG' --raw-json | jq -e '.data.state == \"started\"'"
   ha_cli apps info "$SLUG" --raw-json | jq -c '.data | {version, state, ingress, ingress_url, options}'
@@ -495,7 +510,7 @@ cmd_watchdog() {
   sleep 30
   addon_not_running || fail "the add-on restarted with the watchdog off"
   log "OK no restart within 30s with the watchdog off"
-  ha_ok apps start "$SLUG" >/dev/null || fail "start of $SLUG failed"
+  start_addon || fail "start of $SLUG failed"
   poll "$SLUG started again by hand" 120 3 addon_restarted_since "$before" ||
     fail "the add-on did not come back after a manual start"
   # Settle as install does before the watchdog leg.

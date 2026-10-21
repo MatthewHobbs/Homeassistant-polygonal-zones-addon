@@ -12,7 +12,7 @@
 #   0  success
 #   2  usage error
 #   3  pre-flight failure (PR state, base not main, checks, mergeability,
-#      version mismatch, or a resume whose version is not main's)
+#      a bad or lower version, or a resume whose version is not main's)
 #   4  merge failed
 #   5  tag creation failed, or the merge commit is unknown
 #   6  release workflow failed
@@ -108,6 +108,23 @@ require_main_base() {
   [ "$1" = "main" ] || fail "pr-base-$1-not-main" $EXIT_PREFLIGHT
 }
 
+# A release must be X.Y.Z and above main's $2: a lower one would publish as the
+# newest. Compared field by field, so 0.5.10 is above 0.5.9.
+require_release_version() {
+  # No leading zeros, and short enough that bash arithmetic cannot wrap.
+  local f='(0|[1-9][0-9]{0,8})' re i new old
+  re="^$f\.$f\.$f\$"
+  [[ "$1" =~ $re ]] || fail "bad-pr-version: '$1'" $EXIT_PREFLIGHT
+  [[ "$2" =~ $re ]] || fail "bad-main-version: '$2'" $EXIT_PREFLIGHT
+  IFS=. read -ra new <<<"$1"
+  IFS=. read -ra old <<<"$2"
+  for i in 0 1 2; do
+    ((10#${new[i]} > 10#${old[i]})) && return 0
+    ((10#${new[i]} < 10#${old[i]})) && break
+  done
+  fail "version-not-above-main: $1, main is $2" $EXIT_PREFLIGHT
+}
+
 # Tag PR $2's merge commit v$1, find the resulting release run, and watch it.
 tag_and_watch() {
   local tag="v$1" pr="$2" sha
@@ -139,7 +156,9 @@ resume_merged() {
   else
     # Only main's current version may be released: an older merged PR whose
     # version was superseded must never be published after the fact.
-    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "bad-version-at-merge-commit: '$version'" $EXIT_PREFLIGHT
+    local f='(0|[1-9][0-9]{0,8})' re
+    re="^$f\.$f\.$f\$"
+    [[ "$version" =~ $re ]] || fail "bad-version-at-merge-commit: '$version'" $EXIT_PREFLIGHT
     [ "$version" = "$MAIN_VERSION" ] || fail "resume-not-main-version: v$version, main is $MAIN_VERSION" $EXIT_PREFLIGHT
     log "tag v$version missing; finishing release"
     tag_and_watch "$version" "$pr"
@@ -236,10 +255,10 @@ log "PR head version: $PR_VERSION"
 if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
   say MERGING_NO_RELEASE "#$PR"
   if [ "$DRY_RUN" = 0 ]; then
-    gh -R "$REPO" pr merge "$PR" --squash --delete-branch \
+    gh -R "$REPO" pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA" \
       || fail "merge-failed" $EXIT_MERGE
   else
-    log "[dry-run] would: gh pr merge $PR --squash --delete-branch"
+    log "[dry-run] would: gh pr merge $PR --squash --delete-branch --match-head-commit $HEAD_SHA"
   fi
   say SUCCESS "#$PR (no version bump, no release)"
   exit 0
@@ -247,9 +266,9 @@ fi
 
 # ───── bump path: merge, tag, watch ────────────────────────────────
 
-# Checked before the merge, so an unreadable version never leaves a merged PR
-# with a junk tag to clean up.
-[[ "$PR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "bad-pr-version: '$PR_VERSION'" $EXIT_PREFLIGHT
+# Checked before the merge, so an unreadable or lower version never leaves a
+# merged PR with a junk tag to clean up.
+require_release_version "$PR_VERSION" "$MAIN_VERSION"
 TAG="v$PR_VERSION"
 say PLANNED_RELEASE "${MAIN_VERSION} -> ${PR_VERSION} as $TAG"
 
@@ -260,10 +279,10 @@ fi
 
 say MERGING "#$PR"
 if [ "$DRY_RUN" = 0 ]; then
-  gh -R "$REPO" pr merge "$PR" --squash --delete-branch \
+  gh -R "$REPO" pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA" \
     || fail "merge-failed" $EXIT_MERGE
 else
-  log "[dry-run] would: gh pr merge $PR --squash --delete-branch"
+  log "[dry-run] would: gh pr merge $PR --squash --delete-branch --match-head-commit $HEAD_SHA"
 fi
 
 tag_and_watch "$PR_VERSION" "$PR"

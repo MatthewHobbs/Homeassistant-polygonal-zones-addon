@@ -29,7 +29,7 @@ trap 'rm -rf "$CALLS"' EXIT
 fails=0
 
 extract() { sed -n "/^$1() {/,/^}/p" "$TARGET"; }
-for fn in require_main_base merge_commit_of tag_and_watch resume_merged; do
+for fn in require_main_base require_release_version merge_commit_of tag_and_watch resume_merged; do
   body="$(extract "$fn")"
   [ -n "$body" ] || { echo "not ok - $fn not found in $TARGET"; exit 1; }
   eval "$body"
@@ -88,8 +88,21 @@ STUB_TAG_EXISTS=1 check "resume path with the tag present tags nothing" 0 none r
 STUB_NO_MERGE=1 check "an unknown merge commit stops before tagging" 5 none tag_and_watch 1.2.3 42
 STUB_VERSION=1.2.2 check "resume refuses a version that is not main's" 3 none resume_merged 42
 STUB_VERSION="" check "resume refuses an unreadable version" 3 none resume_merged 42
+MAIN_VERSION=1.2.03 STUB_VERSION=1.2.03 check "resume refuses a leading zero, even one main carries" 3 none resume_merged 42
 check "a PR into main passes the base check" 0 none require_main_base main
 check "a PR into another branch is refused" 3 none require_main_base feature
+check "an empty release version is refused" 3 none require_release_version "" 0.5.9
+check "a release version not X.Y.Z is refused" 3 none require_release_version 0.5 0.5.9
+check "a release version equal to main's is refused" 3 none require_release_version 0.5.9 0.5.9
+check "a release version below main's is refused" 3 none require_release_version 0.4.9 0.5.9
+check "0.5.9 is below 0.5.10" 3 none require_release_version 0.5.9 0.5.10
+check "0.5.10 is above 0.5.9" 0 none require_release_version 0.5.10 0.5.9
+check "a lower minor stops the comparison, whatever the patch" 3 none require_release_version 0.4.10 0.5.9
+check "a higher minor is above" 0 none require_release_version 0.6.0 0.5.9
+check "a higher major is above" 0 none require_release_version 1.0.0 0.9.9
+check "an unreadable main version is refused" 3 none require_release_version 0.6.0 ""
+check "a leading zero is refused" 3 none require_release_version 0.5.010 0.5.9
+check "a field too long for bash arithmetic is refused" 3 none require_release_version 0.5.9999999999 0.5.9
 
 # shellcheck disable=SC2034
 DRY_RUN=1
