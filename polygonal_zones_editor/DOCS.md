@@ -205,7 +205,8 @@ add-on uses none of it.
 The grant itself is not read-only: it gives the add-on Home Assistant API
 access in general. What the add-on does with it is narrow: it only ever issues
 `GET /states/<entity_id>` for each entity you list, a history read for one of
-them when you open its popup, and nothing at all while the list is empty.
+them when you open its popup (again if it moves while open), and nothing at all
+while the list is empty.
 
 ## Integration with the Polygonal Zones HA integration
 

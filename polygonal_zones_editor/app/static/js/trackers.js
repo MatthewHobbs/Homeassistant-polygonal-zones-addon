@@ -238,10 +238,16 @@ let pz_reopening = false;
 function pz_here_since_for(tracker) {
     const at = `${tracker.latitude},${tracker.longitude}`;
     const hit = pz_here_since_cache.get(tracker.entity_id);
-    if (pz_reopening && hit && hit.at === at) return hit.lookup;
-    const lookup = pz_fetch_here_since(tracker.entity_id);
-    pz_here_since_cache.set(tracker.entity_id, { at, lookup });
-    return lookup;
+    // A failed or empty answer is not reused, so the next refresh can correct
+    // it; one still in flight is.
+    if (pz_reopening && hit && hit.at === at && !hit.empty) return hit.lookup;
+    const entry = { at, empty: false };
+    entry.lookup = pz_fetch_here_since(tracker.entity_id).then((body) => {
+        entry.empty = !(body && (body.since || body.over_window));
+        return body;
+    });
+    pz_here_since_cache.set(tracker.entity_id, entry);
+    return entry.lookup;
 }
 
 /* Built from text nodes: names come from Home Assistant. */

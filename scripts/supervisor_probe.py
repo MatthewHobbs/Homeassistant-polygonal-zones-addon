@@ -16,7 +16,7 @@ concurrency, hidden tabs); this only has to show the real stack agrees.
 
 import argparse
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 import json
 import urllib.error
 import urllib.parse
@@ -170,7 +170,8 @@ async def caching(request, url):
 
 async def recorded(base, token, entity_id, count, timeout_s=30):
     """Wait until Core's history holds at least `count` states for the entity."""
-    start = urllib.parse.quote("2000-01-01T00:00:00+00:00")
+    # Core ends a period a day after its start, so start just before the writes.
+    start = urllib.parse.quote((datetime.now(UTC) - timedelta(minutes=10)).isoformat())
     url = f"{base}/api/history/period/{start}?filter_entity_id={entity_id}"
     deadline = asyncio.get_event_loop().time() + timeout_s
     states = []

@@ -501,3 +501,41 @@ test('a refresh reopens only the open popup, without a second history read or a 
         Object.assign(globalThis, saved);
     }
 });
+
+test('a reopen asks again when the last answer was unknown', async () => {
+    const trackers = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
+    const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    let layers = [];
+    let lookups = 0;
+    const group = { addTo() { return this; }, clearLayers() { layers = []; }, eachLayer(fn) { layers.forEach(fn); } };
+    globalThis.document = { createElement: popupElement, querySelector: () => null };
+    globalThis.L = {
+        layerGroup: () => group,
+        circle: () => ({ addTo() { return this; } }),
+        circleMarker: () => ({
+            open: false,
+            bindTooltip() { return this; },
+            bindPopup(content) { this.content = content; return this; },
+            addTo() { layers.push(this); return this; },
+            isPopupOpen() { return this.open; },
+            openPopup() { this.open = true; this.content(); return this; },
+        }),
+    };
+    const body = { configured: true, trackers: [{ ...CAR, entity_id: 'device_tracker.unknown_car', latitude: 1, longitude: 2 }], unavailable: [] };
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('here_since')) {
+            lookups += 1;
+            return { ok: true, json: async () => ({ since: null, over_window: false }) };
+        }
+        return { ok: true, json: async () => body };
+    };
+    try {
+        await trackers.setup_tracker_overlay({ on() {} });
+        layers[0].openPopup();
+        await new Promise((r) => setImmediate(r));
+        trackers.pz_apply_trackers(body);
+        assert.equal(lookups, 2, 'an unknown answer is asked again on the next refresh');
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+});

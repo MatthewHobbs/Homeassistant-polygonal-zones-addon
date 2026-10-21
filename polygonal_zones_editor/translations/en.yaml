@@ -38,8 +38,8 @@ configuration:
     name: Trackers to show on the map
     description: >-
       Entity ids (e.g. device_tracker.my_car) whose live positions the
-      editor plots over your zones. Clicking one reads its last 24 h of
-      history to show when it arrived. Empty by default, and while empty
+      editor plots over your zones. Opening one's popup reads its last
+      24 h of history to show when it arrived. Empty by default, and while empty
       the add-on asks Home Assistant for nothing. These positions are
       readable by anyone holding the save_token, so prefer vehicles
       over people.
