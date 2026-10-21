@@ -1880,10 +1880,11 @@ def test_a_reply_over_the_size_cap_is_refused(monkeypatch):
 
     monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 10)
     monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
-    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **k: _Body(b'{"state": "home"}'))
+    # A long number: its truncated prefix still parses, so only the cap refuses it.
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **k: _Body(b"1" * 20))
     assert main._get_json("states/x", "t") is None
     monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 100)
-    assert main._get_json("states/x", "t") == {"state": "home"}
+    assert main._get_json("states/x", "t") == int("1" * 20)
 
 
 @pytest.mark.parametrize(
