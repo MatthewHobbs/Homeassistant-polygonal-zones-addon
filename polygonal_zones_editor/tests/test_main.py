@@ -820,7 +820,7 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
     whatever the reason (IP not allowed, token missing, token wrong) and
     whichever endpoint — so a client can't infer from the response alone
     whether a token is even configured. Covers all three endpoints, with a
-    token set and with none, as the row itself asks for."""
+    token set and with none."""
     expected_status = 403
     expected_body = {"error": "not authorised"}
     expected_cache_control = "no-store"

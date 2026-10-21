@@ -185,8 +185,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
   other.
 - **Fixed: a `MultiPolygon` tracker readout could report "outside" for a
   device that was actually inside one of its parts**, if another part's
-  boundary happened to be nearer — a separate, older bug found while row 12
-  above was open.
+  boundary happened to be nearer — a separate, older bug found while fixing
+  the hole measurement above.
   Being inside any one part now always wins, regardless of how close any
   other part's edge is.
 
