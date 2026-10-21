@@ -18,7 +18,7 @@ venv:
     #!/usr/bin/env bash
     set -euo pipefail
     uv venv --python 3.14 --quiet --allow-existing .venv
-    uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements.txt
+    uv pip install --python .venv --quiet --require-hashes -r polygonal_zones_editor/requirements-lock.txt
     uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements-dev.txt
 
 lint:

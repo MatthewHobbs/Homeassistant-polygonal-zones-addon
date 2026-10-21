@@ -31,11 +31,12 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: |
-            polygonal_zones_editor/requirements.txt
+            polygonal_zones_editor/requirements-lock.txt
             polygonal_zones_editor/requirements-dev.txt
       - name: Install dependencies
         run: |
-          pip install -r polygonal_zones_editor/requirements.txt
+          # The lock the image installs, so tests run on the shipped versions.
+          pip install --require-hashes -r polygonal_zones_editor/requirements-lock.txt
           pip install -r polygonal_zones_editor/requirements-dev.txt
       - name: Run pytest
         working-directory: polygonal_zones_editor
