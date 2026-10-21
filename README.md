@@ -32,7 +32,7 @@ _Draw polygonal zones on a map and serve them as GeoJSON for the companion Polyg
 
 ## Releasing
 
-For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. A merged version bump still reaches HA users before its images exist on GHCR, for about one release run; see the version window in [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. A merged version bump still reaches HA users before its images exist on GHCR, for about one release run.
 
 **From a shell:**
 
@@ -59,4 +59,4 @@ git push origin vX.Y.Z
 3. Pushes them to `ghcr.io/matthewhobbs/{arch}-addon-polygonal_zones:<version>`.
 4. Creates a GitHub Release whose body is the matching section of [`polygonal_zones_editor/CHANGELOG.md`](./polygonal_zones_editor/CHANGELOG.md).
 
-The workflow can also be run manually via **Actions → Release addon → Run workflow** (the `version` input must equal `config.yaml`'s version). A manual run is a dry run by default: it runs every gate and pushes nothing. It publishes only when run on the `vX.Y.Z` tag with **dry_run** unticked; see [`docs/RUNBOOK.md`](./docs/RUNBOOK.md#dry-run).
+The workflow can also be run manually via **Actions → Release addon → Run workflow** (the `version` input must equal `config.yaml`'s version). A manual run is a dry run by default: it runs every gate and pushes nothing. It publishes only when run on the `vX.Y.Z` tag with **dry_run** unticked.
