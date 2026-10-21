@@ -2,8 +2,8 @@
 # (MatthewHobbs/Homeassistant-polygonal-zones) so both halves of the project
 # are held to one standard.
 line-length = 100
-# The add-on runs on the base image's python3; the lockfile and `just venv`
-# both target 3.12.
+# py312, the oldest Python that runs this repo's code: scripts/ run on the CI
+# runners' python3. The add-on itself runs 3.14.
 target-version = "py312"
 
 [lint]

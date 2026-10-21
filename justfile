@@ -17,7 +17,7 @@ ha-floor:
 venv:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv venv --python 3.12 --quiet --allow-existing .venv
+    uv venv --python 3.14 --quiet --allow-existing .venv
     uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements.txt
     uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements-dev.txt
 
