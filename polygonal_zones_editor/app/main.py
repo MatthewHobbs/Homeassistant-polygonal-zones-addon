@@ -823,6 +823,10 @@ def _here_since(reply, window_start: datetime) -> tuple[str | None, bool]:
 # Its own small pool: a history read is heavy, and the shared threadpool also
 # serves /zones.json for the integration.
 _HISTORY_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="history")
+# Lookups running or queued; past this an answer is "unknown" at once rather
+# than another read queued behind the rest.
+_HISTORY_MAX_PENDING = 4
+_history_pending = 0
 
 
 def here_since_generator(options: dict, entities: list[str]):
@@ -838,16 +842,27 @@ def here_since_generator(options: dict, entities: list[str]):
                 status_code=404,
                 headers={"Cache-Control": "no-store"},
             )
+        global _history_pending
+        # One more for ingress, so a token holder finds it harder to crowd out the HA UI.
+        if _history_pending >= _HISTORY_MAX_PENDING + allowed_ip(request):
+            return JSONResponse(
+                {"since": None, "over_window": False}, headers={"Cache-Control": "no-store"}
+            )
         window_start = datetime.now(UTC) - _HERE_SINCE_WINDOW
         start = urllib.parse.quote(window_start.isoformat())
-        # No end_time: Home Assistant ends the period a day after its start, which is now.
-        # No minimal_response or no_attributes: both drop the coordinates.
-        reply = await asyncio.get_running_loop().run_in_executor(
-            _HISTORY_POOL,
-            _get_json,
-            f"history/period/{start}?filter_entity_id={urllib.parse.quote(entity_id)}",
-            os.environ.get(SUPERVISOR_TOKEN_ENV, ""),
-        )
+        # Safe without a lock: the count is only touched on the event loop.
+        _history_pending += 1
+        try:
+            # No end_time: Home Assistant ends the period a day after its start, which is now.
+            # No minimal_response or no_attributes: both drop the coordinates.
+            reply = await asyncio.get_running_loop().run_in_executor(
+                _HISTORY_POOL,
+                _get_json,
+                f"history/period/{start}?filter_entity_id={urllib.parse.quote(entity_id)}",
+                os.environ.get(SUPERVISOR_TOKEN_ENV, ""),
+            )
+        finally:
+            _history_pending -= 1
         since, over_window = _here_since(reply, window_start)
         return JSONResponse(
             {"since": since, "over_window": over_window}, headers={"Cache-Control": "no-store"}

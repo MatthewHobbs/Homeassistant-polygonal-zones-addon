@@ -2032,6 +2032,35 @@ def test_here_since_endpoint_unreachable_or_empty_is_unknown(app_factory, monkey
     assert r.json() == {"since": None, "over_window": False}
 
 
+def test_here_since_answers_unknown_at_once_when_lookups_are_backed_up(app_factory, monkeypatch):
+    import main
+
+    max_ = main._HISTORY_MAX_PENDING
+    ingress, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
+    seen = []
+    fake = main.urllib.request.urlopen
+    monkeypatch.setattr(
+        main.urllib.request,
+        "urlopen",
+        lambda *a, **k: (seen.append(main._history_pending), fake(*a, **k))[1],
+    )
+    lan = TestClient(
+        app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
+    )
+    unknown = {"since": None, "over_window": False}
+
+    # At the cap a token holder gets unknown at once; ingress has one slot more.
+    monkeypatch.setattr(main, "_history_pending", max_)
+    assert lan.get(HERE_SINCE_URL, headers={"X-Save-Token": "sekrit"}).json() == unknown
+    assert calls == []
+    ingress.get(HERE_SINCE_URL)
+    assert len(calls) == 1 and seen == [max_ + 1], "a running lookup counts as pending"
+    assert main._history_pending == max_, "the count is released"
+    monkeypatch.setattr(main, "_history_pending", max_ + 1)
+    assert ingress.get(HERE_SINCE_URL).json() == unknown
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize(
     "query",
     [

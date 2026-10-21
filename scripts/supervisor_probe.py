@@ -230,6 +230,45 @@ async def here_since_live(request, url, base, token, entity_id):
     )
     await here_since(request, url, entity_id, moved["last_updated"])
     print("OK here since resets when the tracker moves about 1 km")
+    return moved["last_updated"]
+
+
+async def popup_live(page, entity_id, arrived, timeout_s=40):
+    """A real click on the tracker's marker opens Leaflet's popup, and its
+    here-since line fills in with a time from Core's history."""
+    if await wait_for_tracker(page, entity_id, timeout_s) is None:
+        fail(f"{entity_id} never appeared on the map")
+    # Centre on the marker (it may be outside the zones' view), then find it on screen.
+    box = await page.evaluate(
+        """(id) => { let hit = null;
+            pz_tracker_layer.eachLayer((l) => { if (l.pz_entity_id === id) hit = l; });
+            if (!hit) return null;
+            map.setView(hit.getLatLng(), 15, { animate: false });
+            const r = hit.getElement().getBoundingClientRect();
+            const x = r.left + r.width / 2, y = r.top + r.height / 2;
+            // Something on top would take the click and fail the check unclearly.
+            if (document.elementFromPoint(x, y) !== hit.getElement()) return { covered: true };
+            return { x, y }; }""",
+        entity_id,
+    )
+    if box is None:
+        fail(f"no marker for {entity_id}")
+    if box.get("covered"):
+        fail(f"{entity_id}'s marker is covered by another element, so it cannot be clicked")
+    await page.mouse.click(box["x"], box["y"])
+    popup = page.locator(".leaflet-popup-content")
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    text = ""
+    while asyncio.get_event_loop().time() < deadline:
+        text = (await popup.text_content()) if await popup.count() else ""
+        if "Here since" in text and "checking" not in text:
+            break
+        await asyncio.sleep(1)
+    # The page's own formatting of the move time, so the check is the exact text.
+    want = await page.evaluate("(s) => pz_here_since_text({ since: s })", arrived)
+    if entity_id not in text or f"Here since {want}" not in text:
+        fail(f"tracker popup for {entity_id} wanted 'Here since {want}', got {text!r}")
+    print(f"OK clicking {entity_id}'s marker shows its popup: {text!r}")
 
 
 async def tracker_position(page, entity_id):
@@ -355,8 +394,9 @@ async def main():
         print("OK ingress session from Core")
 
         await smoke(context.request, base + args.ingress, args.expect_colour)
+        arrived = None
         if args.history_entity:
-            await here_since_live(
+            arrived = await here_since_live(
                 context.request, base + args.ingress, base, token, args.history_entity
             )
 
@@ -366,6 +406,8 @@ async def main():
             await tracker_refresh(
                 secure_page, base, token, args.tracker_entity, args.tracker_refresh_seconds
             )
+        if args.history_entity:
+            await popup_live(secure_page, args.history_entity, arrived)
         page = await open_editor(context, insecure, args.ingress, errors, False)
         await draw_and_save(page, "non-secure origin", errors, fail)
 
