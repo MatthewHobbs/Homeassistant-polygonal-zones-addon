@@ -502,7 +502,7 @@ test('a refresh reopens only the open popup, without a second history read or a 
     }
 });
 
-test('a reopen asks again when the last answer was unknown', async () => {
+test('a reopen reuses an unknown answer for a minute, then asks again', async () => {
     const trackers = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
     const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
     let layers = [];
@@ -529,13 +529,21 @@ test('a reopen asks again when the last answer was unknown', async () => {
         }
         return { ok: true, json: async () => body };
     };
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
     try {
         await trackers.setup_tracker_overlay({ on() {} });
         layers[0].openPopup();
         await new Promise((r) => setImmediate(r));
+        now += 30_000;
         trackers.pz_apply_trackers(body);
-        assert.equal(lookups, 2, 'an unknown answer is asked again on the next refresh');
+        assert.equal(lookups, 1, 'an unknown answer is reused within the minute');
+        now += 31_000;
+        trackers.pz_apply_trackers(body);
+        assert.equal(lookups, 2, 'and asked again after it');
     } finally {
+        Date.now = realNow;
         Object.assign(globalThis, saved);
     }
 });

@@ -29,6 +29,7 @@ if (typeof module !== 'undefined' && module.exports) {
 const PZ_TRACKER_ENDPOINT = './trackers.json';
 const PZ_HERE_SINCE_ENDPOINT = './trackers/here_since';
 const PZ_HERE_SINCE_TIMEOUT_MS = 10000;
+const PZ_UNKNOWN_RETRY_MS = 60000;
 
 /* Re-measure at most this often while the user drags a vertex. The maths is
  * cheap, but rebuilding the readout DOM on every mousemove is not. */
@@ -238,12 +239,14 @@ let pz_reopening = false;
 function pz_here_since_for(tracker) {
     const at = `${tracker.latitude},${tracker.longitude}`;
     const hit = pz_here_since_cache.get(tracker.entity_id);
-    // A failed or empty answer is not reused, so the next refresh can correct
-    // it; one still in flight is.
-    if (pz_reopening && hit && hit.at === at && !hit.empty) return hit.lookup;
-    const entry = { at, empty: false };
+    // An answer is reused while the tracker is unmoved, one still in flight
+    // too; an unknown one only for a minute, so a later refresh can correct it.
+    const fresh = hit && (!hit.empty || Date.now() - hit.done < PZ_UNKNOWN_RETRY_MS);
+    if (pz_reopening && hit && hit.at === at && fresh) return hit.lookup;
+    const entry = { at, empty: false, done: 0 };
     entry.lookup = pz_fetch_here_since(tracker.entity_id).then((body) => {
         entry.empty = !(body && (body.since || body.over_window));
+        entry.done = Date.now();
         return body;
     });
     pz_here_since_cache.set(tracker.entity_id, entry);
