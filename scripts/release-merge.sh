@@ -156,7 +156,9 @@ resume_merged() {
   else
     # Only main's current version may be released: an older merged PR whose
     # version was superseded must never be published after the fact.
-    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "bad-version-at-merge-commit: '$version'" $EXIT_PREFLIGHT
+    local f='(0|[1-9][0-9]{0,8})' re
+    re="^$f\.$f\.$f\$"
+    [[ "$version" =~ $re ]] || fail "bad-version-at-merge-commit: '$version'" $EXIT_PREFLIGHT
     [ "$version" = "$MAIN_VERSION" ] || fail "resume-not-main-version: v$version, main is $MAIN_VERSION" $EXIT_PREFLIGHT
     log "tag v$version missing; finishing release"
     tag_and_watch "$version" "$pr"
@@ -256,7 +258,7 @@ if [ "$PR_VERSION" = "$MAIN_VERSION" ]; then
     gh -R "$REPO" pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA" \
       || fail "merge-failed" $EXIT_MERGE
   else
-    log "[dry-run] would: gh pr merge $PR --squash --delete-branch"
+    log "[dry-run] would: gh pr merge $PR --squash --delete-branch --match-head-commit $HEAD_SHA"
   fi
   say SUCCESS "#$PR (no version bump, no release)"
   exit 0
@@ -280,7 +282,7 @@ if [ "$DRY_RUN" = 0 ]; then
   gh -R "$REPO" pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA" \
     || fail "merge-failed" $EXIT_MERGE
 else
-  log "[dry-run] would: gh pr merge $PR --squash --delete-branch"
+  log "[dry-run] would: gh pr merge $PR --squash --delete-branch --match-head-commit $HEAD_SHA"
 fi
 
 tag_and_watch "$PR_VERSION" "$PR"

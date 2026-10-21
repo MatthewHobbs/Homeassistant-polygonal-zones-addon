@@ -88,6 +88,7 @@ STUB_TAG_EXISTS=1 check "resume path with the tag present tags nothing" 0 none r
 STUB_NO_MERGE=1 check "an unknown merge commit stops before tagging" 5 none tag_and_watch 1.2.3 42
 STUB_VERSION=1.2.2 check "resume refuses a version that is not main's" 3 none resume_merged 42
 STUB_VERSION="" check "resume refuses an unreadable version" 3 none resume_merged 42
+MAIN_VERSION=1.2.03 STUB_VERSION=1.2.03 check "resume refuses a leading zero, even one main carries" 3 none resume_merged 42
 check "a PR into main passes the base check" 0 none require_main_base main
 check "a PR into another branch is refused" 3 none require_main_base feature
 check "an empty release version is refused" 3 none require_release_version "" 0.5.9
