@@ -75,6 +75,7 @@ find_run_for_tag() {
   gh -R "$REPO" run list \
     --workflow=release.yml \
     --branch="$1" \
+    --event=push \
     --limit=1 \
     --json databaseId \
     --jq '.[0].databaseId // empty'
@@ -170,7 +171,8 @@ watch_for_tag() {
   local tag="$1" run_id=""
   say WAITING_FOR_RUN "$tag"
   if [ "$DRY_RUN" = 0 ]; then
-    for _ in $(seq 1 24); do
+    # Up to 10 minutes: GitHub has been seen to start the run 5 minutes after the tag.
+    for _ in $(seq 1 120); do
       run_id=$(find_run_for_tag "$tag")
       [ -n "$run_id" ] && break
       sleep 5

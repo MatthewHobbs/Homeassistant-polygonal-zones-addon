@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history, so a tag's commit can be checked against main.
+          # Full history and every tag: the on-main and version-order checks need both.
           fetch-depth: 0
 
       - name: Resolve version
@@ -76,6 +76,11 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]] && ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$GITHUB_REF is not on main"
             exit 1
+          fi
+          # A tag below an earlier release would publish a downgrade. Re-running
+          # its own tag passes.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            git tag -l 'v*' | scripts/check-version-order.sh "$VERSION"
           fi
           # Sanity-check: must match the version in config.yaml so we don't
           # publish images that disagree with what the Supervisor expects.
