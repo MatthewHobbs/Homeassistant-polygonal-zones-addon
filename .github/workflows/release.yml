@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history, so a tag's commit can be checked against main.
+          # Full history and every tag: the on-main and version-order checks need both.
           fetch-depth: 0
 
       - name: Resolve version
