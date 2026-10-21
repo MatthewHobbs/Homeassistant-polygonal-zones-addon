@@ -35,9 +35,9 @@ jobs:
             polygonal_zones_editor/requirements-dev.txt
       - name: Install dependencies
         run: |
-          # The lock the image installs, so tests run on the shipped versions.
-          pip install --require-hashes -r polygonal_zones_editor/requirements-lock.txt
           pip install -r polygonal_zones_editor/requirements-dev.txt
+          # The lock the image installs, last, so a dev dependency can't move it.
+          pip install --require-hashes -r polygonal_zones_editor/requirements-lock.txt
       - name: Run pytest
         working-directory: polygonal_zones_editor
         run: pytest -v
