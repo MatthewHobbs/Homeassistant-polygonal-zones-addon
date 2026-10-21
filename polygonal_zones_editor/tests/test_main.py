@@ -1343,8 +1343,34 @@ def test_overlay_point_keeps_only_map_fields_and_rounds():
         "latitude": 51.9471,
         "longitude": -0.6275,
         "gps_accuracy": 2.3,
+        "battery_level": 42,
     }
-    assert "battery_level" not in p and "secret_note" not in p
+    assert "secret_note" not in p
+
+
+@pytest.mark.parametrize(
+    "battery, expected",
+    [
+        (42, 42),
+        (0, 0),
+        (100, 100),
+        (99.6, 100),
+        (None, None),
+        (-1, None),
+        (101, None),
+        (True, None),
+        ("42", None),
+        (float("nan"), None),
+    ],
+)
+def test_overlay_point_battery(battery, expected):
+    import main
+
+    attrs = {"latitude": 51.9, "longitude": -0.6}
+    if battery is not None:
+        attrs["battery_level"] = battery
+    p = main._overlay_point("device_tracker.a", {"attributes": attrs})
+    assert p["battery_level"] == expected
 
 
 @pytest.mark.parametrize(

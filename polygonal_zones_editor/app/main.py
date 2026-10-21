@@ -738,6 +738,9 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
     acc = attrs.get("gps_accuracy")
     if not (_finite_number(acc) and 0 <= acc <= 1e7):
         acc = None
+    battery = attrs.get("battery_level")
+    if not (_finite_number(battery) and 0 <= battery <= 100):
+        battery = None
     return {
         "entity_id": entity_id,
         "name": str(attrs.get("friendly_name") or entity_id),
@@ -745,6 +748,7 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
         "latitude": round(float(lat), OVERLAY_COORD_DECIMALS),
         "longitude": round(float(lon), OVERLAY_COORD_DECIMALS),
         "gps_accuracy": None if acc is None else round(float(acc), 1),
+        "battery_level": None if battery is None else round(battery),
     }
 
 
