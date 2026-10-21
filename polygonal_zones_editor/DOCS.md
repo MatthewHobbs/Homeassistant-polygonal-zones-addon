@@ -82,7 +82,7 @@ Only requests that come through Home Assistant's ingress (TCP peer `172.30.32.2`
 
 **Ingress is for the editor, not for the integration's data fetch.** Ingress is Home Assistant's browser-session proxy and needs a logged-in user, so a background component like the integration cannot use it to poll a URL. The integration fetches `zone_urls` directly over HTTP, so it needs `save_token` like any other LAN client. That holds even when it runs inside Core on the same host: Core can reach the add-on's internal hostname, but that request does not come from the ingress address and is refused without the token, as the Supervisor pilot asserts.
 
-Every rejection looks identical from the outside: `403` and `{"error": "not authorised"}` (ADR 0002 row 3, deliberately: the response alone must not reveal whether a token is even configured). The precise reason is in the add-on's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
+Every rejection looks identical from the outside: `403` and `{"error": "not authorised"}` (deliberately: the response alone must not reveal whether a token is even configured). The precise reason is in the add-on's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
 
 The companion integration can send the header itself as of [PR #95](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/pull/95) (merged 2026-09-27, not yet in a tagged release): see its `zone_source_token` option, bound to this add-on's own origin and never sent elsewhere or across a redirect. Until a release containing it is out, the integration cannot read zones from this add-on over the LAN.
 

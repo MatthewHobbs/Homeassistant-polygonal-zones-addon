@@ -174,7 +174,7 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 
 ## 0.5.4 — 2026-09-27
 
-- **Fixed: zones with holes were measured backwards (ADR 0002 row 12).** A
+- **Fixed: zones with holes were measured backwards.** A
   hole in a saved zone added to its displayed area instead of subtracting
   from it, and a tracker sitting in the hole read as inside the zone rather
   than outside. The editor itself can't draw a hole, so this only reached
@@ -185,8 +185,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
   other.
 - **Fixed: a `MultiPolygon` tracker readout could report "outside" for a
   device that was actually inside one of its parts**, if another part's
-  boundary happened to be nearer — a separate, older bug found while row 12
-  above was open.
+  boundary happened to be nearer — a separate, older bug found while fixing
+  the hole measurement above.
   Being inside any one part now always wins, regardless of how close any
   other part's edge is.
 
@@ -195,8 +195,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 - **Changed: every authorisation failure on `GET /zones.json`, `GET
   /trackers.json` and `POST /save_zones` now looks identical from the
   outside** — `403` and `{"error": "not authorised"}`, whatever the actual
-  reason (wrong IP, missing token, wrong token), on all three routes (ADR
-  0002 row 3). Previously a `401` on a route meant a token was configured
+  reason (wrong IP, missing token, wrong token), on all three routes.
+  Previously a `401` on a route meant a token was configured
   and simply not presented correctly, and a rejected read even named the
   wrong credential ("missing or invalid X-Save-Token" on a GET, when the
   header protects saves too). That distinction was itself a leak: it told
@@ -207,7 +207,7 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 
 ## 0.5.2 — 2026-09-27
 
-- **Added: rectangle drawing (ADR 0002 row 11).** Switched off in #36 during the
+- **Added: rectangle drawing.** Switched off in #36 during the
   Leaflet-Draw → Geoman swap as collateral from disabling every non-polygon
   draw mode in one pass, not a deliberate call against it. A rectangle draws
   as an `L.Rectangle`, which extends `L.Polygon` in Leaflet, so it saves as a
@@ -222,8 +222,8 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 
 ## 0.5.1 — 2026-09-27
 
-- **Fixed: `save_token`'s description understated what it protects (ADR 0002
-  row 1).** The Supervisor options page said it guarded `POST /save_zones`
+- **Fixed: `save_token`'s description understated what it protects.** The
+  Supervisor options page said it guarded `POST /save_zones`
   only; it has covered `GET /zones.json` and `GET /trackers.json` too since
   0.2.27, on purpose, to protect zone geometry. `DOCS.md` and the options
   description now say so plainly, along with the trade: with a token set,
@@ -277,7 +277,7 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
   release of the month before current stable
   (2026.9.3 today), so every install from 2026.8.1 onward keeps receiving
   updates. CI now checks the declared value against `stable.json` on every
-  run, and the Supervisor-level test (ADR 0001) runs the add-on on exactly
+  run, and the Supervisor-level test runs the add-on on exactly
   that Core under the current stable Supervisor.
 
 ## 0.4.2 — 2026-09-26
@@ -289,7 +289,7 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
   not create its control socket and the add-on never started. HA OS 18.3
   (kernel 6.18) still ships parser 3.1.7, which cannot produce that encoding,
   so no user has been hit; the next parser bump would have hit everyone. Found
-  by the new Supervisor-level CI test (ADR 0001), which failed every run on
+  by the new Supervisor-level CI test, which failed every run on
   Ubuntu 24.04 runners until the pin.
 
 ## 0.4.1 — 2026-09-25

@@ -157,7 +157,7 @@ def authorise(options: dict, request: Request) -> str | None:
     return None
 
 
-# ADR 0002 row 3: every authorisation failure gets this one status, body and
+# Every authorisation failure gets this one status, body and
 # headers, whatever the reason, so a client cannot tell from the response
 # alone whether a token is even configured. The precise reason is logged.
 def _auth_rejection_response() -> JSONResponse:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Hold the add-on's declared Home Assistant floor to its bound (ADR 0001
-# row 12): config.yaml's `homeassistant:` is never newer than the `.1` release
+# Hold the add-on's declared Home Assistant floor to its bound: config.yaml's
+# `homeassistant:` is never newer than the `.1` release
 # of the month before current stable Core, and January rolls back to the
 # previous December. Current stable is `homeassistant.default` in stable.json.
 #
@@ -12,7 +12,7 @@
 #   HA_STABLE_URL    where to fetch from (default version.home-assistant.io).
 #   HA_ADDON_CONFIG  the config.yaml to read (default the add-on's).
 #
-# Deliberately not a required check (ADR 0001 row 12): it reads a third
+# Deliberately not a required check: it reads a third
 # party's endpoint, and an outage there must not block every merge.
 
 set -euo pipefail

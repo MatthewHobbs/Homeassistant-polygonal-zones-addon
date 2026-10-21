@@ -7,7 +7,7 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 | Layer | What it runs | Where |
 |---|---|---|
 | `Tests` | `pytest -v` (100% line coverage gated by `--cov-fail-under=100`) | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
-| `Lint addon` | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within its bound (ADR 0001 row 12), and `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
+| `Lint addon` | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within its bound, and `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
 | `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches (`scripts/ui_smoke.py`) | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
 | `Supervisor pilot` (nightly / on demand, not yet required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer, on both arches | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
 
@@ -20,13 +20,13 @@ The smoke step in `build.yml` boots the container on each arch's native runner w
 - no Python traceback in the container log
 - the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`, drawn and saved through the real Geoman toolbar on both a secure and a non-secure origin
 
-`Tests`, `Lint`, and `Build` gate the release pipeline: a tag push to `v*` can't publish images until all three are green on the tagged SHA. `Supervisor pilot` does not gate release yet (ADR 0001 row 5) — a release can still ship without it.
+`Tests`, `Lint`, and `Build` gate the release pipeline: a tag push to `v*` can't publish images until all three are green on the tagged SHA. `Supervisor pilot` does not gate release yet — a release can still ship without it.
 
 ## Supervisor pilot (nightly / on demand)
 
 `.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). On pull requests, on Fridays and on manual runs each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). It installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor — this is what caught the profile's unix-socket-mediation break, fixed in 0.4.2 — on a newer parser and kernel than HA OS ships.
 
-The full matrix (both arches, both legs) runs weekly on Friday, on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. The other nights run amd64 against stable Core only. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release; ADR 0001 row 5 tracks promoting it once a trial period shows no non-flaky failures.
+The full matrix (both arches, both legs) runs weekly on Friday, on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. The other nights run amd64 against stable Core only. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release.
 
 ## Manual — live HA OS
 
@@ -37,7 +37,7 @@ The Supervisor pilot now covers install, setting a *valid* option through the Su
 - Provenance of the published images. `config.yaml` leaves `codenotary` unset (CAS is discontinued); the images carry Sigstore
   build-provenance attestations, which the Supervisor does not verify on install. Verify them yourself after a release:
   `gh attestation verify oci://ghcr.io/matthewhobbs/<arch>-addon-polygonal_zones:<version> --owner MatthewHobbs --source-ref refs/tags/v<version> --signer-workflow MatthewHobbs/Homeassistant-polygonal-zones-addon/.github/workflows/release.yml` (the source ref and workflow pin the attestation to the tag's own release run, not a dry run).
-- HA OS's actual kernel and AppArmor parser versions, which differ from the devcontainer's (see ADR 0001's 2026-09-26 amendment).
+- HA OS's actual kernel and AppArmor parser versions, which differ from the devcontainer's.
 - Real hardware (RPi, HA Yellow/Green) rather than a GitHub Actions runner.
 
 **Do these before merging any PR that touches `Dockerfile`, `rootfs/`, `config.yaml`, `build.yaml`, or `apparmor.txt`:**

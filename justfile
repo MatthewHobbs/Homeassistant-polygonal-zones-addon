@@ -10,7 +10,7 @@
 # Local CI gate - the same commands remote CI runs, for the checks it covers.
 ci: venv lint test
 
-# ADR 0001 row 12 - the declared HA floor against the bound from current stable Core (network; not in `ci`).
+# The declared HA floor against the bound from current stable Core (network; not in `ci`).
 ha-floor:
     scripts/ha-floor-check.sh
 
