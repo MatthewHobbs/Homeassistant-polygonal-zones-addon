@@ -232,6 +232,37 @@ async def here_since_live(request, url, base, token, entity_id):
     print("OK here since resets when the tracker moves about 1 km")
 
 
+async def popup_live(page, entity_id, timeout_s=40):
+    """A real click on the tracker's marker opens Leaflet's popup, and its
+    here-since line fills in with a time from Core's history."""
+    if await wait_for_tracker(page, entity_id, timeout_s) is None:
+        fail(f"{entity_id} never appeared on the map")
+    # Centre on the marker (it may be outside the zones' view), then find it on screen.
+    box = await page.evaluate(
+        """(id) => { let hit = null;
+            pz_tracker_layer.eachLayer((l) => { if (l.pz_entity_id === id) hit = l; });
+            if (!hit) return null;
+            map.setView(hit.getLatLng(), 15, { animate: false });
+            const r = hit.getElement().getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }""",
+        entity_id,
+    )
+    if box is None:
+        fail(f"no marker for {entity_id}")
+    await page.mouse.click(box["x"], box["y"])
+    popup = page.locator(".leaflet-popup-content")
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    text = ""
+    while asyncio.get_event_loop().time() < deadline:
+        text = (await popup.text_content()) if await popup.count() else ""
+        if "Here since" in text and "checking" not in text:
+            break
+        await asyncio.sleep(1)
+    if "Here since" not in text or "checking" in text or "unknown" in text:
+        fail(f"tracker popup for {entity_id} did not show an arrival time: {text!r}")
+    print(f"OK clicking {entity_id}'s marker shows its popup: {text!r}")
+
+
 async def tracker_position(page, entity_id):
     """The editor's own view of an overlay entity, straight from its live
     `pz_trackers` array — never re-fetch /trackers.json ourselves, or a poll
@@ -366,6 +397,8 @@ async def main():
             await tracker_refresh(
                 secure_page, base, token, args.tracker_entity, args.tracker_refresh_seconds
             )
+        if args.history_entity:
+            await popup_live(secure_page, args.history_entity)
         page = await open_editor(context, insecure, args.ingress, errors, False)
         await draw_and_save(page, "non-secure origin", errors, fail)
 
