@@ -828,6 +828,7 @@ def test_uniform_auth_rejection_across_all_three_endpoints(app_factory, tmp_zone
     def requests_for(client):
         yield "GET /zones.json", lambda **kw: client.get("/zones.json", **kw)
         yield "GET /trackers.json", lambda **kw: client.get("/trackers.json", **kw)
+        yield "GET /trackers/here_since", lambda **kw: client.get(HERE_SINCE_URL, **kw)
         yield (
             "POST /save_zones",
             lambda **kw: client.post("/save_zones", json=_valid_payload(), **kw),
@@ -1789,6 +1790,206 @@ def test_trackers_json_survives_every_fetch_failure(app_factory, monkeypatch):
     assert r.json()["unavailable"] == failing
 
 
+# --- Here since (/trackers/here_since) ----------------------------------------
+
+HERE_SINCE_URL = "/trackers/here_since?entity_id=device_tracker.car"
+HERE = (51.5, -0.12)
+# 0.0001° of latitude is about 11 m.
+NEAR = (51.50015, -0.12)  # ~17 m
+FAR = (51.501, -0.12)  # ~111 m
+
+
+def _hist(*points):
+    """An oldest-first history reply for one entity, t0 first."""
+    return [
+        [
+            {
+                "state": "not_home",
+                "attributes": {"latitude": lat, "longitude": lon, "gps_accuracy": acc},
+                "last_updated": f"t{i}",
+            }
+            for i, (lat, lon, acc) in enumerate(points)
+        ]
+    ]
+
+
+def test_here_since_a_mover_arrived_at_the_first_state_of_the_run():
+    import main
+
+    reply = _hist((*FAR, 10), (*FAR, 10), (*HERE, 10), (*NEAR, 10), (*HERE, 10))
+    assert main._here_since(reply) == ("t2", False)
+
+
+def test_here_since_stationary_all_window_is_over_window():
+    import main
+
+    assert main._here_since(_hist((*HERE, 10), (*HERE, 10), (*HERE, 10))) == ("t0", True)
+
+
+def test_here_since_jitter_on_a_precise_fix_does_not_break_the_run():
+    import main
+
+    # 2 x 1 m would be 2 m; the 20 m floor keeps the ~17 m jitter in the run.
+    assert main._here_since(_hist((*FAR, 1), (*NEAR, 1), (*HERE, 1))) == ("t1", False)
+
+
+def test_here_since_threshold_grows_with_the_anchor_accuracy():
+    import main
+
+    # 2 x 60 m = 120 m reaches the ~111 m point.
+    assert main._here_since(_hist((*FAR, 60), (*HERE, 60))) == ("t0", True)
+    assert main._here_since(_hist((*FAR, 50), (*HERE, 50))) == ("t1", False)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {},
+        {"latitude": float("nan"), "longitude": HERE[1]},
+        {"latitude": True, "longitude": HERE[1]},
+        {"latitude": HERE[0], "longitude": False},
+        "not a dict",
+    ],
+)
+def test_here_since_a_state_without_valid_coordinates_ends_the_run(bad):
+    import main
+
+    reply = _hist((*HERE, 10), (*HERE, 10), (*HERE, 10))
+    reply[0][1]["attributes"] = bad
+    assert main._here_since(reply) == ("t2", False)
+    reply[0][1] = "not a state"
+    assert main._here_since(reply) == ("t2", False)
+
+
+def test_here_since_anchors_on_the_newest_state_with_coordinates():
+    import main
+
+    reply = _hist((*FAR, 10), (*HERE, 10), (*HERE, 10))
+    reply[0][2]["attributes"] = {}
+    assert main._here_since(reply) == ("t1", False)
+
+
+@pytest.mark.parametrize("reply", [None, [], [[]], {"a": 1}, ["x"], _hist((None, None, None))])
+def test_here_since_empty_or_unusable_history_is_unknown(reply):
+    import main
+
+    assert main._here_since(reply) == (None, False)
+
+
+def test_here_since_a_non_string_timestamp_is_unknown():
+    import main
+
+    reply = _hist((*HERE, 10))
+    reply[0][0]["last_updated"] = 12345
+    assert main._here_since(reply) == (None, True)
+
+
+def _history_client(app_factory, monkeypatch, outcome, options=None):
+    """An ingress client whose Supervisor raises `outcome`, or answers with it."""
+    import main
+
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append((req.full_url, req.headers.get("Authorization"), timeout))
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _Body(outcome if isinstance(outcome, bytes) else json.dumps(outcome).encode())
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    if options is None:
+        options = {"overlay_entities": ["device_tracker.car"]}
+    app = app_factory(options)
+    return _ingress(app), calls
+
+
+def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    import urllib.parse
+
+    import main
+
+    client, calls = _history_client(app_factory, monkeypatch, _hist((*FAR, 10), (*HERE, 10)))
+    r = client.get(HERE_SINCE_URL)
+    assert r.status_code == 200
+    assert r.json() == {"since": "t1", "over_window": False}
+    assert r.headers["cache-control"] == "no-store"
+
+    [(url, auth, timeout)] = calls
+    assert auth == "Bearer stub-token" and timeout == main.OVERLAY_TIMEOUT_SECONDS
+    prefix = f"{main.SUPERVISOR_API}/history/period/"
+    assert url.startswith(prefix)
+    path, query = url[len(prefix) :].split("?")
+    assert query == "filter_entity_id=device_tracker.car"
+    start = datetime.fromisoformat(urllib.parse.unquote(path))
+    expected = datetime.now(UTC) - timedelta(hours=24)
+    assert abs((start - expected).total_seconds()) < 60
+
+
+def test_here_since_endpoint_over_window(app_factory, monkeypatch):
+    client, _ = _history_client(app_factory, monkeypatch, _hist((*HERE, 10), (*HERE, 10)))
+    assert client.get(HERE_SINCE_URL).json() == {"since": "t0", "over_window": True}
+
+
+@pytest.mark.parametrize("outcome", [*_FETCH_FAILURES.values(), [], [[]]])
+def test_here_since_endpoint_unreachable_or_empty_is_unknown(app_factory, monkeypatch, outcome):
+    client, _ = _history_client(app_factory, monkeypatch, outcome)
+    r = client.get(HERE_SINCE_URL)
+    assert r.status_code == 200
+    assert r.json() == {"since": None, "over_window": False}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "?entity_id=device_tracker.other",
+        "?entity_id=person.me",
+        "?entity_id=device_tracker.car/../../states",
+        "?entity_id=",
+        "",
+    ],
+)
+def test_here_since_never_fetches_an_entity_not_in_the_list(app_factory, monkeypatch, query):
+    client, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
+    r = client.get(f"/trackers/here_since{query}")
+    assert r.status_code == 404
+    assert r.headers["cache-control"] == "no-store"
+    assert calls == []
+
+
+def test_here_since_with_no_overlay_entities_is_404(app_factory, monkeypatch):
+    client, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)), options={})
+    assert client.get(HERE_SINCE_URL).status_code == 404
+    assert calls == []
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Save-Token": "wrong"}])
+def test_here_since_without_the_token_is_refused_before_any_fetch(
+    app_factory, monkeypatch, headers
+):
+    import main
+
+    calls = []
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **_k: calls.append(a))
+    client = TestClient(
+        app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
+    )
+    r = client.get(HERE_SINCE_URL, headers=headers)
+    assert r.status_code == 403
+    assert calls == []
+
+
+def test_here_since_with_the_token_is_served(app_factory, monkeypatch):
+    _, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
+    client = TestClient(
+        app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
+    )
+    r = client.get(HERE_SINCE_URL, headers={"X-Save-Token": "sekrit"})
+    assert r.json() == {"since": "t0", "over_window": True}
+    assert len(calls) == 1
+
+
 def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file):
     """A failed /trackers.json read counts toward the same per-IP bucket as
     /save_zones and /zones.json, and is refused once the bucket is full.
@@ -1816,7 +2017,9 @@ def test_trackers_json_shares_the_rate_limit_bucket(app_factory, tmp_zones_file)
     assert r.json() == {"error": "too many failed attempts"}
 
 
-@pytest.mark.parametrize("path", ["/save_zones", "/zones.json", "/trackers.json", "/"])
+@pytest.mark.parametrize(
+    "path", ["/save_zones", "/zones.json", "/trackers.json", "/trackers/here_since", "/"]
+)
 def test_rate_limit_refusal_is_logged_on_every_gated_route(app_factory, caplog, path):
     import logging
 
