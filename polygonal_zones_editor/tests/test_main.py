@@ -2032,6 +2032,20 @@ def test_here_since_endpoint_unreachable_or_empty_is_unknown(app_factory, monkey
     assert r.json() == {"since": None, "over_window": False}
 
 
+def test_here_since_answers_unknown_at_once_when_lookups_are_backed_up(app_factory, monkeypatch):
+    import main
+
+    client, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
+    monkeypatch.setattr(main, "_history_pending", main._HISTORY_MAX_PENDING)
+    r = client.get(HERE_SINCE_URL)
+    assert r.json() == {"since": None, "over_window": False}
+    assert calls == []
+    monkeypatch.setattr(main, "_history_pending", main._HISTORY_MAX_PENDING - 1)
+    client.get(HERE_SINCE_URL)
+    assert len(calls) == 1
+    assert main._history_pending == main._HISTORY_MAX_PENDING - 1, "the count is released"
+
+
 @pytest.mark.parametrize(
     "query",
     [
