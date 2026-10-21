@@ -843,7 +843,7 @@ def here_since_generator(options: dict, entities: list[str]):
                 headers={"Cache-Control": "no-store"},
             )
         global _history_pending
-        # One more for ingress, so a token holder cannot crowd out the HA UI.
+        # One more for ingress, so a token holder finds it harder to crowd out the HA UI.
         if _history_pending >= _HISTORY_MAX_PENDING + allowed_ip(request):
             return JSONResponse(
                 {"since": None, "over_window": False}, headers={"Cache-Control": "no-store"}
