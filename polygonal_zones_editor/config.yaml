@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper Add-on for the polygonal zones integration."
-version: "0.5.8"
+version: "0.5.9"
 # Auto-update stops here: 0.5.8 closes LAN access without save_token.
 breaking_versions:
   - "0.5.8"
