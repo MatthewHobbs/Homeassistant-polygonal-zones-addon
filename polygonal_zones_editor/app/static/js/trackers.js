@@ -249,6 +249,9 @@ function pz_tracker_popup(tracker) {
 
 function pz_render_markers() {
     if (!pz_tracker_layer) return;
+    // Each poll redraws the dots; reopen the popup the user had open.
+    let open_id = null;
+    pz_tracker_layer.eachLayer((l) => { if (l.isPopupOpen?.()) open_id = l.pz_entity_id; });
     pz_tracker_layer.clearLayers();
     // pmIgnore: Geoman would otherwise let delete mode remove a dot and snap
     // drawn vertices to it.
@@ -262,11 +265,13 @@ function pz_render_markers() {
                 pmIgnore: true,
             }).addTo(pz_tracker_layer);
         }
-        L.circleMarker(latlng, { radius: 6, className: 'tracker-marker', pmIgnore: true })
+        const marker = L.circleMarker(latlng, { radius: 6, className: 'tracker-marker', pmIgnore: true })
             .bindTooltip(text_element(tracker.name), { permanent: false })
             // Leaflet calls this on each open, so every click looks afresh.
             .bindPopup(() => pz_tracker_popup(tracker))
             .addTo(pz_tracker_layer);
+        marker.pz_entity_id = tracker.entity_id;
+        if (tracker.entity_id === open_id) marker.openPopup();
     });
 }
 
@@ -359,6 +364,6 @@ function setup_tracker_overlay(mapInstance) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         pz_layer_polygons, pz_layer_area_m2, pz_measure_zone, pz_format_metres, setup_tracker_overlay,
-        pz_tracker_popup, pz_here_since_text,
+        pz_tracker_popup, pz_here_since_text, pz_apply_trackers,
     };
 }

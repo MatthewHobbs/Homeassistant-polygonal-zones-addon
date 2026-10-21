@@ -182,7 +182,7 @@ test('a non-zero gps_accuracy reaches the readout, measured against the zone', a
         editableLayers: globalThis.editableLayers,
     };
     const layer = () => ({
-        addTo() { return this; }, clearLayers() {}, bindTooltip() { return this; }, bindPopup() { return this; },
+        addTo() { return this; }, clearLayers() {}, eachLayer() {}, bindTooltip() { return this; }, bindPopup() { return this; },
     });
     globalThis.document = {
         createElement: fakeNode,
@@ -243,7 +243,7 @@ test('tracker tooltip carries the name as text, not markup', async () => {
         created.push(el);
         return el;
     }
-    const layer = () => ({ addTo() { return this; }, clearLayers() {} });
+    const layer = () => ({ addTo() { return this; }, clearLayers() {}, eachLayer() {} });
 
     globalThis.document = { createElement: fakeElement, querySelector: () => null };
     globalThis.L = {
@@ -289,7 +289,7 @@ test('Geoman ignores the tracker dots, so delete mode and snapping skip them', a
     const layer = (_latlng, opts) => {
         if (opts) options.push(opts);
         return {
-            addTo() { return this; }, clearLayers() {}, bindTooltip() { return this; }, bindPopup() { return this; },
+            addTo() { return this; }, clearLayers() {}, eachLayer() {}, bindTooltip() { return this; }, bindPopup() { return this; },
         };
     };
     globalThis.document = { createElement: () => ({}), querySelector: () => null };
@@ -419,7 +419,7 @@ test('each marker opens the popup on click and keeps its name tooltip', async ()
     );
     const bound = { tooltips: 0, popups: [] };
     const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
-    const layer = () => ({ addTo() { return this; }, clearLayers() {} });
+    const layer = () => ({ addTo() { return this; }, clearLayers() {}, eachLayer() {} });
     globalThis.document = { createElement: popupElement, querySelector: () => null };
     globalThis.L = {
         layerGroup: layer,
@@ -443,4 +443,48 @@ test('each marker opens the popup on click and keeps its name tooltip', async ()
     // A function, so the lookup runs on each click rather than once per poll.
     assert.equal(bound.popups.length, 1);
     assert.equal(typeof bound.popups[0], 'function');
+});
+
+test('a refresh reopens the popup the user had open', async () => {
+    const { setup_tracker_overlay } = require(
+        path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js')
+    );
+    const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    let layers = [];
+    const opened = [];
+    const group = {
+        addTo() { return this; },
+        clearLayers() { layers = []; },
+        eachLayer(fn) { layers.forEach(fn); },
+    };
+    globalThis.document = { createElement: popupElement, querySelector: () => null };
+    globalThis.L = {
+        layerGroup: () => group,
+        circle: () => ({ addTo() { return this; } }),
+        circleMarker: () => {
+            const m = {
+                open: false,
+                bindTooltip() { return this; },
+                bindPopup() { return this; },
+                addTo() { layers.push(this); return this; },
+                isPopupOpen() { return this.open; },
+                openPopup() { this.open = true; opened.push(this.pz_entity_id); },
+            };
+            return m;
+        },
+    };
+    globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => ({ configured: true, trackers: [{ ...CAR, latitude: 1, longitude: 2 }], unavailable: [] }),
+    });
+    try {
+        await setup_tracker_overlay({ on() {} });
+        assert.deepEqual(opened, []);
+        layers[0].open = true;
+        const { pz_apply_trackers } = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
+        pz_apply_trackers({ configured: true, trackers: [{ ...CAR, latitude: 1.001, longitude: 2 }], unavailable: [] });
+    } finally {
+        Object.assign(globalThis, saved);
+    }
+    assert.deepEqual(opened, [CAR.entity_id]);
 });
