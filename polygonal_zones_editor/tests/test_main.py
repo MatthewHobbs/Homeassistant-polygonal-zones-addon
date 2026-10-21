@@ -1805,46 +1805,74 @@ NEAR = (51.50015, -0.12)  # ~17 m
 FAR = (51.501, -0.12)  # ~111 m
 
 
-def _hist(*points):
-    """An oldest-first history reply for one entity, t0 first."""
+def _window_start():
+    from datetime import UTC, datetime, timedelta
+
+    return datetime.now(UTC) - timedelta(hours=24)
+
+
+def _hist(*points, start=None):
+    """An oldest-first history reply for one entity, an hour apart from `start`
+    (default: the start of the 24 h window)."""
+    from datetime import timedelta
+
+    start = start or _window_start()
     return [
         [
             {
                 "state": "not_home",
                 "attributes": {"latitude": lat, "longitude": lon, "gps_accuracy": acc},
-                "last_updated": f"t{i}",
+                "last_updated": (start + timedelta(hours=i)).isoformat(),
             }
             for i, (lat, lon, acc) in enumerate(points)
         ]
     ]
 
 
+def _ts(reply, i):
+    return reply[0][i]["last_updated"]
+
+
+WS = _window_start()
+
+
 def test_here_since_a_mover_arrived_at_the_first_state_of_the_run():
     import main
 
-    reply = _hist((*FAR, 10), (*FAR, 10), (*HERE, 10), (*NEAR, 10), (*HERE, 10))
-    assert main._here_since(reply) == ("t2", False)
+    reply = _hist((*FAR, 10), (*FAR, 10), (*HERE, 10), (*NEAR, 10), (*HERE, 10), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 2), False)
 
 
 def test_here_since_stationary_all_window_is_over_window():
     import main
 
-    assert main._here_since(_hist((*HERE, 10), (*HERE, 10), (*HERE, 10))) == ("t0", True)
+    assert main._here_since(_hist((*HERE, 10), (*HERE, 10), start=WS), WS) == (None, True)
+
+
+def test_here_since_history_that_begins_inside_the_window_shows_its_start():
+    from datetime import timedelta
+
+    import main
+
+    reply = _hist((*HERE, 10), (*HERE, 10), start=WS + timedelta(hours=3))
+    assert main._here_since(reply, WS) == (_ts(reply, 0), False)
 
 
 def test_here_since_jitter_on_a_precise_fix_does_not_break_the_run():
     import main
 
     # 2 x 1 m would be 2 m; the 20 m floor keeps the ~17 m jitter in the run.
-    assert main._here_since(_hist((*FAR, 1), (*NEAR, 1), (*HERE, 1))) == ("t1", False)
+    reply = _hist((*FAR, 1), (*NEAR, 1), (*HERE, 1), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
 
 
 def test_here_since_threshold_grows_with_the_anchor_accuracy():
     import main
 
     # 2 x 60 m = 120 m reaches the ~111 m point.
-    assert main._here_since(_hist((*FAR, 60), (*HERE, 60))) == ("t0", True)
-    assert main._here_since(_hist((*FAR, 50), (*HERE, 50))) == ("t1", False)
+    assert main._here_since(_hist((*FAR, 60), (*HERE, 60), start=WS), WS) == (None, True)
+    reply = _hist((*FAR, 50), (*HERE, 50), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
 
 
 @pytest.mark.parametrize(
@@ -1860,34 +1888,35 @@ def test_here_since_threshold_grows_with_the_anchor_accuracy():
 def test_here_since_a_state_without_valid_coordinates_ends_the_run(bad):
     import main
 
-    reply = _hist((*HERE, 10), (*HERE, 10), (*HERE, 10))
+    reply = _hist((*HERE, 10), (*HERE, 10), (*HERE, 10), start=WS)
     reply[0][1]["attributes"] = bad
-    assert main._here_since(reply) == ("t2", False)
+    assert main._here_since(reply, WS) == (_ts(reply, 2), False)
     reply[0][1] = "not a state"
-    assert main._here_since(reply) == ("t2", False)
+    assert main._here_since(reply, WS) == (_ts(reply, 2), False)
 
 
 def test_here_since_anchors_on_the_newest_state_with_coordinates():
     import main
 
-    reply = _hist((*FAR, 10), (*HERE, 10), (*HERE, 10))
+    reply = _hist((*FAR, 10), (*HERE, 10), (*HERE, 10), start=WS)
     reply[0][2]["attributes"] = {}
-    assert main._here_since(reply) == ("t1", False)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
 
 
 @pytest.mark.parametrize("reply", [None, [], [[]], {"a": 1}, ["x"], _hist((None, None, None))])
 def test_here_since_empty_or_unusable_history_is_unknown(reply):
     import main
 
-    assert main._here_since(reply) == (None, False)
+    assert main._here_since(reply, WS) == (None, False)
 
 
-def test_here_since_a_non_string_timestamp_is_unknown():
+@pytest.mark.parametrize("stamp", [12345, "not a time"])
+def test_here_since_an_unreadable_timestamp_is_unknown(stamp):
     import main
 
-    reply = _hist((*HERE, 10))
-    reply[0][0]["last_updated"] = 12345
-    assert main._here_since(reply) == (None, True)
+    reply = _hist((*HERE, 10), start=WS)
+    reply[0][0]["last_updated"] = stamp
+    assert main._here_since(reply, WS) == (None, False)
 
 
 def _history_client(app_factory, monkeypatch, outcome, options=None):
@@ -1916,10 +1945,11 @@ def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monk
 
     import main
 
-    client, calls = _history_client(app_factory, monkeypatch, _hist((*FAR, 10), (*HERE, 10)))
+    reply = _hist((*FAR, 10), (*HERE, 10))
+    client, calls = _history_client(app_factory, monkeypatch, reply)
     r = client.get(HERE_SINCE_URL)
     assert r.status_code == 200
-    assert r.json() == {"since": "t1", "over_window": False}
+    assert r.json() == {"since": _ts(reply, 1), "over_window": False}
     assert r.headers["cache-control"] == "no-store"
 
     [(url, auth, timeout)] = calls
@@ -1935,7 +1965,7 @@ def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monk
 
 def test_here_since_endpoint_over_window(app_factory, monkeypatch):
     client, _ = _history_client(app_factory, monkeypatch, _hist((*HERE, 10), (*HERE, 10)))
-    assert client.get(HERE_SINCE_URL).json() == {"since": "t0", "over_window": True}
+    assert client.get(HERE_SINCE_URL).json() == {"since": None, "over_window": True}
 
 
 @pytest.mark.parametrize("outcome", [*_FETCH_FAILURES.values(), [], [[]]])
@@ -1992,7 +2022,7 @@ def test_here_since_with_the_token_is_served(app_factory, monkeypatch):
         app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
     )
     r = client.get(HERE_SINCE_URL, headers={"X-Save-Token": "sekrit"})
-    assert r.json() == {"since": "t0", "over_window": True}
+    assert r.json() == {"since": None, "over_window": True}
     assert len(calls) == 1
 
 

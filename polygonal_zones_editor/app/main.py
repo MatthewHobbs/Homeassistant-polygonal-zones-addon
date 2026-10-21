@@ -783,7 +783,7 @@ def _metres_between(lat1, lon1, lat2, lon2) -> float:
     return 2 * 6_371_000 * math.asin(math.sqrt(a))
 
 
-def _here_since(reply) -> tuple[str | None, bool]:
+def _here_since(reply, window_start: datetime) -> tuple[str | None, bool]:
     """When the tracker reached its newest fix, from oldest-first history, and
     whether it has been there for the whole window."""
     states = reply[0] if isinstance(reply, list) and reply and isinstance(reply[0], list) else []
@@ -796,7 +796,17 @@ def _here_since(reply) -> tuple[str | None, bool]:
     while i > 0 and fixes[i - 1] and _metres_between(lat, lon, *fixes[i - 1][:2]) <= limit:
         i -= 1
     since = states[i].get("last_updated")
-    return (since if isinstance(since, str) else None), i == 0
+    if not isinstance(since, str):
+        return None, False
+    # The whole window only if the run reaches its start; history that begins
+    # later means the tracker has been here since then, no longer known.
+    try:
+        at = datetime.fromisoformat(since)
+    except ValueError:
+        return None, False
+    if i == 0 and at <= window_start + timedelta(minutes=1):
+        return None, True
+    return since, False
 
 
 def here_since_generator(options: dict, entities: list[str]):
@@ -812,15 +822,16 @@ def here_since_generator(options: dict, entities: list[str]):
                 status_code=404,
                 headers={"Cache-Control": "no-store"},
             )
-        start = urllib.parse.quote((datetime.now(UTC) - _HERE_SINCE_WINDOW).isoformat())
+        window_start = datetime.now(UTC) - _HERE_SINCE_WINDOW
+        start = urllib.parse.quote(window_start.isoformat())
         # No end_time: Home Assistant ends the period a day after its start, which is now.
         # No minimal_response or no_attributes: both drop the coordinates.
         reply = await run_in_threadpool(
             _get_json,
-            f"history/period/{start}?filter_entity_id={entity_id}",
+            f"history/period/{start}?filter_entity_id={urllib.parse.quote(entity_id)}",
             os.environ.get(SUPERVISOR_TOKEN_ENV, ""),
         )
-        since, over_window = _here_since(reply)
+        since, over_window = _here_since(reply, window_start)
         return JSONResponse(
             {"since": since, "over_window": over_window}, headers={"Cache-Control": "no-store"}
         )
