@@ -445,13 +445,12 @@ test('each marker opens the popup on click and keeps its name tooltip', async ()
     assert.equal(typeof bound.popups[0], 'function');
 });
 
-test('a refresh reopens the popup the user had open', async () => {
-    const { setup_tracker_overlay } = require(
-        path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js')
-    );
+test('a refresh reopens only the open popup, without a second history read or a pan', async () => {
+    const trackers = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
     const saved = { fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document };
+    const BIKE = { ...CAR, entity_id: 'device_tracker.bike', name: 'Bike' };
     let layers = [];
-    const opened = [];
+    let lookups = 0;
     const group = {
         addTo() { return this; },
         clearLayers() { layers = []; },
@@ -461,30 +460,44 @@ test('a refresh reopens the popup the user had open', async () => {
     globalThis.L = {
         layerGroup: () => group,
         circle: () => ({ addTo() { return this; } }),
-        circleMarker: () => {
-            const m = {
-                open: false,
-                bindTooltip() { return this; },
-                bindPopup() { return this; },
-                addTo() { layers.push(this); return this; },
-                isPopupOpen() { return this.open; },
-                openPopup() { this.open = true; opened.push(this.pz_entity_id); },
-            };
-            return m;
-        },
+        circleMarker: () => ({
+            open: false,
+            bindTooltip() { return this; },
+            bindPopup(content, options) { this.content = content; this.options = options || {}; return this; },
+            addTo() { layers.push(this); return this; },
+            isPopupOpen() { return this.open; },
+            // As Leaflet does: the content function runs on every open.
+            openPopup() { this.open = true; this.content(); return this; },
+        }),
     };
-    globalThis.fetch = async () => ({
-        ok: true,
-        json: async () => ({ configured: true, trackers: [{ ...CAR, latitude: 1, longitude: 2 }], unavailable: [] }),
-    });
+    const body = (car) => ({ configured: true, trackers: [car, { ...BIKE, latitude: 3, longitude: 4 }], unavailable: [] });
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('here_since')) {
+            lookups += 1;
+            return { ok: true, json: async () => ({ since: null, over_window: true }) };
+        }
+        return { ok: true, json: async () => body({ ...CAR, latitude: 1, longitude: 2 }) };
+    };
+    const marker = (id) => layers.find((l) => l.pz_entity_id === id);
     try {
-        await setup_tracker_overlay({ on() {} });
-        assert.deepEqual(opened, []);
-        layers[0].open = true;
-        const { pz_apply_trackers } = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
-        pz_apply_trackers({ configured: true, trackers: [{ ...CAR, latitude: 1.001, longitude: 2 }], unavailable: [] });
+        await trackers.setup_tracker_overlay({ on() {} });
+        marker(CAR.entity_id).openPopup();
+        assert.equal(lookups, 1, 'a click reads the history once');
+
+        trackers.pz_apply_trackers(body({ ...CAR, latitude: 1, longitude: 2 }));
+        assert.equal(marker(CAR.entity_id).open, true, 'the open popup is reopened');
+        assert.equal(marker(BIKE.entity_id).open, false, 'only the open one');
+        assert.equal(marker(CAR.entity_id).options.autoPan, false, 'a reopen does not pan');
+        assert.equal(lookups, 1, 'an unmoved tracker reuses its lookup');
+
+        trackers.pz_apply_trackers(body({ ...CAR, latitude: 1.01, longitude: 2 }));
+        assert.equal(lookups, 2, 'a move reads afresh');
+
+        marker(BIKE.entity_id).openPopup();
+        marker(BIKE.entity_id).open = false;
+        marker(BIKE.entity_id).openPopup();
+        assert.equal(lookups, 4, 'a real click always reads afresh');
     } finally {
         Object.assign(globalThis, saved);
     }
-    assert.deepEqual(opened, [CAR.entity_id]);
 });

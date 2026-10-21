@@ -229,6 +229,21 @@ function pz_fetch_here_since(entity_id) {
         .finally(() => clearTimeout(timer));
 }
 
+/* The last lookup per tracker and the position it was made at. A refresh
+ * reopens an open popup; reusing this while the tracker hasn't moved keeps
+ * that from re-reading a day of history on every poll. */
+const pz_here_since_cache = new Map();
+let pz_reopening = false;
+
+function pz_here_since_for(tracker) {
+    const at = `${tracker.latitude},${tracker.longitude}`;
+    const hit = pz_here_since_cache.get(tracker.entity_id);
+    if (pz_reopening && hit && hit.at === at) return hit.lookup;
+    const lookup = pz_fetch_here_since(tracker.entity_id);
+    pz_here_since_cache.set(tracker.entity_id, { at, lookup });
+    return lookup;
+}
+
 /* Built from text nodes: names come from Home Assistant. */
 function pz_tracker_popup(tracker) {
     const box = document.createElement('div');
@@ -241,7 +256,7 @@ function pz_tracker_popup(tracker) {
     if (Number.isFinite(tracker.gps_accuracy)) line('div', `±${pz_format_metres(tracker.gps_accuracy)}`);
     if (Number.isFinite(tracker.battery_level)) line('div', `Battery ${tracker.battery_level}%`);
     const since = line('div', 'Here since checking…');
-    pz_fetch_here_since(tracker.entity_id).then((body) => {
+    pz_here_since_for(tracker).then((body) => {
         since.textContent = `Here since ${pz_here_since_text(body)}`;
     });
     return box;
@@ -268,10 +283,18 @@ function pz_render_markers() {
         const marker = L.circleMarker(latlng, { radius: 6, className: 'tracker-marker', pmIgnore: true })
             .bindTooltip(text_element(tracker.name), { permanent: false })
             // Leaflet calls this on each open, so every click looks afresh.
-            .bindPopup(() => pz_tracker_popup(tracker))
+            // A reopen must not pan the map the user may have moved.
+            .bindPopup(() => pz_tracker_popup(tracker), { autoPan: tracker.entity_id !== open_id })
             .addTo(pz_tracker_layer);
         marker.pz_entity_id = tracker.entity_id;
-        if (tracker.entity_id === open_id) marker.openPopup();
+        if (tracker.entity_id === open_id) {
+            pz_reopening = true;
+            try {
+                marker.openPopup();
+            } finally {
+                pz_reopening = false;
+            }
+        }
     });
 }
 

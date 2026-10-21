@@ -144,7 +144,7 @@ showing its reported GPS accuracy, and the sidebar lists which zones it is
 inside and how far it sits from their edges. Clicking a marker shows its
 position error, battery level and when it arrived where it is now. Working out
 the arrival reads up to 24 hours of that tracker's history from Home Assistant
-on each click; nothing is stored.
+when you open its popup, and again if it moves while open; nothing is stored.
 
 That readout **measures; it does not predict**. It will tell you a device is
 "3.8 m outside Annex (within its accuracy)" — it will not tell you which zone
@@ -205,7 +205,7 @@ add-on uses none of it.
 The grant itself is not read-only: it gives the add-on Home Assistant API
 access in general. What the add-on does with it is narrow: it only ever issues
 `GET /states/<entity_id>` for each entity you list, a history read for one of
-them when you click its marker, and nothing at all while the list is empty.
+them when you open its popup, and nothing at all while the list is empty.
 
 ## Integration with the Polygonal Zones HA integration
 
@@ -309,7 +309,7 @@ The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT
 
 **Your browser remembers the last map view.** The editor stores where you last panned and zoomed in your browser's localStorage, under `pz:viewport`, so it reopens there; your map style and sidebar choice are kept the same way (`pz:basemap`, `pz:sidebar`). Nothing of this is sent to the add-on. Clearing the site data for your Home Assistant address removes it.
 
-**Tracker positions are passed through, not kept.** `GET /trackers.json` returns, for each entity in `overlay_entities`, only its entity id, friendly name, state, GPS accuracy, battery level, and coordinates rounded to four decimal places (about 11 m). The add-on stores none of it: each request asks Home Assistant afresh. See **Plotting live positions on the map** above.
+**Tracker positions are passed through, not kept.** `GET /trackers.json` returns, for each entity in `overlay_entities`, only its entity id, friendly name, state, GPS accuracy, battery level, and coordinates rounded to four decimal places (about 11 m). `GET /trackers/here_since` returns only when one of them arrived where it is, worked out from up to 24 hours of its history. The add-on stores none of it: each request asks Home Assistant afresh. See **Plotting live positions on the map** above.
 
 **Logs.** The add-on log records, among other things, the address of each request it refuses. How long logs are kept is controlled by the Supervisor, not by this add-on.
 
