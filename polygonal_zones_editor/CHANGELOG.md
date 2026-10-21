@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 — 2026-10-21
+
+- **Added: click a tracker on the map to see its details.** The popup shows
+  the tracker's position error, its battery level when it reports one, and
+  how long it has been where it is now ("here since"), ignoring movement
+  within twice its position error. To work that out, the add-on reads up to
+  24 hours of that tracker's history from Home Assistant when you open the
+  popup, and stores none of it. Only trackers listed in `overlay_entities`
+  are read.
+- **Changed: the tracker overlay also returns battery level** for trackers
+  that report one.
+
 ## 0.5.9 — 2026-10-21
 
 - **Fixed: values a client sends are shown escaped in the add-on's log.**
