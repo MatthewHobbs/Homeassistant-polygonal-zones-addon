@@ -104,14 +104,10 @@ Only relevant if you enable the LAN port (`Configuration → Network → set a h
 
 ### Upgrade path
 
-- [ ] Restore a partial backup of the add-on taken on an earlier release (**Settings → System → Backups**); a chosen version cannot be installed any other way (see `docs/RUNBOOK.md`). Draw and save some zones.
+- [ ] Restore a partial backup of the add-on taken on an earlier release (**Settings → System → Backups**); a chosen version cannot be installed any other way. Draw and save some zones.
 - [ ] Upgrade to the branch under test. Confirm existing zones are preserved and the addon starts clean.
 - [ ] Rollback by restoring the add-on's pre-update partial backup (`ha apps update <slug> --backup`, then restore it; the slug ends in `_polygonal_zones`; `ha apps` lists it): confirm zones survive.
 
 ## When live verification is not required
 
 Pure CI changes (workflow YAML edits), documentation, README, test-only changes, and tests for existing code paths don't need live verification — CI is sufficient.
-
-## Rollback
-
-See [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for partial-release recovery and emergency rollback procedures.

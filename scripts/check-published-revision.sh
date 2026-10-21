@@ -5,7 +5,7 @@
 # must only ever hold one build of one commit:
 #   - <image:tag> not published yet               -> exit 0, push it
 #   - published, revision label == <git-sha>      -> exit 0, a re-run of a
-#     partial publish (docs/RUNBOOK.md) may re-push the same commit
+#     partial publish may re-push the same commit
 #   - published from another commit, or unlabelled -> exit 1, refuse
 # Any registry error other than "not found" also refuses: a transient error
 # must not be read as "nothing there yet" and turn into an overwrite.

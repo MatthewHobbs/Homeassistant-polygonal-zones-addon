@@ -121,7 +121,7 @@
 - **Changed: `GET /zones.json` no longer sends `Pragma` or `Expires`.**
   `Cache-Control: no-store` already says the same to every current client.
 - **Docs:** rolling back to a chosen earlier version is not possible — the
-  Supervisor's `update` takes no version — so the runbook offers a forward
+  Supervisor's `update` takes no version — so the way back is a forward
   fix or the add-on's own pre-update backup, and the 32-bit hosts note no
   longer suggests pinning an old version. The `homeassistant_api` grant is
   described as it is: applied at install and not read-only, with an empty
