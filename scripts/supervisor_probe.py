@@ -168,13 +168,28 @@ async def caching(request, url):
     print("OK /zones.json carries an ETag")
 
 
+async def recorded(base, token, entity_id, count, timeout_s=30):
+    """Wait until Core's history holds at least `count` states for the entity."""
+    start = urllib.parse.quote("2000-01-01T00:00:00+00:00")
+    url = f"{base}/api/history/period/{start}?filter_entity_id={entity_id}"
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    states = []
+    while asyncio.get_event_loop().time() < deadline:
+        reply = http("GET", url, token=token)
+        states = reply[0] if reply else []
+        if len(states) >= count:
+            return
+        await asyncio.sleep(2)
+    fail(f"Core's history held {len(states)} states for {entity_id}, wanted {count}")
+
+
 def _instant(stamp):
     return datetime.fromisoformat(stamp).timestamp()
 
 
 async def here_since(request, url, entity_id, want, timeout_s=30):
-    """Poll the click lookup until it reports `want`: the recorder commits
-    history about once a second, so the first read can predate a write."""
+    """Poll the click lookup until it reports `want`: the recorder writes
+    history on an interval, so the first read can predate a write."""
     deadline = asyncio.get_event_loop().time() + timeout_s
     body = None
     while asyncio.get_event_loop().time() < deadline:
@@ -201,6 +216,9 @@ async def here_since_live(request, url, base, token, entity_id):
         {"state": "not_home", "attributes": {**spot, "battery_level": 50}},
         token=token,
     )
+    # Both same-spot states must be in Core's history, or a match on the first
+    # proves nothing about the walk crossing the second.
+    await recorded(base, token, entity_id, 2)
     await here_since(request, url, entity_id, first["last_updated"])
     print(f"OK here since dates {entity_id} from its first fix at that spot")
     moved = http(
