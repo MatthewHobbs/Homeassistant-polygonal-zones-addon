@@ -23,8 +23,8 @@ configuration:
       Required for any access that does not come through Home
       Assistant itself (the sidebar or Open Web UI). Every such
       request, read or write, must send the header
-      X-Save-Token:<value>; with this empty, nothing outside Home
-      Assistant can reach the add-on. Never logged.
+      X-Save-Token: <value>. With this empty, nothing outside Home
+      Assistant can reach the add-on. The value is never logged.
   trusted_proxies:
     name: Trusted proxies
     description: >-
@@ -38,18 +38,18 @@ configuration:
     name: Trackers to show on the map
     description: >-
       Entity ids (e.g. device_tracker.my_car) whose live positions the
-      editor plots over your zones. Opening one's popup reads its last
-      24 h of history to show when it arrived. Empty by default, and while empty
-      the add-on asks Home Assistant for nothing. These positions are
-      readable by anyone holding the save_token, so prefer vehicles
-      over people.
+      editor plots over your zones. At most 25 are used. Opening one's
+      popup reads its last 24 h of history to show when it arrived.
+      Empty by default, and while empty the add-on asks Home Assistant
+      for nothing. These positions are readable by anyone holding the
+      save_token, so prefer vehicles over people.
   tracker_refresh_seconds:
     name: Tracker refresh interval
     description: >-
       Seconds between updates of the tracker positions on the map
-      while the editor is open. 0 loads them once when the page
-      opens. Values from 1 to 9 are treated as 10. Only used when
-      overlay_entities is set.
+      while the editor is open, from 0 to 3600 (default 60). 0 loads
+      them once when the page opens. Values from 1 to 9 are treated
+      as 10. Only used when overlay_entities is set.
   log_level:
     name: Log level
     description: >-
