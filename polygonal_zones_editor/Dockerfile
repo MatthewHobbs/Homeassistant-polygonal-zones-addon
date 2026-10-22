@@ -61,11 +61,15 @@ RUN pip install --no-cache-dir --require-hashes -r /app/requirements-lock.txt
 # Non-root runtime user. Permissions on /data are fixed up at boot by
 # rootfs/etc/cont-init.d/00-fix-perms so the Supervisor-mounted
 # options.json is readable.
-RUN addgroup -S app && adduser -S -G app -u 1001 app \
- && chown -R app:app /app
+RUN addgroup -S app && adduser -S -G app -u 1001 app
 
+# Root owns the code and `app` can only read it, so a compromised server
+# cannot rewrite what it runs. The server writes only under /data, and
+# PYTHONDONTWRITEBYTECODE keeps it from writing __pycache__ here.
 WORKDIR /app
-COPY --chown=app:app app /app
+COPY app /app
+RUN find /app -type d -exec chmod 755 {} + \
+ && find /app -type f -exec chmod 644 {} +
 
 # s6-overlay init + service definitions. cont-init.d runs as root to chown
 # /data; services.d/web/run drops to the 'app' user via s6-setuidgid.

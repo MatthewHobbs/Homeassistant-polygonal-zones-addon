@@ -18,10 +18,11 @@ if id app >/dev/null 2>&1; then
 
     if [ -f /data/options.json ]; then
         # options.json may hold save_token (a password-type option), so we
-        # keep it 0640 app:app. If chown fails (read-only mount, unexpected
-        # FS), services.d/web/run detects that `app` can't read options.json
-        # and falls back to running as root, which preserves readability
-        # without making the secret world-readable.
+        # hand it to app:app rather than widen its mode; the mode stays
+        # whatever the Supervisor wrote. If chown fails (read-only mount,
+        # unexpected FS), services.d/web/run detects that `app` can't read
+        # options.json and falls back to running as root, which preserves
+        # readability without this script making the secret world-readable.
         chown app:app /data/options.json 2>/dev/null || \
             bashio::log.warning "chown /data/options.json failed; web service will fall back to running as root"
     fi
