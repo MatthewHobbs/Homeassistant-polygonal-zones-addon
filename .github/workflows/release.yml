@@ -99,16 +99,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          # The trailing space or end of line stops "0.2.1" matching "0.2.10".
-          NOTES=$(awk -v v="## $VERSION" '
-            $0 ~ "^"v" " || $0 == v {found=1; next}
-            found && /^## / {exit}
-            found {print}
-          ' polygonal_zones_editor/CHANGELOG.md)
-          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
-            echo "::error::No CHANGELOG entry found for version $VERSION in polygonal_zones_editor/CHANGELOG.md"
-            exit 1
-          fi
+          NOTES=$(scripts/changelog-notes.sh "$VERSION")
           delim="notes_$(openssl rand -hex 16)"
           printf 'notes<<%s\n%s\n%s\n' "$delim" "$NOTES" "$delim" >> "$GITHUB_OUTPUT"
 

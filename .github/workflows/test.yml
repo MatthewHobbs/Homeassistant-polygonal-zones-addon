@@ -43,6 +43,12 @@ jobs:
       - name: Run pytest
         working-directory: polygonal_zones_editor
         run: pytest -v
+      # In this required job so a version bump with no usable CHANGELOG entry
+      # fails before it merges, not after it is tagged.
+      - name: config.yaml's version has a CHANGELOG entry
+        run: scripts/changelog-notes.sh "$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml)" >/dev/null
+      - name: Run changelog-notes.sh checks
+        run: scripts/test-changelog-notes.sh
       - name: Run release-merge.sh regression checks
         run: scripts/test-release-merge.sh
       - name: Run check-published-revision.sh regression checks
