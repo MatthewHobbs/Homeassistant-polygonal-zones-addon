@@ -203,7 +203,9 @@ def test_save_with_if_match_wildcard_succeeds(ingress_client, tmp_zones_file):
     # RFC 9110 13.1.1: "*" matches whenever the resource exists.
     r = ingress_client.post("/save_zones", json=_valid_payload(), headers={"If-Match": "*"})
     assert r.status_code == 200
-    assert [f["properties"]["name"] for f in json.loads(tmp_zones_file.read_text())["features"]] == ["Home"]
+    assert [
+        f["properties"]["name"] for f in json.loads(tmp_zones_file.read_text())["features"]
+    ] == ["Home"]
 
 
 def test_save_with_if_match_star_inside_a_list_is_not_a_wildcard(ingress_client, tmp_zones_file):
@@ -669,7 +671,9 @@ def test_save_zones_drops_altitude_in_multipolygons(ingress_client, tmp_zones_fi
         "properties": {"name": "m"},
         "geometry": {"type": "MultiPolygon", "coordinates": [[ring]]},
     }
-    r = ingress_client.post("/save_zones", json={"type": "FeatureCollection", "features": [feature]})
+    r = ingress_client.post(
+        "/save_zones", json={"type": "FeatureCollection", "features": [feature]}
+    )
     assert r.status_code == 200
     stored = json.loads(tmp_zones_file.read_text())
     assert stored["features"][0]["geometry"]["coordinates"] == [[[p[:2] for p in ring]]]
