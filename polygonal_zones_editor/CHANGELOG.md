@@ -494,7 +494,7 @@ UX polish slice: two small editor fixes that addressed friction points flagged i
 
 ### Added
 
-- **Map viewport persists across reloads (#130).** The first-load experience previously centred the map on Groningen (the original upstream author's home, hardcoded at `map.js:48`). Users outside the Netherlands had to scroll-and-zoom on every visit before they could draw any zone. The map now remembers `center` and `zoom` per user in `localStorage` under `pz:viewport` on `moveend` / `zoomend` (debounced 500 ms), and restores on load. Existing users with zones but no persisted viewport still get the auto-fit-to-zones behaviour on first post-upgrade load — the persisted viewport only wins once the user has actively panned or zoomed. Genuine first-time users with no zones and no persisted viewport still see Groningen as an obvious "not-my-area" signal that prompts a pan to their actual location.
+- **Map viewport persists across reloads (#130).** The first-load experience previously centred the map on Groningen (hardcoded at `map.js:48`). Users outside the Netherlands had to scroll-and-zoom on every visit before they could draw any zone. The map now remembers `center` and `zoom` per user in `localStorage` under `pz:viewport` on `moveend` / `zoomend` (debounced 500 ms), and restores on load. Existing users with zones but no persisted viewport still get the auto-fit-to-zones behaviour on first post-upgrade load — the persisted viewport only wins once the user has actively panned or zoomed. Genuine first-time users with no zones and no persisted viewport still see Groningen as an obvious "not-my-area" signal that prompts a pan to their actual location.
 
 ### Release gate
 
