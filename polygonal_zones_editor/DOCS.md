@@ -235,9 +235,20 @@ If you must go this route (no control over DNS, no reverse proxy, and an integra
 
 ### Saving changes
 
-Changes are not written until you press **Save** at the bottom of the sidebar. Unsaved changes are lost on restart.
+Changes are not written until you press **Save** at the bottom of the sidebar.
 
 An amber dot appears on **Save** while there are changes not yet written to disk. It clears once the save succeeds.
+
+A refused save shows the server's reason under the button.
+
+#### If a save conflicts or times out
+
+A conflict means another session saved first. Saving stays refused until you reload, so the other session's zones are not overwritten. After a conflict or a timeout, **Download unsaved zones** saves the zones on screen as a file. Then either:
+
+- reload the page and re-apply your changes; or
+- download, reload, and use **Replace zones from file** to put the downloaded zones back. This replaces every zone with the file's zones and discards the other session's changes.
+
+**Replace zones from file** is always available. It replaces every zone with the zones in a file you choose.
 
 ### Zones file
 
@@ -250,8 +261,8 @@ Each zone has a stable `properties.id`, filled in by the add-on when missing. A 
 #### Viewing zones
 
 - All zones are listed in the sidebar and drawn on the map.
-- While the list is loading it shows "Loading zones…". On a new install with no zones, it prompts you to draw one.
-- If loading fails, the list shows "Couldn't load zones" and a **Load bulk json** button. Check the add-on log.
+- While the list is loading it shows "Loading zones…". On a new install with no zones it shows "No zones yet. Draw one on the map to get started."
+- If loading fails, the list shows "Couldn't load zones…" and the **Replace zones from file** button. Check the add-on log.
 
 #### Map style
 
