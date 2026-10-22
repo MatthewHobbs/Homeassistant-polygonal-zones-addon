@@ -21,5 +21,5 @@
 #       | awk '/docker-content-digest/{print $2}'
 #   done
 build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.24@sha256:265232fe91fb4271f75f17ebd4bb0749ab24fc8a64d8db38ddaccd460e9580ee
-  amd64:   ghcr.io/home-assistant/amd64-base:3.24@sha256:db83d263152a02d6daf3415a73132b2386f43a03a9c248bdaabe047b067c8eea
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.24@sha256:aacbf5d8c17fe5682b0d0bc5a523cd14cbd5481bd9124eb312d8aa2e9d796840
+  amd64:   ghcr.io/home-assistant/amd64-base:3.24@sha256:20d9028d56eaa3dd3013f6e0a7957b4911e4c71e14f85d1f609bba4fe429e84a
