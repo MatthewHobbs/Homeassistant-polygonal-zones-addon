@@ -449,8 +449,6 @@ function setup_editing(map, editableLayers) {
         editableLayers.addLayer(layer);
         render_zone_list();
         mark_dirty();
-
-        delete_load_btn();
     });
 }
 
@@ -487,10 +485,15 @@ function edit_zone_event(e) {
         layer.pm.disable();
         // An empty box leaves the zone unnamed: two zones named "" would be
         // refused on save as duplicates.
+        const old_name = layer.feature.properties.name;
         if (e.detail.name) layer.feature.properties.name = e.detail.name;
         else delete layer.feature.properties.name;
         e.target.setAttribute('name', e.detail.name);
-        mark_dirty();
+        if ((layer.feature.properties.name ?? '') !== (old_name ?? '')) {
+            mark_dirty();
+            // The tracker readout names the zone a device is in.
+            map.fire('pz:zoneschanged');
+        }
     }
 }
 
@@ -535,9 +538,26 @@ function render_zone_list() {
     if (!zone_list.children.length) {
         let empty = document.createElement('p');
         empty.className = 'zone-list-empty';
-        empty.textContent = 'No zones yet — draw one on the map to get started.';
+        empty.textContent = 'No zones yet. Draw one on the map to get started.';
         zone_list.appendChild(empty);
     }
+}
+
+/* The zones on the map as the FeatureCollection a save sends. Leaflet's
+ * toGeoJSON keeps a MultiPolygon's every ring; reading _latlngs[0] by hand
+ * would not. */
+function zones_collection() {
+    const features = [];
+    editableLayers.eachLayer(layer => {
+        const feature = layer.toGeoJSON();
+        // Only name and id are sent; the id keeps a renamed zone bound to
+        // the same automations.
+        const src = layer.feature.properties || {};
+        feature.properties = {name: src.name};
+        if (src.id) feature.properties.id = src.id;
+        features.push(feature);
+    });
+    return {type: "FeatureCollection", features};
 }
 
 function save_zones() {
@@ -550,20 +570,7 @@ function save_zones() {
     }
 
     close_open_edit();
-    // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
-    // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
-    // a single-ring Polygon, losing every ring beyond the first.
-    const features = [];
-    editableLayers.eachLayer(layer => {
-        const feature = layer.toGeoJSON();
-        // Only name and id are sent; the id keeps a renamed zone bound to
-        // the same automations.
-        const src = layer.feature.properties || {};
-        feature.properties = {name: src.name};
-        if (src.id) feature.properties.id = src.id;
-        features.push(feature);
-    });
-    const geojson = {type: "FeatureCollection", features};
+    const geojson = zones_collection();
 
     const headers = {'Content-Type': 'application/json'};
     if (zones_etag) headers['If-Match'] = zones_etag;
@@ -586,9 +593,18 @@ function save_zones() {
         signal: controller.signal,
     })).then(response => {
         // Stays dirty: the edits are still unsaved.
-        if (response.status === 412) return show_save_state('error',
-            'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.');
-        if (!response.ok) return show_save_state('error', `Save failed (${response.status}).`);
+        if (response.status === 412) {
+            show_save_state('error',
+                'Conflict: zones changed in another session. Reload and re-apply your edits, or download yours, reload, and use Replace zones from file (that discards the other session\'s changes).');
+            return offer_download();
+        }
+        if (!response.ok) {
+            // The server's reason (main.py: {"error", "detail"}) is shown as text only.
+            return response.json().catch(() => null).then(body => {
+                const detail = typeof body?.detail === 'string' ? `: ${body.detail}` : '.';
+                show_save_state('error', `Save failed (${response.status})${detail}`);
+            });
+        }
         return response.json().catch(() => null).then(body => {
             show_save_state('success', 'Zones saved.');
             // Only a save that landed moves the editor to the new version: a
@@ -608,12 +624,37 @@ function save_zones() {
             // The server may still have written: say so rather than "not saved".
             ? 'Save timed out. It may not have saved; reload to check before saving again.'
             : `Save failed: ${err.message}`);
+        if (timed_out) offer_download();
     }).finally(() => {
         clearTimeout(timer);
         save_in_flight = false;
     });
 }
 
+/* Reloading to resolve a conflict discards the edits, so offer them as a file
+ * "Replace zones from file" accepts. Built on click, so edits made since are in it. The
+ * control sits in the status line, which the next save's status text replaces. */
+function offer_download() {
+    const status = document.getElementById('save-status');
+    if (!status) return;
+    const button = document.createElement('button');
+    button.className = 'btn';
+    button.textContent = 'Download unsaved zones';
+    button.addEventListener('click', () => {
+        close_open_edit();
+        const url = URL.createObjectURL(new Blob([JSON.stringify(zones_collection())], {type: 'application/json'}));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'unsaved-zones.json';
+        // Attached and revoked late: some browsers drop a detached or
+        // immediately revoked download.
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+    status.appendChild(button);
+}
 
 function show_transient_error(message) {
     // alert() is unreliable inside Home Assistant's ingress iframe (sandboxed
@@ -636,11 +677,11 @@ function load_saved_zones(data, restoredViewport) {
     if (skipped) {
         show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
     }
-    if (editableLayers.getLayers().length > 0) {
-        // A remembered view wins over centring on the zones.
-        if (!restoredViewport) map.setView(editableLayers.getBounds().getCenter(), 13);
-    } else {
-        create_load_btn();
+    // Always offered: it is how a conflict download gets back in.
+    create_load_btn();
+    // A remembered view wins over centring on the zones.
+    if (editableLayers.getLayers().length > 0 && !restoredViewport) {
+        map.setView(editableLayers.getBounds().getCenter(), 13);
     }
 }
 
@@ -721,7 +762,6 @@ function load_bulk_json() {
             render_zone_list();
             mark_dirty();
             map.setView(editableLayers.getBounds().getCenter(), 13);
-            delete_load_btn();
         };
         reader.readAsText(file);
     });
