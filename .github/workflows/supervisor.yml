@@ -74,9 +74,10 @@ jobs:
         # "stable" is whatever stable.json names today; the other leg pins
         # Core to the declared floor under the same stable Supervisor, resolved
         # by the floor job above.
-        # vars.PILOT_STABLE_CORE pins the "stable" leg, the way to unblock PRs
-        # while a new stable Core is broken upstream. Unset it once fixed.
-        core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && format('["{0}"]', vars.PILOT_STABLE_CORE || 'stable') || format('["{0}", "{1}"]', vars.PILOT_STABLE_CORE || 'stable', needs.floor.outputs.core)) }}
+        # vars.PILOT_STABLE_CORE pins the "stable" leg on PRs and dispatches,
+        # to unblock them while a new stable Core is broken upstream. Scheduled
+        # runs ignore it, so they show when upstream is fixed.
+        core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["stable"]' || format('["{0}", "{1}"]', (github.event_name != 'schedule' && vars.PILOT_STABLE_CORE) || 'stable', needs.floor.outputs.core)) }}
     env:
       CORE_VERSION: ${{ matrix.core }}
       PILOT_KEEP: "1"
@@ -120,6 +121,8 @@ jobs:
           # A diagnosis run posts this check on the same SHA, so it must not
           # pass with AppArmor off or a floor other than the declared one.
           OVERRIDDEN: ${{ inputs.disable_apparmor || (inputs.floor_core || '') != '' }}
+          PIN: ${{ vars.PILOT_STABLE_CORE }}
         run: |
+          [ -z "$PIN" ] || echo "::warning::PILOT_STABLE_CORE=$PIN pins the stable leg on PRs; unset it once stable Core passes the nightly"
           echo "floor=$FLOOR pilot=$PILOT overridden=$OVERRIDDEN"
           [ "$OVERRIDDEN" != true ] && [ "$FLOOR" = success ] && [ "$PILOT" = success ]
