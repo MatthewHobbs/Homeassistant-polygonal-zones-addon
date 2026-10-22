@@ -46,10 +46,6 @@ Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, n
 
 Configuration, LAN access, backing up and restoring zones, and how the companion integration reads `/zones.json` are in [`DOCS.md`](./DOCS.md), shown in the add-on's **Documentation** tab in Home Assistant.
 
-## Screenshots
-
-- Editing a zone: ![Screenshot while editing a zone](../screenshots/screenshot-edit.png)
-
 ## Roadmap
 
 Planned improvements (UI polish, multi-shape zones, multiple zone files, etc.) are tracked as [GitHub issues](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/issues). Recent releases are documented in the [CHANGELOG](./CHANGELOG.md).

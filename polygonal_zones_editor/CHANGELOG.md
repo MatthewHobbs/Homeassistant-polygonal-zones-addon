@@ -259,8 +259,7 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 
 ## 0.5.0 — 2026-09-26
 
-- **Added: tracker positions on the map now refresh while the editor is open
- .** Until now the positions of `overlay_entities` were read once when the
+- **Added: tracker positions on the map now refresh while the editor is open.** Until now the positions of `overlay_entities` were read once when the
   page loaded and a marker stayed put until you reloaded. A new option,
   `tracker_refresh_seconds` (default 60), sets how often an open editor re-reads
   them and moves the markers in place. `0` keeps the old load-once behaviour.
@@ -597,7 +596,7 @@ Installation and correctness: a batch of owned P0 fixes from this week's review.
 
 ### Security
 
-- Reintroduced a custom AppArmor profile, this time built as a **deny-list rather than an allow-list**. The profile grants the same general access that `docker-default` grants (`file, signal, network, capability`) and then explicitly denies the specific paths and operations a map-drawing addon has no legitimate need for: reads of `/etc/shadow`/`/etc/gshadow`, writes to `/root`/`/home`/`/boot`/`/sys/kernel`/`/proc/sys/kernel`, and the `mount`/`umount`/`ptrace` syscalls. This is strictly better than `docker-default` alone: an exploit inside the addon sandbox can't read hashed passwords, escape to the host filesystem, tamper with kernel parameters, mount filesystems, or inject into other processes: while avoiding the allow-list pitfall that took the addon offline in 0.2.16–0.2.21 (where any path the Python runtime or s6-overlay needed that wasn't in the allow-list silently failed).
+- Reintroduced a custom AppArmor profile, this time built as a **deny-list rather than an allow-list**. The profile grants the same general access that `docker-default` grants (`file, signal, network, capability`) and then explicitly denies the specific paths and operations a map-drawing addon has no legitimate need for: reads of `/etc/shadow`/`/etc/gshadow`, writes to `/root`/`/home`/`/boot`/`/sys/kernel`/`/proc/sys/kernel`, and the `mount`/`umount`/`ptrace` syscalls. This is strictly better than `docker-default` alone: an exploit inside the addon sandbox can't read hashed passwords, escape to the host filesystem, tamper with kernel parameters, mount filesystems, or inject into other processes, while avoiding the allow-list pitfall that took the addon offline in 0.2.16–0.2.21 (where any path the Python runtime or s6-overlay needed that wasn't in the allow-list silently failed).
 
 ### Refactor
 
@@ -664,7 +663,7 @@ Installation and correctness: a batch of owned P0 fixes from this week's review.
 ### Security
 
 - **Breaking: direct LAN access to the addon is now opt-in.** `config.yaml`'s default port mapping `8000/tcp: 8000` is now `8000/tcp: null`, so the Supervisor does not publish the port to the host network by default. Users who rely on `curl` backups or run the companion integration in another container must enable the port under **Settings → Add-ons → Polygonal Zones → Network** and choose a host port. Ingress (the `Open Web UI` button and the companion integration running under the same HA install) is unaffected.
-- `trusted_proxies` now refuses wildcard and ingress-IP values (`*`, `0.0.0.0/0`, `::/0`, `172.30.32.2`). Fixed: ingress is decided by the connecting address. The parser drops these entries with a logged error and keeps the add-on running with the safe ones, so a typo can no longer lock you out.
+- `trusted_proxies` now refuses wildcard and ingress-IP values (`*`, `0.0.0.0/0`, `::/0`, `172.30.32.2`). Refusing them closed a way around `save_token`. The parser drops these entries with a logged error and keeps the add-on running with the safe ones, so a typo can no longer lock you out.
 - `/data/options.json` is no longer `chmod o+r`'d after boot. The previous belt-and-braces made the file (which contains `save_token` when configured) world-readable inside the container. If `chown app:app` fails (read-only mount, unexpected FS), `services.d/web/run`'s existing fallback to root-run handles readability without a world-readable secret.
 - Shipped a tailored AppArmor profile (`apparmor.txt`). The Supervisor loads it in place of the generic `docker-default`. The profile denies writes outside `/data` and `/tmp`, denies `ptrace` / `mount` / `net_admin`, and restricts the process to the paths it actually needs.
 
@@ -711,7 +710,7 @@ curl -X POST -H 'Content-Type: application/json' \
 
 ## 0.2.8 — 2026-04-18
 
-- **Bug fix**: zones failed to load with "Failed to load zones: check the log" after upgrading to 0.2.6. The /config.json refactor accidentally moved the `map` and `editableLayers` handles into a callback scope, so other functions (`render_zone_list`, `save_zones`, etc.) couldn't see them and threw `ReferenceError`. They are now declared at module scope and assigned once /config.json returns. The CI smoke test only boots the server: it doesn't load the page in a browser: so this slipped through.
+- **Bug fix**: zones failed to load with "Failed to load zones: check the log" after upgrading to 0.2.6. The /config.json refactor accidentally moved the `map` and `editableLayers` handles into a callback scope, so other functions (`render_zone_list`, `save_zones`, etc.) couldn't see them and threw `ReferenceError`. They are now declared at module scope and assigned once /config.json returns. The CI smoke test only boots the server (it doesn't load the page in a browser), so this slipped through.
 
 ## 0.2.7 — 2026-04-18
 

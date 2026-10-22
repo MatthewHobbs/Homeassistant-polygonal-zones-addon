@@ -119,7 +119,7 @@ A restore must be sent as `Content-Type: application/json`, as above; any other 
 # First request
 curl -D headers1.txt -H 'X-Save-Token: <yourtoken>' \
   http://<ha-host>:8000/zones.json > zones.json
-etag=$(awk -F': ' '/^ETag: /{print $2}' headers1.txt | tr -d '\r')
+etag=$(awk -F': ' 'tolower($1)=="etag"{print $2}' headers1.txt | tr -d '\r')
 
 # Later requests: 304 means no change, use the cached copy
 curl -I -H 'X-Save-Token: <yourtoken>' -H "If-None-Match: $etag" \
@@ -142,7 +142,7 @@ Each device appears on the map as a marker with a dashed ring showing its report
 
 Click a marker for its popup:
 
-- the position error, and the battery level when the tracker reports one;
+- the position error and battery level, when the tracker reports them;
 - **Here since**, when it arrived where it is now. Movement within twice its position error, or 20 m if that is more, is ignored.
 
 Working out **Here since** reads up to 24 hours of that tracker's history from Home Assistant when you open the popup, and again if it moves while open. Nothing is stored. The line reads:
@@ -248,13 +248,12 @@ A conflict means another session saved first. Saving stays refused until you rel
 - reload the page and re-apply your changes; or
 - download, reload, and use **Replace zones from file** to put the downloaded zones back. This replaces every zone with the file's zones and discards the other session's changes.
 
-**Replace zones from file** is always available. It replaces every zone with the zones in a file you choose.
 
 ### Zones file
 
 The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion integration reads this file. See **Backing up / restoring zones with curl** for backups, and **Privacy and data** for what Home Assistant backups keep.
 
-Each zone has a stable `properties.id`, filled in by the add-on when missing. A position is `[longitude, latitude]`. A third number (altitude) is accepted and dropped on save. Four or more values in a position are refused with `422`. Ids must be unique, and rings must be closed.
+Each zone has a stable `properties.id`, filled in by the add-on when missing. A position is `[longitude, latitude]`. A third number (altitude) is accepted and dropped on save. Four or more values in a position are refused with `422`. A save is refused unless every feature is a Polygon or MultiPolygon with closed rings and at most 1000 vertices, and names and ids are unique.
 
 ### Features
 

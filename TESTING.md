@@ -26,7 +26,7 @@ The smoke step in `build.yml` boots the container on each arch's native runner w
 
 ## Supervisor pilot
 
-`.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). Each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). The pilot installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor, on a newer parser and kernel than HA OS ships.
+`.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). On PRs, Fridays and manual runs each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). The pilot installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor, on a newer parser and kernel than HA OS ships.
 
 Every PR, every Friday and every manual run uses the full matrix (both arches, both legs). The other nightly runs cover amd64 against stable Core only. The `Supervisor pilot` job passes only when every leg passes.
 
