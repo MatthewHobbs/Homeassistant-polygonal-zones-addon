@@ -22,4 +22,13 @@ check "a new package missing from the lock is refused" refuse:"httpx==0.28.1" 'r
 check "names compare case and separator blind" pass 'Pytest_Cov==7.1.0\n' "$LOCK"
 check "ranges and comments are ignored" pass '# tools\nstarlette>=1.8\nruff==0.17.1  # linter\n' "$LOCK"
 check "a version prefix does not count as a match" refuse:"ruff==0.17" 'ruff==0.17\n' "$LOCK"
+check "a pin with extras is checked by its name" refuse:"coverage==9.9" 'coverage[toml]==9.9\n' "$LOCK"
+check "a file with no pins is refused" refuse:"no name==version pins" '# nothing\nstarlette>=1.8\n' "$LOCK"
+if out=$(./check-lock-pins.sh "$tmp/nonexistent" "$tmp/lock" 2>&1); then
+  echo "not ok - a missing requirements file passed"; fails=$((fails + 1))
+elif [[ "$out" == "::error::cannot read"* ]]; then
+  echo "ok - a missing requirements file is refused"
+else
+  echo "not ok - a missing requirements file: $out"; fails=$((fails + 1))
+fi
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }

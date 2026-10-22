@@ -282,6 +282,8 @@ async def main():
             if "500 (Internal Server Error)" in errors[i]:
                 del errors[i]
                 break
+        else:
+            fail("the forced 500 was not logged; the exemption would hide a real one", errors)
 
         if errors:
             fail("JS errors during page load:", errors)
