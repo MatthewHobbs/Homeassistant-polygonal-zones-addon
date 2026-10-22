@@ -450,7 +450,8 @@ function setup_editing(map, editableLayers) {
         render_zone_list();
         mark_dirty();
 
-        delete_load_btn();
+        // After a failed load the button is the only way to enable Save.
+        if (zones_loaded) delete_load_btn();
     });
 }
 
@@ -487,10 +488,15 @@ function edit_zone_event(e) {
         layer.pm.disable();
         // An empty box leaves the zone unnamed: two zones named "" would be
         // refused on save as duplicates.
+        const old_name = layer.feature.properties.name;
         if (e.detail.name) layer.feature.properties.name = e.detail.name;
         else delete layer.feature.properties.name;
         e.target.setAttribute('name', e.detail.name);
-        mark_dirty();
+        if (layer.feature.properties.name !== old_name) {
+            mark_dirty();
+            // The tracker readout names the zone a device is in.
+            map.fire('pz:zoneschanged');
+        }
     }
 }
 
@@ -535,7 +541,7 @@ function render_zone_list() {
     if (!zone_list.children.length) {
         let empty = document.createElement('p');
         empty.className = 'zone-list-empty';
-        empty.textContent = 'No zones yet — draw one on the map to get started.';
+        empty.textContent = 'No zones yet. Draw one on the map to get started.';
         zone_list.appendChild(empty);
     }
 }
@@ -586,9 +592,18 @@ function save_zones() {
         signal: controller.signal,
     })).then(response => {
         // Stays dirty: the edits are still unsaved.
-        if (response.status === 412) return show_save_state('error',
-            'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.');
-        if (!response.ok) return show_save_state('error', `Save failed (${response.status}).`);
+        if (response.status === 412) {
+            show_save_state('error',
+                'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.');
+            return offer_download(geojson);
+        }
+        if (!response.ok) {
+            // The server's reason (main.py: {"error", "detail"}) is shown as text only.
+            return response.json().catch(() => null).then(body => {
+                const detail = typeof body?.detail === 'string' ? `: ${body.detail}` : '.';
+                show_save_state('error', `Save failed (${response.status})${detail}`);
+            });
+        }
         return response.json().catch(() => null).then(body => {
             show_save_state('success', 'Zones saved.');
             // Only a save that landed moves the editor to the new version: a
@@ -608,12 +623,32 @@ function save_zones() {
             // The server may still have written: say so rather than "not saved".
             ? 'Save timed out. It may not have saved; reload to check before saving again.'
             : `Save failed: ${err.message}`);
+        if (timed_out) offer_download(geojson);
     }).finally(() => {
         clearTimeout(timer);
         save_in_flight = false;
     });
 }
 
+/* Reloading to resolve a conflict discards the edits, so offer them as a file
+ * "Load bulk json" accepts. The control sits in the status line, which the next
+ * save's status text replaces. */
+function offer_download(geojson) {
+    const status = document.getElementById('save-status');
+    if (!status) return;
+    const button = document.createElement('button');
+    button.className = 'btn';
+    button.textContent = 'Download unsaved zones';
+    button.addEventListener('click', () => {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(geojson)], {type: 'application/json'}));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'unsaved-zones.json';
+        link.click();
+        URL.revokeObjectURL(url);
+    });
+    status.appendChild(button);
+}
 
 function show_transient_error(message) {
     // alert() is unreliable inside Home Assistant's ingress iframe (sandboxed

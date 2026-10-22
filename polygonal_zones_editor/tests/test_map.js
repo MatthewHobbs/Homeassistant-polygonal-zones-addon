@@ -147,6 +147,8 @@ function loadMap({ noAbortTimeout = false } = {}) {
     const timers = [];
     const cleared = [];
     let pendingFile = null;
+    // What the download link did, in order: the Blob made, then each click and revoke.
+    const downloads = [];
 
     const layers = [];
     const editableLayers = evented({
@@ -180,6 +182,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
         createElement(tag) {
             const el = tag === 'zone-entry' ? fakeZoneEntry() : fakeElement(tag);
             if (tag === 'input') el.files = [pendingFile];
+            if (tag === 'a') el.click = () => downloads.push({ click: true, href: el.href, download: el.download });
             return el;
         },
         body: {
@@ -220,6 +223,11 @@ function loadMap({ noAbortTimeout = false } = {}) {
         console: { ...console, error: (...a) => logged.push(a.join(' ')) },
         L: { geoJSON, Polygon },
         crypto: require('node:crypto').webcrypto,
+        Blob: class { constructor(parts, opts) { this.parts = parts; this.type = opts?.type; } },
+        URL: {
+            createObjectURL(blob) { downloads.push({ blob }); return 'blob:unsaved'; },
+            revokeObjectURL(url) { downloads.push({ revoked: url }); },
+        },
         AbortSignal: noAbortTimeout ? {} : AbortSignal,
         FileReader: class {
             readAsText(file) { this.onload({ target: { result: file } }); }
@@ -238,6 +246,7 @@ function loadMap({ noAbortTimeout = false } = {}) {
         errors,
         logged,
         calls,
+        downloads,
         isDirty: () => vm.runInContext('isDirty', context),
         zoneList: elements['.zone-list'],
         posts,
@@ -813,4 +822,115 @@ test('first load gives a zone whose id is not text a fresh one', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(unnamed({ id: 5 }))));
     assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
+});
+
+const downloadButton = (m) => m.status.children.find((c) => c.tagName === 'BUTTON');
+
+test('a refused save shows the reason the server gave', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(422, null, { error: 'invalid GeoJSON', detail: 'features[0]: duplicate zone name' });
+    await m.save();
+    assert.equal(m.status.textContent, 'Save failed (422): features[0]: duplicate zone name');
+});
+
+test('a failed save without a readable reason still says it failed', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(500, null, { error: 'write failed' });
+    await m.save();
+    assert.equal(m.status.textContent, 'Save failed (500).');
+});
+
+test('after a 412 the unsaved zones can be downloaded as the saved collection', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(412, '"theirs"');
+    await m.save();
+    const button = downloadButton(m);
+    assert.ok(button, 'no download control after a conflict');
+    assert.deepEqual(m.downloads, [], 'nothing downloads until asked');
+    button.listeners.click[0]();
+    const [made, click, revoked] = m.downloads;
+    assert.deepEqual(JSON.parse(made.blob.parts[0]), JSON.parse(m.posts[0].body));
+    assert.equal(JSON.parse(made.blob.parts[0]).type, 'FeatureCollection');
+    assert.equal(click.href, 'blob:unsaved');
+    assert.match(click.download, /\.json$/, 'bulk load only accepts .json');
+    assert.deepEqual(revoked, { revoked: 'blob:unsaved' });
+});
+
+test('after a timeout the unsaved zones can be downloaded', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.hang();
+    const pending = m.save();
+    m.fireSaveTimeout();
+    await pending;
+    assert.ok(downloadButton(m));
+});
+
+test('a download control is not offered after a clean save', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"saved"');
+    await m.save();
+    assert.equal(downloadButton(m), undefined);
+});
+
+test('drawing after a failed load keeps the bulk-load button', async () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.zonesReply({ reject: true });
+    await m.loadZones();
+    m.map.fire('pm:create', { layer: new Polygon() });
+    assert.ok(!m.calls.includes('delete_load_btn'), 'Save is still refused, so the way out must stay');
+});
+
+test('drawing after a successful load removes the bulk-load button', () => {
+    const m = loadMap();
+    m.setupEditing();
+    m.loadSaved(JSON.parse(collection()));
+    m.map.fire('pm:create', { layer: new Polygon() });
+    assert.ok(m.calls.includes('delete_load_btn'));
+});
+
+test('Done with the name unchanged leaves the editor clean', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, 'A');
+    m.entries()[0].edit_event_handler();
+    assert.equal(m.isDirty(), false);
+});
+
+test('Done on an unnamed zone with an empty box leaves the editor clean', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed({ id: 'a' }))));
+    typeInto(m, 0, '');
+    m.entries()[0].edit_event_handler();
+    assert.equal(m.isDirty(), false);
+});
+
+test('Done with a changed name marks the editor unsaved and re-measures trackers', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, 'B');
+    m.calls.length = 0;
+    m.entries()[0].edit_event_handler();
+    assert.equal(m.isDirty(), true);
+    assert.ok(m.calls.includes('pz:zoneschanged'), 'the tracker readout keeps the old name');
+});
+
+test('Done with the name unchanged does not re-measure trackers', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    typeInto(m, 0, 'A');
+    m.calls.length = 0;
+    m.entries()[0].edit_event_handler();
+    assert.ok(!m.calls.includes('pz:zoneschanged'));
+});
+
+test('the empty zone list invites drawing without an em dash', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection()));
+    assert.equal(m.zoneList.children[0].textContent, 'No zones yet. Draw one on the map to get started.');
 });
