@@ -118,10 +118,10 @@ function attach_tile_error_watch(layer) {
     });
 }
 
-// Default to central Groningen only when no
-// persisted viewport is available AND the user has no existing zones. It's
-// an obvious "not-my-area" signal rather than a plausible-looking wrong
-// location, so users outside the Netherlands know to pan immediately.
+// Default to central Groningen only when no persisted viewport is available
+// AND the user has no existing zones. It's an obvious "not-my-area" signal
+// rather than a plausible-looking wrong location, so users outside the
+// Netherlands know to pan immediately.
 const DEFAULT_CENTER = [53.22, 6.57];
 const DEFAULT_ZOOM = 13;
 
