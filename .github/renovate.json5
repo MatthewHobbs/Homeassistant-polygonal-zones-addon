@@ -8,8 +8,8 @@
   // It also takes GitHub Actions and the Dockerfile's own `FROM` lines, so that neither bot
   // raises a duplicate PR for them. Python stays with Dependabot: requirements-lock.txt and
   // requirements-dev-lock.txt are hash-locked `uv pip compile` outputs installed with
-  // --require-hashes, and Renovate cannot
-  // regenerate those hashes - it would edit the lock and leave it inconsistent.
+  // --require-hashes, and Renovate cannot regenerate those hashes: it would
+  // edit the lock and leave it inconsistent.
   //
   // enabledManagers is deliberately an allow-list. config:recommended enables every manager,
   // which would have Renovate and Dependabot both raising pip PRs.

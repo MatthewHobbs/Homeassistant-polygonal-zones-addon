@@ -276,11 +276,12 @@ async def main():
         if not still_error:
             fail("save error cleared within 2.5s (regression of #123)", errors)
 
-        # Chromium logs the forced 500 as a console error. Exempt only the
-        # entries this step added; a 500 from earlier in the run must still fail.
-        errors[:] = errors[:errors_before_500] + [
-            e for e in errors[errors_before_500:] if "500 (Internal Server Error)" not in e
-        ]
+        # Chromium logs the forced 500 as one console error. Exempt that one
+        # entry: an earlier 500, or a second in this step, must still fail.
+        for i in range(errors_before_500, len(errors)):
+            if "500 (Internal Server Error)" in errors[i]:
+                del errors[i]
+                break
 
         if errors:
             fail("JS errors during page load:", errors)
