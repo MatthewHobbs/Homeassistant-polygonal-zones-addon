@@ -494,6 +494,7 @@ test('a 412 keeps the editor dirty and says why', async () => {
     await m.save();
     assert.equal(m.isDirty(), true);
     assert.match(m.status.textContent, /^Conflict/);
+    assert.match(m.status.textContent, /discards the other session/, 'replacing from file must say what it throws away');
 });
 
 test('a second click while a save is in flight sends nothing', async () => {

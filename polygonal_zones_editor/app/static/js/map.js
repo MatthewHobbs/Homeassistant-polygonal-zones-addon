@@ -595,7 +595,7 @@ function save_zones() {
         // Stays dirty: the edits are still unsaved.
         if (response.status === 412) {
             show_save_state('error',
-                'Conflict: zones changed in another session. Download your zones, reload, then use Load bulk json to put them back, or re-apply your edits.');
+                'Conflict: zones changed in another session. Reload and re-apply your edits, or download yours, reload, and use Replace zones from file (that discards the other session\'s changes).');
             return offer_download();
         }
         if (!response.ok) {
@@ -632,7 +632,7 @@ function save_zones() {
 }
 
 /* Reloading to resolve a conflict discards the edits, so offer them as a file
- * "Load bulk json" accepts. Built on click, so edits made since are in it. The
+ * "Replace zones from file" accepts. Built on click, so edits made since are in it. The
  * control sits in the status line, which the next save's status text replaces. */
 function offer_download() {
     const status = document.getElementById('save-status');
