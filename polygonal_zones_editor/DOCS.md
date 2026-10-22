@@ -206,7 +206,7 @@ A file that is readable but not valid JSON is a different case. The add-on never
 **Recommended: LAN URL with `allow_private_urls: true`.** From companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) the integration has an opt-in boolean option `allow_private_urls` in its advanced settings. Turn it on and point `zone_urls` at the add-on's LAN URL:
 
 - In this add-on: map a host port and set `save_token: <value>`. The integration (v1.15.0 or later) must have the same value in its **Add-on save token** field; otherwise it gets `403`.
-- In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`.
+- In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`. Use the IP address or a `.local` name: the integration sends the token to no other hostname, so `http://homeassistant:8000/…` gets `403`.
 
 The integration refuses URLs that point at private network addresses (an SSRF defence). Loopback, link-local (cloud-metadata), multicast and reserved ranges stay blocked. `allow_private_urls` unlocks only RFC 1918 space (`192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`), which is all a typical home network needs. The request is plain HTTP, so the token crosses your LAN unencrypted (see **Network ports**).
 
