@@ -113,7 +113,8 @@ def load_options() -> dict:
     try:
         with open(OPTIONS_FILE, encoding="utf-8") as f:
             loaded = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    # ValueError covers bad JSON and bytes that are not UTF-8.
+    except (OSError, ValueError, RecursionError):
         _LOGGER.exception("Failed to read %s; starting with default options.", OPTIONS_FILE)
         return {}
     if not isinstance(loaded, dict):

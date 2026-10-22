@@ -121,6 +121,13 @@ def test_load_options_falls_back_on_malformed_json(tmp_options_file, caplog):
     assert any("Failed to read" in rec.message for rec in caplog.records)
 
 
+def test_load_options_falls_back_on_bytes_that_are_not_utf8(tmp_options_file):
+    import helpers
+
+    tmp_options_file.write_bytes(b'{"save_token": "\xff"}')
+    assert helpers.load_options() == {}
+
+
 def test_load_options_falls_back_when_not_an_object(tmp_options_file, caplog):
     import logging
 

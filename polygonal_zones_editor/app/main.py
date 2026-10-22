@@ -437,8 +437,16 @@ def _validate_feature_collection(obj) -> None:
                 seen_ids.add(feature_id)
 
 
+def _drop_altitude(coords):
+    """Positions as [lon, lat]: the integration reads two values per point,
+    and shapely refuses a ring that mixes 2- and 3-value positions."""
+    if coords and not isinstance(coords[0], list):
+        return coords[:2]
+    return [_drop_altitude(c) for c in coords]
+
+
 def _normalise_feature_collection(obj: dict) -> dict:
-    """Stamp `schema_version` and backfill missing `properties.id`.
+    """Stamp `schema_version`, backfill missing `properties.id`, drop altitude.
 
     Runs only on a payload that passed validation. Guarantees that every
     persisted zones.json carries a current `schema_version` and that every
@@ -455,6 +463,8 @@ def _normalise_feature_collection(obj: dict) -> dict:
     # Drop any legacy top-level key so there is a single source of truth.
     obj.pop("schema_version", None)
     for feature in obj.get("features", []):
+        geometry = feature["geometry"]
+        geometry["coordinates"] = _drop_altitude(geometry["coordinates"])
         props = feature.get("properties")
         if not isinstance(props, dict):
             props = {}
@@ -563,9 +573,10 @@ def save_zones_generator(options: dict):
         if if_match:
             current = _current_zones_etag()
             # Strong comparison (RFC 9110 13.1.1): our ETags are never weak,
-            # so a W/ candidate cannot equal one. "*" needs the file to exist.
+            # so a W/ candidate cannot equal one. "*" stands alone and needs the
+            # file to exist.
             candidates = {e.strip() for e in if_match.split(",")}
-            if current is None or not (current in candidates or "*" in candidates):
+            if current is None or not (if_match == "*" or current in candidates):
                 _LOGGER.info(
                     "Conflict on save from %s: client If-Match=%s, current=%s",
                     _loggable(request.client.host or "unknown"),
