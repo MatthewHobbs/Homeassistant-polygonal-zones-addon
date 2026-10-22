@@ -84,7 +84,7 @@ Only requests that come through Home Assistant's ingress (TCP peer `172.30.32.2`
 
 Every rejection looks identical from the outside: `403` and `{"error": "not authorised"}` (deliberately: the response alone must not reveal whether a token is even configured). The precise reason is in the add-on's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
 
-The companion integration can send the header itself as of [PR #95](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/pull/95) (merged 2026-09-27, not yet in a tagged release): see its `zone_source_token` option, bound to this add-on's own origin and never sent elsewhere or across a redirect. Until a release containing it is out, the integration cannot read zones from this add-on over the LAN.
+The companion integration sends the header itself from [v1.15.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.15.0): put this add-on's `save_token` in the integration's **Add-on save token** field. It is sent only to this add-on, never elsewhere or across a redirect. An older integration, or an empty field, gets `403` and loads no zones.
 
 Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the add-on — there is no migration needed.
 
@@ -229,7 +229,7 @@ The add-on serves `/zones.json` from local disk; the companion integration reads
 
 **Recommended (happy path) — LAN URL with `allow_private_urls: true`.** As of companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0), the integration has an opt-in boolean option `allow_private_urls` under its advanced-settings section. Turn it on, point `zone_urls` at the add-on's LAN URL, and you're done:
 
-- In this add-on: map a host port and set `save_token: <value>`. The integration must send the same value as `zone_source_token` (PR #95, not yet in a release); a version that cannot send it gets `403`.
+- In this add-on: map a host port and set `save_token: <value>`. The integration (v1.15.0 or later) must have the same value in its **Add-on save token** field; otherwise it gets `403`.
 - In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`.
 
 The integration includes an SSRF (Server-Side Request Forgery) defence that prevents it from fetching URLs pointing at private network addresses — loopback, link-local (cloud-metadata), multicast, and reserved ranges are still blocked. `allow_private_urls` unlocks only RFC-1918 space (private home-network addresses such as `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`), which is the only space you need for a typical home-network install.
