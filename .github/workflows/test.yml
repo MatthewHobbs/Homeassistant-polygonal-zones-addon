@@ -32,10 +32,10 @@ jobs:
           cache: pip
           cache-dependency-path: |
             polygonal_zones_editor/requirements-lock.txt
-            polygonal_zones_editor/requirements-dev.txt
+            polygonal_zones_editor/requirements-dev-lock.txt
       - name: Install dependencies
         run: |
-          pip install -r polygonal_zones_editor/requirements-dev.txt
+          pip install --require-hashes -r polygonal_zones_editor/requirements-dev-lock.txt
           # The lock the image installs, last, so a dev dependency can't move it.
           pip install --require-hashes -r polygonal_zones_editor/requirements-lock.txt
           # The lock wins over dev dependencies; fail if that leaves one broken.

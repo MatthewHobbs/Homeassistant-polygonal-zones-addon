@@ -2,8 +2,9 @@
 # base images in .github/base-images.yaml are Renovate's (.github/renovate.json5), which can
 # follow a custom YAML field that Dependabot's docker manager cannot.
 #
-# Python stays here: requirements-lock.txt is a hash-locked `uv pip compile` output installed
-# with --require-hashes, and Dependabot understands the requirements.txt/lock pair.
+# Python stays here: requirements-lock.txt and requirements-dev-lock.txt are hash-locked
+# `uv pip compile` outputs installed with --require-hashes, and Dependabot understands the
+# requirements.txt/lock pair.
 version: 2
 updates:
   - package-ecosystem: "pip"
