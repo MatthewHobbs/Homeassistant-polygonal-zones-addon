@@ -32,6 +32,7 @@ REQUIRED_CHECKS=(
   "pytest"
   "lint"
   "shellcheck"
+  "ruff"
   "Build (amd64)"
   "Build (aarch64)"
   "apparmor"
