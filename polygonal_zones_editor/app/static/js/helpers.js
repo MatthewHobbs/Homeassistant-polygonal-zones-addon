@@ -16,12 +16,6 @@ function create_load_btn() {
     document.querySelector('.header').appendChild(load_btn);
 }
 
-function delete_load_btn() {
-    // Every draw calls this, and the button exists only while there are no zones.
-    document.querySelector('#load-btn')?.remove();
-    document.querySelector('#load-text')?.remove();
-}
-
 // A DOM node for a popup or tooltip, so a zone or device name is inserted as
 // text: Leaflet renders a string as HTML, which would run script in a crafted
 // name.

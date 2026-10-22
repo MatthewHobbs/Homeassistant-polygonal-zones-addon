@@ -449,9 +449,6 @@ function setup_editing(map, editableLayers) {
         editableLayers.addLayer(layer);
         render_zone_list();
         mark_dirty();
-
-        // After a failed load the button is the only way to enable Save.
-        if (zones_loaded) delete_load_btn();
     });
 }
 
@@ -492,7 +489,7 @@ function edit_zone_event(e) {
         if (e.detail.name) layer.feature.properties.name = e.detail.name;
         else delete layer.feature.properties.name;
         e.target.setAttribute('name', e.detail.name);
-        if (layer.feature.properties.name !== old_name) {
+        if ((layer.feature.properties.name ?? '') !== (old_name ?? '')) {
             mark_dirty();
             // The tracker readout names the zone a device is in.
             map.fire('pz:zoneschanged');
@@ -546,19 +543,10 @@ function render_zone_list() {
     }
 }
 
-function save_zones() {
-    // Ignored while a save is on its way, before anything below changes what
-    // the user sees.
-    if (save_in_flight) return Promise.resolve();
-    if (!zones_loaded) {
-        show_save_state('error', zones_load_failed ? NOT_LOADED_TEXT.failed : NOT_LOADED_TEXT.pending);
-        return Promise.resolve();
-    }
-
-    close_open_edit();
-    // Use Leaflet's toGeoJSON so the layer's actual geometry type survives
-    // round-trip: reading _latlngs[0] by hand would turn a MultiPolygon into
-    // a single-ring Polygon, losing every ring beyond the first.
+/* The zones on the map as the FeatureCollection a save sends. Leaflet's
+ * toGeoJSON keeps a MultiPolygon's every ring; reading _latlngs[0] by hand
+ * would not. */
+function zones_collection() {
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
@@ -569,7 +557,20 @@ function save_zones() {
         if (src.id) feature.properties.id = src.id;
         features.push(feature);
     });
-    const geojson = {type: "FeatureCollection", features};
+    return {type: "FeatureCollection", features};
+}
+
+function save_zones() {
+    // Ignored while a save is on its way, before anything below changes what
+    // the user sees.
+    if (save_in_flight) return Promise.resolve();
+    if (!zones_loaded) {
+        show_save_state('error', zones_load_failed ? NOT_LOADED_TEXT.failed : NOT_LOADED_TEXT.pending);
+        return Promise.resolve();
+    }
+
+    close_open_edit();
+    const geojson = zones_collection();
 
     const headers = {'Content-Type': 'application/json'};
     if (zones_etag) headers['If-Match'] = zones_etag;
@@ -594,8 +595,8 @@ function save_zones() {
         // Stays dirty: the edits are still unsaved.
         if (response.status === 412) {
             show_save_state('error',
-                'Conflict: zones changed in another session. Reload to fetch the current version, then re-apply your edits.');
-            return offer_download(geojson);
+                'Conflict: zones changed in another session. Download your zones, reload, then use Load bulk json to put them back, or re-apply your edits.');
+            return offer_download();
         }
         if (!response.ok) {
             // The server's reason (main.py: {"error", "detail"}) is shown as text only.
@@ -623,7 +624,7 @@ function save_zones() {
             // The server may still have written: say so rather than "not saved".
             ? 'Save timed out. It may not have saved; reload to check before saving again.'
             : `Save failed: ${err.message}`);
-        if (timed_out) offer_download(geojson);
+        if (timed_out) offer_download();
     }).finally(() => {
         clearTimeout(timer);
         save_in_flight = false;
@@ -631,21 +632,26 @@ function save_zones() {
 }
 
 /* Reloading to resolve a conflict discards the edits, so offer them as a file
- * "Load bulk json" accepts. The control sits in the status line, which the next
- * save's status text replaces. */
-function offer_download(geojson) {
+ * "Load bulk json" accepts. Built on click, so edits made since are in it. The
+ * control sits in the status line, which the next save's status text replaces. */
+function offer_download() {
     const status = document.getElementById('save-status');
     if (!status) return;
     const button = document.createElement('button');
     button.className = 'btn';
     button.textContent = 'Download unsaved zones';
     button.addEventListener('click', () => {
-        const url = URL.createObjectURL(new Blob([JSON.stringify(geojson)], {type: 'application/json'}));
+        close_open_edit();
+        const url = URL.createObjectURL(new Blob([JSON.stringify(zones_collection())], {type: 'application/json'}));
         const link = document.createElement('a');
         link.href = url;
         link.download = 'unsaved-zones.json';
+        // Attached and revoked late: some browsers drop a detached or
+        // immediately revoked download.
+        document.body.appendChild(link);
         link.click();
-        URL.revokeObjectURL(url);
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
     });
     status.appendChild(button);
 }
@@ -671,11 +677,11 @@ function load_saved_zones(data, restoredViewport) {
     if (skipped) {
         show_transient_error(`${skipped} saved feature(s) are not polygon zones; they were not loaded and the next save drops them.`);
     }
-    if (editableLayers.getLayers().length > 0) {
-        // A remembered view wins over centring on the zones.
-        if (!restoredViewport) map.setView(editableLayers.getBounds().getCenter(), 13);
-    } else {
-        create_load_btn();
+    // Always offered: it is how a conflict download gets back in.
+    create_load_btn();
+    // A remembered view wins over centring on the zones.
+    if (editableLayers.getLayers().length > 0 && !restoredViewport) {
+        map.setView(editableLayers.getBounds().getCenter(), 13);
     }
 }
 
@@ -756,7 +762,6 @@ function load_bulk_json() {
             render_zone_list();
             mark_dirty();
             map.setView(editableLayers.getBounds().getCenter(), 13);
-            delete_load_btn();
         };
         reader.readAsText(file);
     });

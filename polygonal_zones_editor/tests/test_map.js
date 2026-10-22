@@ -25,7 +25,10 @@ function fakeElement(tag) {
         children: [],
         get innerHTML() { return ''; },
         set innerHTML(_v) { this.children = []; },
-        textContent: '',
+        // Like the DOM: setting text replaces the children.
+        _text: '',
+        get textContent() { return this._text; },
+        set textContent(v) { this._text = v == null ? '' : String(v); this.children = []; },
         listeners,
         // Like the DOM: attribute values are stored as strings.
         setAttribute(k, v) { this.attributes[k] = String(v); },
@@ -235,7 +238,6 @@ function loadMap({ noAbortTimeout = false } = {}) {
         text_element: (text) => ({ text }),
         pz_layer_polygons: () => [{}],
         pz_layer_area_m2: (layer) => layer.area || 0,
-        delete_load_btn: () => calls.push('delete_load_btn'),
         create_load_btn: () => calls.push('create_load_btn'),
     });
     vm.runInContext(MAP_JS, context);
@@ -323,7 +325,6 @@ test('bulk load of polygons replaces the zones and centres on them at zoom 13', 
     assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['A', 'B']);
     assert.deepEqual(m.calls.filter((c) => Array.isArray(c)), [['setView', 13]]);
     assert.ok(!m.calls.includes('fitBounds'), 'setView overrides fitBounds; it is not needed');
-    assert.ok(m.calls.includes('delete_load_btn'));
     assert.equal(m.isDirty(), true);
 });
 
@@ -851,12 +852,47 @@ test('after a 412 the unsaved zones can be downloaded as the saved collection', 
     assert.ok(button, 'no download control after a conflict');
     assert.deepEqual(m.downloads, [], 'nothing downloads until asked');
     button.listeners.click[0]();
-    const [made, click, revoked] = m.downloads;
+    const [made, click] = m.downloads;
     assert.deepEqual(JSON.parse(made.blob.parts[0]), JSON.parse(m.posts[0].body));
     assert.equal(JSON.parse(made.blob.parts[0]).type, 'FeatureCollection');
     assert.equal(click.href, 'blob:unsaved');
     assert.match(click.download, /\.json$/, 'bulk load only accepts .json');
-    assert.deepEqual(revoked, { revoked: 'blob:unsaved' });
+    assert.equal(m.downloads.length, 2, 'revoked before the browser could start the download');
+    m.timers.filter((t) => t.ms === 10000).forEach((t) => t.fn());
+    assert.deepEqual(m.downloads[2], { revoked: 'blob:unsaved' });
+});
+
+test('a second conflict leaves one download control, not two', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(412, '"theirs"');
+    await m.save();
+    await m.save();
+    assert.equal(m.status.children.filter((c) => c.textContent === 'Download unsaved zones').length, 1);
+});
+
+test('the download holds edits made after the conflict', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(412, '"theirs"');
+    await m.save();
+    m.layers.push(new Polygon(polygon('B')));
+    downloadButton(m).listeners.click[0]();
+    const names = JSON.parse(m.downloads[0].blob.parts[0]).features.map((f) => f.properties.name);
+    assert.deepEqual(names, ['A', 'B']);
+});
+
+test('the conflict download loads back over the other session\'s zones', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('Mine'))));
+    m.reply(412, '"theirs"');
+    await m.save();
+    downloadButton(m).listeners.click[0]();
+    const file = m.downloads[0].blob.parts[0];
+    const after = withExistingZone();
+    after.bulkLoad(file);
+    assert.deepEqual(after.errors, []);
+    assert.deepEqual(after.layers.map((l) => l.feature.properties.name), ['Mine']);
 });
 
 test('after a timeout the unsaved zones can be downloaded', async () => {
@@ -877,21 +913,12 @@ test('a download control is not offered after a clean save', async () => {
     assert.equal(downloadButton(m), undefined);
 });
 
-test('drawing after a failed load keeps the bulk-load button', async () => {
+test('bulk load is offered after a load that found zones', () => {
+    // A conflict download goes back in through it, after a reload that
+    // brings the other session's zones.
     const m = loadMap();
-    m.setupEditing();
-    m.zonesReply({ reject: true });
-    await m.loadZones();
-    m.map.fire('pm:create', { layer: new Polygon() });
-    assert.ok(!m.calls.includes('delete_load_btn'), 'Save is still refused, so the way out must stay');
-});
-
-test('drawing after a successful load removes the bulk-load button', () => {
-    const m = loadMap();
-    m.setupEditing();
-    m.loadSaved(JSON.parse(collection()));
-    m.map.fire('pm:create', { layer: new Polygon() });
-    assert.ok(m.calls.includes('delete_load_btn'));
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    assert.ok(m.calls.includes('create_load_btn'));
 });
 
 test('Done with the name unchanged leaves the editor clean', () => {
@@ -905,6 +932,14 @@ test('Done with the name unchanged leaves the editor clean', () => {
 test('Done on an unnamed zone with an empty box leaves the editor clean', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection(unnamed({ id: 'a' }))));
+    typeInto(m, 0, '');
+    m.entries()[0].edit_event_handler();
+    assert.equal(m.isDirty(), false);
+});
+
+test('Done on a zone saved with a null name and an empty box leaves the editor clean', () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(unnamed({ name: null, id: 'a' }))));
     typeInto(m, 0, '');
     m.entries()[0].edit_event_handler();
     assert.equal(m.isDirty(), false);
