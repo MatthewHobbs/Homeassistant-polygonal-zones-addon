@@ -27,10 +27,11 @@ def resolve_log_level(value) -> int:
 
 
 def configure_logging(level: int = logging.INFO) -> None:
-    """Configure the root logger once.
+    """Configure the root logger's handler and level.
 
-    Call exactly once from ``__main__``. Uses ``logging.basicConfig`` so it
-    no-ops if handlers are already attached (e.g. by test frameworks).
+    ``__main__`` calls it twice: at the default level before options load,
+    then with the configured level. ``logging.basicConfig`` adds no second
+    handler when one is already attached (e.g. by test frameworks).
     """
     logging.basicConfig(
         level=level,
@@ -110,9 +111,10 @@ def load_options() -> dict:
     if not os.path.exists(OPTIONS_FILE):
         return {}
     try:
-        with open(OPTIONS_FILE) as f:
+        with open(OPTIONS_FILE, encoding="utf-8") as f:
             loaded = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    # ValueError covers bad JSON and bytes that are not UTF-8.
+    except (OSError, ValueError, RecursionError):
         _LOGGER.exception("Failed to read %s; starting with default options.", OPTIONS_FILE)
         return {}
     if not isinstance(loaded, dict):

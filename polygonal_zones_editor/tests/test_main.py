@@ -96,6 +96,25 @@ def test_zones_json_returns_last_modified(ingress_client, tmp_zones_file):
     )
 
 
+def test_zones_json_last_modified_comes_from_the_file_it_read(
+    ingress_client, tmp_zones_file, monkeypatch
+):
+    # A save that lands between the open and a path stat would pair these
+    # bytes with the next save's date; stat by path stands in for that save.
+    os.utime(tmp_zones_file, (1_000_000_000, 1_000_000_000))
+    real_stat = os.stat
+
+    def _stat(path, *args, **kwargs):
+        if os.fspath(path) == str(tmp_zones_file):
+            return os.stat_result((0,) * 8 + (2_000_000_000, 0))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", _stat)
+    response = ingress_client.get("/zones.json")
+    assert response.status_code == 200
+    assert response.headers["last-modified"] == formatdate(1_000_000_000, usegmt=True)
+
+
 def test_zones_json_returns_304_on_matching_if_none_match(ingress_client, tmp_zones_file):
     """Integration polling idiom (#119): pass the previous ETag via
     If-None-Match; the addon returns 304 with no body so the poll
@@ -178,6 +197,79 @@ def test_save_with_stale_if_match_returns_412(ingress_client, tmp_zones_file):
     # The 412 response must surface the current ETag so the client can
     # refetch and recover without a separate GET.
     assert r.headers.get("etag") == body["current_etag"]
+
+
+def test_save_with_if_match_wildcard_succeeds(ingress_client, tmp_zones_file):
+    # RFC 9110 13.1.1: "*" matches whenever the resource exists.
+    r = ingress_client.post("/save_zones", json=_valid_payload(), headers={"If-Match": "*"})
+    assert r.status_code == 200
+    assert [
+        f["properties"]["name"] for f in json.loads(tmp_zones_file.read_text())["features"]
+    ] == ["Home"]
+
+
+def test_save_with_if_match_star_inside_a_list_is_not_a_wildcard(ingress_client, tmp_zones_file):
+    # "*" is only valid on its own; inside a quoted tag or a list it is not.
+    for value in ('"a,*,b"', '"stale", *'):
+        r = ingress_client.post("/save_zones", json=_valid_payload(), headers={"If-Match": value})
+        assert r.status_code == 412, value
+
+
+def test_save_with_if_match_list_containing_current_succeeds(ingress_client, tmp_zones_file):
+    etag = ingress_client.get("/zones.json").headers["etag"]
+    r = ingress_client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"If-Match": f'"stale-one", {etag}'},
+    )
+    assert r.status_code == 200
+
+
+def test_save_with_if_match_list_without_current_returns_412(ingress_client, tmp_zones_file):
+    original = tmp_zones_file.read_text()
+    r = ingress_client.post(
+        "/save_zones",
+        json=_valid_payload(),
+        headers={"If-Match": '"stale-one", "stale-two"'},
+    )
+    assert r.status_code == 412
+    assert tmp_zones_file.read_text() == original
+
+
+def test_save_with_weak_if_match_returns_412(ingress_client, tmp_zones_file):
+    # If-Match uses strong comparison, so a weak validator never matches.
+    etag = ingress_client.get("/zones.json").headers["etag"]
+    r = ingress_client.post("/save_zones", json=_valid_payload(), headers={"If-Match": f"W/{etag}"})
+    assert r.status_code == 412
+
+
+def test_save_with_if_match_wildcard_and_missing_file_returns_412(ingress_client, tmp_zones_file):
+    tmp_zones_file.unlink()
+    r = ingress_client.post("/save_zones", json=_valid_payload(), headers={"If-Match": "*"})
+    assert r.status_code == 412
+    assert not tmp_zones_file.exists()
+
+
+def test_concurrent_saves_with_same_if_match_let_only_one_through(app_factory, tmp_zones_file):
+    import asyncio
+
+    import httpx
+
+    app = app_factory({})
+    etag = TestClient(app, client=INGRESS).get("/zones.json").headers["etag"]
+
+    async def _race():
+        transport = httpx.ASGITransport(app=app, client=INGRESS)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+            return await asyncio.gather(
+                *(
+                    c.post("/save_zones", json=_valid_payload(name), headers={"If-Match": etag})
+                    for name in ("One", "Two")
+                )
+            )
+
+    responses = asyncio.run(_race())
+    assert sorted(r.status_code for r in responses) == [200, 412]
 
 
 def test_save_without_if_match_still_works(ingress_client, tmp_zones_file):
@@ -485,6 +577,19 @@ def _polygon(coords):
             _feature(_polygon([[["oops", 0], [1, 0], [1, 1], ["oops", 0]]])),
             "longitude must be a finite number",
         ),
+        # A third value is altitude; anything else in a position is junk.
+        (
+            _feature(_polygon([[[0, 0, "x"], [1, 0], [1, 1], [0, 0, "x"]]])),
+            "altitude must be a finite number",
+        ),
+        (
+            _feature(_polygon([[[0, 0, True], [1, 0], [1, 1], [0, 0, True]]])),
+            "altitude must be a finite number",
+        ),
+        (
+            _feature(_polygon([[[0, 0, 1, 2, 3], [1, 0], [1, 1], [0, 0, 1, 2, 3]]])),
+            "position must be a list of 2 or 3 numbers",
+        ),
         # MultiPolygon shape
         (
             {
@@ -549,6 +654,29 @@ def test_save_zones_rejects_invalid_geometry_with_detail(
     assert expect_detail_contains in body["detail"]
     # File must not have been written.
     assert tmp_zones_file.read_text() == original
+
+
+def test_save_zones_accepts_altitude_and_stores_two_values(ingress_client, tmp_zones_file):
+    ring = [[0.0, 0.0, 12.5], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0, 12.5]]
+    r = ingress_client.post("/save_zones", json=_feature(_polygon([ring])))
+    assert r.status_code == 200
+    stored = json.loads(tmp_zones_file.read_text())
+    assert stored["features"][0]["geometry"]["coordinates"] == [[p[:2] for p in ring]]
+
+
+def test_save_zones_drops_altitude_in_multipolygons(ingress_client, tmp_zones_file):
+    ring = [[0.0, 0.0, 1], [1.0, 0.0, 1], [1.0, 1.0, 1], [0.0, 0.0, 1]]
+    feature = {
+        "type": "Feature",
+        "properties": {"name": "m"},
+        "geometry": {"type": "MultiPolygon", "coordinates": [[ring]]},
+    }
+    r = ingress_client.post(
+        "/save_zones", json={"type": "FeatureCollection", "features": [feature]}
+    )
+    assert r.status_code == 200
+    stored = json.loads(tmp_zones_file.read_text())
+    assert stored["features"][0]["geometry"]["coordinates"] == [[[p[:2] for p in ring]]]
 
 
 def test_save_zones_rejects_non_finite_coordinate(ingress_client, tmp_zones_file):

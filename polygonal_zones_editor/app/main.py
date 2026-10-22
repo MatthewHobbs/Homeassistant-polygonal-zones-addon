@@ -296,14 +296,14 @@ def _finite_number(value) -> bool:
 
 
 def _validate_position(pos, where: str) -> None:
-    """Validate a single GeoJSON position `[lon, lat]` (altitude ignored).
+    """Validate a single GeoJSON position `[lon, lat]` or `[lon, lat, alt]`.
 
     Raises ValueError with a descriptive, index-bearing message on failure.
     """
-    if not isinstance(pos, list) or len(pos) < 2:
-        raise ValueError(f"{where}: position must be a list of at least 2 numbers")
+    if not isinstance(pos, list) or len(pos) not in (2, 3):
+        raise ValueError(f"{where}: position must be a list of 2 or 3 numbers")
     lon, lat = pos[0], pos[1]
-    for name, value in (("longitude", lon), ("latitude", lat)):
+    for name, value in zip(("longitude", "latitude", "altitude"), pos, strict=False):
         if not _finite_number(value):
             raise ValueError(f"{where}: {name} must be a finite number")
     if not (_LON_MIN <= lon <= _LON_MAX):
@@ -437,8 +437,16 @@ def _validate_feature_collection(obj) -> None:
                 seen_ids.add(feature_id)
 
 
+def _drop_altitude(coords):
+    """Positions as [lon, lat]: the integration reads two values per point,
+    and shapely refuses a ring that mixes 2- and 3-value positions."""
+    if coords and not isinstance(coords[0], list):
+        return coords[:2]
+    return [_drop_altitude(c) for c in coords]
+
+
 def _normalise_feature_collection(obj: dict) -> dict:
-    """Stamp `schema_version` and backfill missing `properties.id`.
+    """Stamp `schema_version`, backfill missing `properties.id`, drop altitude.
 
     Runs only on a payload that passed validation. Guarantees that every
     persisted zones.json carries a current `schema_version` and that every
@@ -455,6 +463,8 @@ def _normalise_feature_collection(obj: dict) -> dict:
     # Drop any legacy top-level key so there is a single source of truth.
     obj.pop("schema_version", None)
     for feature in obj.get("features", []):
+        geometry = feature["geometry"]
+        geometry["coordinates"] = _drop_altitude(geometry["coordinates"])
         props = feature.get("properties")
         if not isinstance(props, dict):
             props = {}
@@ -562,7 +572,11 @@ def save_zones_generator(options: dict):
         if_match = request.headers.get("if-match", "").strip()
         if if_match:
             current = _current_zones_etag()
-            if current != if_match:
+            # Strong comparison (RFC 9110 13.1.1): our ETags are never weak,
+            # so a W/ candidate cannot equal one. "*" stands alone and needs the
+            # file to exist.
+            candidates = {e.strip() for e in if_match.split(",")}
+            if current is None or not (if_match == "*" or current in candidates):
                 _LOGGER.info(
                     "Conflict on save from %s: client If-Match=%s, current=%s",
                     _loggable(request.client.host or "unknown"),
@@ -949,7 +963,9 @@ def zones_json_generator(options: dict):
         # JSONResponse would be a pointless round-trip.
         def _read_zones() -> tuple[bytes, float]:
             with open(ZONES_FILE, "rb") as f:
-                return f.read(), os.stat(ZONES_FILE).st_mtime
+                # fstat, not stat by path: a save renames a new file over the
+                # path, and its date must not be paired with these bytes.
+                return f.read(), os.fstat(f.fileno()).st_mtime
 
         try:
             body, mtime = await run_in_threadpool(_read_zones)

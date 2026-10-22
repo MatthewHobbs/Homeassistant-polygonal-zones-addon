@@ -191,6 +191,21 @@ jobs:
           fi
           echo "OK web service runs as uid=$WEB_UID($WEB_USER)"
 
+          # The web user must not be able to rewrite its own code: nothing
+          # under /app may belong to it or be writable by it. Assignments, so
+          # a failed docker exec stops the step instead of reading as empty.
+          NOT_ROOT=$(docker exec smoke find /app ! -user 0)
+          if [ -n "$NOT_ROOT" ]; then
+            echo "FAIL not owned by root under /app: $NOT_ROOT"
+            exit 1
+          fi
+          APP_WRITABLE=$(docker exec -u 1001 smoke sh -c 'find /app | while read -r p; do [ -w "$p" ] && echo "$p"; done; true')
+          if [ -n "$APP_WRITABLE" ]; then
+            echo "FAIL writable by uid 1001 under /app: $APP_WRITABLE"
+            exit 1
+          fi
+          echo "OK /app is root-owned and read-only to uid 1001"
+
       # Headless-browser smoke: load index.html, ensure no JS errors and that
       # the zones POSTed above actually render. The checks are in
       # scripts/ui_smoke.py.
