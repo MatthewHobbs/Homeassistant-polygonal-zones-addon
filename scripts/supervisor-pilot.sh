@@ -564,8 +564,18 @@ cmd_down() {
 }
 
 cleanup_all() {
+  # Read first: $? is the run's exit status only until the next command.
+  local rc=$?
   cmd_down
-  ((WORKDIR_OWNED)) && rm -rf "$WORKDIR"
+  # A failed run's diagnostics live in the work folder; keep them. CI sets
+  # PILOT_WORKDIR, so it never owns the folder and is unaffected.
+  if ((WORKDIR_OWNED)); then
+    if ((rc == 0)); then
+      rm -rf "$WORKDIR"
+    else
+      log "Kept $WORKDIR (run failed); diagnostics are in $WORKDIR/diagnostics"
+    fi
+  fi
   return 0
 }
 

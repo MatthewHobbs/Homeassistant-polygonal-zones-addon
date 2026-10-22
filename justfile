@@ -18,7 +18,7 @@ venv:
     #!/usr/bin/env bash
     set -euo pipefail
     uv venv --python 3.14 --quiet --allow-existing .venv
-    uv pip install --python .venv --quiet -r polygonal_zones_editor/requirements-dev.txt
+    uv pip install --python .venv --quiet --require-hashes -r polygonal_zones_editor/requirements-dev-lock.txt
     uv pip install --python .venv --quiet --require-hashes -r polygonal_zones_editor/requirements-lock.txt
     uv pip check --python .venv
 
@@ -28,7 +28,7 @@ lint:
     .venv/bin/ruff check
     .venv/bin/ruff format --check
     # Same files as lint.yml's shellcheck job; keep the two lists identical.
-    shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh scripts/test-ha-floor-check.sh scripts/check-version-order.sh scripts/test-check-version-order.sh scripts/changelog-notes.sh scripts/test-changelog-notes.sh
+    shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh scripts/test-ha-floor-check.sh scripts/check-version-order.sh scripts/test-check-version-order.sh scripts/changelog-notes.sh scripts/test-changelog-notes.sh scripts/check-lock-pins.sh scripts/test-check-lock-pins.sh
     shellcheck -x polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms polygonal_zones_editor/rootfs/etc/services.d/web/run polygonal_zones_editor/rootfs/etc/services.d/web/finish
 
 test: venv
@@ -38,5 +38,7 @@ test: venv
     scripts/test-ha-floor-check.sh
     scripts/test-check-version-order.sh
     scripts/test-changelog-notes.sh
+    scripts/test-check-lock-pins.sh
+    scripts/check-lock-pins.sh polygonal_zones_editor/requirements-dev.txt polygonal_zones_editor/requirements-dev-lock.txt
     scripts/changelog-notes.sh "$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml)" >/dev/null
     cd polygonal_zones_editor && node --test tests/test_trackers.js tests/test_map.js

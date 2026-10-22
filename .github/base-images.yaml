@@ -1,8 +1,8 @@
 # Digest-pinned HA base images per architecture. Used by build.yml's matrix
 # generator (whose output release.yml also publishes from) to produce a BUILD_FROM
-# reference that docker pins by sha256. Keeps rebuilds of the same git
-# SHA bit-identical regardless of GHA cache warm-up or a mutable-tag
-# repush upstream.
+# reference that docker pins by sha256, so a mutable-tag repush upstream
+# cannot change the base. Alpine packages installed on top are not pinned,
+# so rebuilds of the same git SHA are not guaranteed identical.
 #
 # This is NOT a Home Assistant convention file — HA's addon linter and
 # Supervisor read polygonal_zones_editor/build.yaml, which keeps plain
