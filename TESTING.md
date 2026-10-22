@@ -9,7 +9,7 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 | `Tests` | `pytest -v` (100% line coverage gated by `--cov-fail-under=100`) | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
 | `Lint addon` | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within its bound, and `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
 | `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches (`scripts/ui_smoke.py`) | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
-| `Supervisor pilot` (nightly / on demand, not yet required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer, on both arches | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
+| `Supervisor pilot` (every PR, nightly, on demand; required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer, on both arches | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
 
 The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
 - `/healthz` returning `ok`
@@ -20,13 +20,13 @@ The smoke step in `build.yml` boots the container on each arch's native runner w
 - no Python traceback in the container log
 - the page loads clean in headless Chromium with no JS errors and renders at least one `<zone-entry>`, drawn and saved through the real Geoman toolbar on both a secure and a non-secure origin
 
-`Tests`, `Lint`, and `Build` gate the release pipeline: a tag push to `v*` can't publish images until all three are green on the tagged SHA. `Supervisor pilot` does not gate release yet — a release can still ship without it.
+`Tests`, `Lint`, and `Build` gate the release pipeline: a tag push to `v*` can't publish images until all three are green on the tagged SHA. `Supervisor pilot` gates the merge instead: it is a required PR check, and the tag is cut from the merged PR's content.
 
-## Supervisor pilot (nightly / on demand)
+## Supervisor pilot
 
 `.github/workflows/supervisor.yml` runs `scripts/supervisor-pilot.sh` in `ghcr.io/home-assistant/devcontainer` on `ubuntu-latest` (amd64) and natively on `ubuntu-24.04-arm` (aarch64). On pull requests, on Fridays and on manual runs each arch runs two legs: Core pinned to whatever `stable.json` currently names, and Core pinned to the floor declared in `config.yaml`'s `homeassistant:` (read via `scripts/ha-floor-check.sh --declared`). It installs the add-on the Supervisor way (from `apps/local`, built from the checkout under test, not the published image), sets its options through the Supervisor API, and probes it through ingress. It enforces AppArmor — this is what caught the profile's unix-socket-mediation break, fixed in 0.4.2 — on a newer parser and kernel than HA OS ships.
 
-The full matrix (both arches, both legs) runs weekly on Friday, on demand (`workflow_dispatch`), and on any PR that changes the pilot itself or the declared floor. The other nights run amd64 against stable Core only. It is not yet a required PR check and `release.yml` does not call it, so it cannot yet block a release.
+The full matrix (both arches, both legs) runs on every PR, weekly on Friday, and on demand (`workflow_dispatch`). The other nights run amd64 against stable Core only. The `Supervisor pilot` job passes only when every leg passes, and it is a required PR check.
 
 ## Manual — live HA OS
 

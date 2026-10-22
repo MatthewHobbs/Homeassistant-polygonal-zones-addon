@@ -36,6 +36,7 @@ REQUIRED_CHECKS=(
   "Build (amd64)"
   "Build (aarch64)"
   "apparmor"
+  "Supervisor pilot"
 )
 
 EXIT_USAGE=2

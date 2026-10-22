@@ -1,24 +1,16 @@
 name: Supervisor pilot
 
 # Install, configure and use the add-on under a real stable-channel
-# Supervisor and Core, in the official add-on devcontainer. NOT a required
-# check yet.
+# Supervisor and Core, in the official add-on devcontainer. Required on
+# every PR, through the `Supervisor pilot` job at the end.
 # All of the logic is in scripts/supervisor-pilot.sh, which runs the same
 # way locally.
 
 on:
-  # A PR that changes the pilot runs it, so the change is proven on the real
-  # runners before it merges. Other PRs never trigger it.
+  # Every PR runs the full matrix: a PR that changes only app/ or rootfs/
+  # can break the add-on under a real Supervisor too.
   pull_request:
-    paths:
-      - .github/workflows/supervisor.yml
-      - scripts/supervisor-pilot.sh
-      - scripts/supervisor_probe.py
-      - scripts/draw_and_save.py
-      - scripts/supervisor-probe-requirements.txt
-      # The floor leg's Core version comes from these two.
-      - scripts/ha-floor-check.sh
-      - polygonal_zones_editor/config.yaml
+    branches: [main]
   workflow_dispatch:
     inputs:
       floor_core:
@@ -82,7 +74,10 @@ jobs:
         # "stable" is whatever stable.json names today; the other leg pins
         # Core to the declared floor under the same stable Supervisor, resolved
         # by the floor job above.
-        core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["stable"]' || format('["stable", "{0}"]', needs.floor.outputs.core)) }}
+        # vars.PILOT_STABLE_CORE pins the "stable" leg on PRs and dispatches,
+        # to unblock them while a new stable Core is broken upstream. Scheduled
+        # runs ignore it, so they show when upstream is fixed.
+        core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["stable"]' || format('["{0}", "{1}"]', (github.event_name != 'schedule' && vars.PILOT_STABLE_CORE) || 'stable', needs.floor.outputs.core)) }}
     env:
       CORE_VERSION: ${{ matrix.core }}
       PILOT_KEEP: "1"
@@ -110,3 +105,24 @@ jobs:
       - name: Tear down
         if: always()
         run: scripts/supervisor-pilot.sh down
+
+  # One stable name for branch protection: the leg names carry the floor's
+  # Core version, which changes with config.yaml.
+  result:
+    name: Supervisor pilot
+    needs: [floor, pilot]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every leg passed
+        env:
+          FLOOR: ${{ needs.floor.result }}
+          PILOT: ${{ needs.pilot.result }}
+          # A diagnosis run posts this check on the same SHA, so it must not
+          # pass with AppArmor off or a floor other than the declared one.
+          OVERRIDDEN: ${{ inputs.disable_apparmor || (inputs.floor_core || '') != '' }}
+          PIN: ${{ vars.PILOT_STABLE_CORE }}
+        run: |
+          [ -z "$PIN" ] || echo "::warning::PILOT_STABLE_CORE=$PIN pins the stable leg on PRs; unset it once stable Core passes the nightly"
+          echo "floor=$FLOOR pilot=$PILOT overridden=$OVERRIDDEN"
+          [ "$OVERRIDDEN" != true ] && [ "$FLOOR" = success ] && [ "$PILOT" = success ]
