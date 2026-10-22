@@ -84,7 +84,7 @@ Only requests that come through Home Assistant's ingress (TCP peer `172.30.32.2`
 
 Every rejection looks identical from the outside: `403` and `{"error": "not authorised"}` (deliberately: the response alone must not reveal whether a token is even configured). The precise reason is in the add-on's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
 
-The companion integration sends the header itself from [v1.15.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.15.0): put this add-on's `save_token` in the integration's **Add-on save token** field. It is sent only to this add-on, never elsewhere or across a redirect. An older integration, or an empty field, gets `403` and loads no zones.
+The companion integration sends the header itself from [v1.15.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.15.0): put this add-on's `save_token` in the integration's **Add-on save token** field (`zone_source_token`). It is sent only to local add-on URLs, never to a public source. An older integration, or an empty field, gets `403` and loads no zones.
 
 Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the add-on — there is no migration needed.
 
@@ -236,7 +236,7 @@ The integration includes an SSRF (Server-Side Request Forgery) defence that prev
 
 #### Alternative — private reverse proxy with TLS on a non-RFC-1918 hostname
 
-If you'd rather not enable `allow_private_urls`, or you're running integration v1.11.x or earlier, you can still front the add-on with a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager add-on) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. Pair with `save_token` and basic-auth at the proxy if the hostname is reachable from the public internet.
+If you'd rather not enable `allow_private_urls`, or you're running integration v1.11.x or earlier, you can still front the add-on with a reverse proxy you control (nginx, Caddy, Traefik, HA's own NGINX Proxy Manager add-on) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly (so the integration's SSRF guard lets it through), but the listener is still on your LAN — no zones data leaves your network. The integration never sends its token to a public hostname, so the proxy must add it to the requests it forwards (nginx: `proxy_set_header X-Save-Token <value>;`). Anyone who can reach the proxy can then read your zones, so keep it off the public internet or put basic-auth in front.
 
 #### Last resort — public-CDN mirror (privacy warning)
 
