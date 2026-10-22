@@ -15,19 +15,19 @@ Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, n
 > indoors, and the companion integration inflates each zone by that figure
 > before testing containment.
 >
-> **Good fit:** property boundaries, yards, paddocks, car parks — anything
+> **Good fit:** property boundaries, yards, paddocks and car parks: anything
 > roughly 20 m across or more, where the question is "is it here or not".
 >
 > **Poor fit:** rooms inside a building, or anything needing pinpoint accuracy.
 > A 4 m room is smaller than a stationary phone's error circle; adjacent rooms
 > will swap at random, and a car on the driveway can match an indoor zone. If
 > you want room-level presence, Wi-Fi access-point association, Bluetooth room
-> sensors or mmWave occupancy sensors are the right tools — no amount of careful
+> sensors or mmWave occupancy sensors are the right tools. No amount of careful
 > drawing fixes a positioning limit. See [DOCS.md](DOCS.md) for the detail.
 
 > **Fork Notice**
 >
-> This add-on is a community-maintained continuation of the original [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon), which was deprecated by its original author. This fork is being maintained to address current issues — including the OpenStreetMap tile referrer policy change that broke map rendering in the upstream project.
+> This add-on is a community-maintained continuation of the original [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon), which was deprecated by its original author. This fork is maintained to address current issues, including the OpenStreetMap tile referrer policy change that broke map rendering in the upstream project.
 >
 > Maintained fork: [MatthewHobbs/Homeassistant-polygonal-zones-addon](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon)
 >
@@ -44,13 +44,11 @@ Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, n
 
 ## Documentation
 
-Full user documentation — configuration, LAN access, securing `/save_zones`, backing up and restoring zones, and how the companion integration consumes `/zones.json` — lives in [`DOCS.md`](./DOCS.md) and is rendered in the addon's **Documentation** tab in Home Assistant.
+Configuration, LAN access, backing up and restoring zones, and how the companion integration reads `/zones.json` are in [`DOCS.md`](./DOCS.md), shown in the add-on's **Documentation** tab in Home Assistant.
 
 ## Screenshots
 
-- Viewing all zones: ![Screenshot while viewing all zones](../screenshots/screenshot-view.png)
 - Editing a zone: ![Screenshot while editing a zone](../screenshots/screenshot-edit.png)
-- Delete button and its options: ![Screenshot of delete button](../screenshots/screenshot-delete-button.png)
 
 ## Roadmap
 

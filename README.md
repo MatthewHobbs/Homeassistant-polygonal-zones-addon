@@ -13,7 +13,7 @@
 > **Fork Notice**
 >
 > This repository is a fork of [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon),
-> which was deprecated by its original author. This fork is being maintained to address current issues — including
+> which was deprecated by its original author. This fork is maintained to address current issues, including
 > the OpenStreetMap tile referrer policy change that broke map rendering in the upstream project.
 
 This repository contains the code for the Polygonal Zones Add-on.
@@ -32,7 +32,13 @@ _Draw polygonal zones on a map and serve them as GeoJSON for the companion Polyg
 
 ## Releasing
 
-For version-bump PRs, use the helper — it merges the PR, tags the merge commit, and watches the release workflow to completion in one go. A merged version bump still reaches HA users before its images exist on GHCR, for about one release run.
+For version-bump PRs, use the helper. It merges the PR, tags the merge commit, and watches the release workflow to completion. A merged version bump still reaches HA users before its images exist on GHCR, for about one release run.
+
+The helper refuses to merge unless the PR's required checks have passed. The release workflow then refuses to publish unless:
+- the tag is on `main`;
+- its version is above every released tag, and matches `config.yaml`;
+- `CHANGELOG.md` has an entry for it;
+- the tests, lint and build checks are green on the tagged commit.
 
 **From a shell:**
 
@@ -41,11 +47,11 @@ scripts/release-merge.sh <pr-number>             # for real
 scripts/release-merge.sh --dry-run <pr-number>   # preview only
 ```
 
-The script auto-resumes if the PR is already merged (e.g. after a transient failure mid-watch). For PRs that don't bump the version, it just squash-merges (no tag, no release).
+The script resumes if the PR is already merged (for example after a transient failure mid-watch). For PRs that don't bump the version, it squash-merges with no tag and no release.
 
 ### Manual fallback
 
-If you'd rather drive it by hand, push a `vX.Y.Z` git tag whose version matches the current `polygonal_zones_editor/config.yaml`:
+To do it by hand, push a `vX.Y.Z` git tag whose version matches the current `polygonal_zones_editor/config.yaml`:
 
 ```sh
 # Replace X.Y.Z with the version in polygonal_zones_editor/config.yaml
@@ -54,8 +60,8 @@ git push origin vX.Y.Z
 ```
 
 [`.github/workflows/release.yml`](./.github/workflows/release.yml) takes over from there:
-1. Verifies the tag matches `config.yaml`'s version.
-2. Builds multi-arch images (using the same matrix as the regular build workflow, sourced from `polygonal_zones_editor/build.yaml`).
+1. Checks the gates above.
+2. Builds multi-arch images (the same matrix as the build workflow, from `polygonal_zones_editor/build.yaml`).
 3. Pushes them to `ghcr.io/matthewhobbs/{arch}-addon-polygonal_zones:<version>`.
 4. Creates a GitHub Release whose body is the matching section of [`polygonal_zones_editor/CHANGELOG.md`](./polygonal_zones_editor/CHANGELOG.md).
 
