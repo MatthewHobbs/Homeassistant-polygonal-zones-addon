@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.1 — 2026-10-22
+
+Bug and security fixes.
+
+- **Security: the image is rebuilt on the patched Home Assistant base
+  (Alpine 3.24.3).** It fixes published advisories in openssl, curl,
+  nghttp2, zlib, jq and bind.
+- **Security: the add-on can no longer rewrite its own code.** The files
+  under `/app` now belong to root and are read-only to the user the web
+  server runs as.
+- **Fixed: a refused save says why.** The editor shows the reason the
+  add-on gave, for example a duplicate zone name.
+- **Fixed: a save conflict no longer costs you your edits.** After a
+  conflict or a timeout, **Download unsaved zones** saves them as a file.
+  Reload, then use **Replace zones from file** to put them back. That
+  button is now always available, and it replaces every zone.
+- **Fixed: drawing after a failed load no longer hides the way to load
+  zones from a file, and closing an unchanged rename no longer marks the
+  editor unsaved.** A renamed zone also shows its new name in the tracker
+  readout straight away.
+- **Changed: positions are stored as longitude and latitude only.** An
+  altitude is still accepted, and is dropped on save; a position with four
+  or more values is refused. A zones file saved earlier with altitudes
+  keeps them until you save it again in the editor.
+- **Changed: `If-Match: *` and lists of ETags are accepted when saving,**
+  as HTTP allows.
+- **Changed: the web framework is updated to Starlette 1.9.0.**
+
 ## 0.6.0 — 2026-10-21
 
 - **Added: click a tracker on the map to see its details.** The popup shows
