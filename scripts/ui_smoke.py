@@ -261,6 +261,7 @@ async def main():
             else:
                 await route.continue_()
 
+        errors_before_500 = len(errors)
         await page.route("**/*", fail_save)
         await page.evaluate("() => save_zones()")
         await page.wait_for_function(
@@ -275,12 +276,11 @@ async def main():
         if not still_error:
             fail("save error cleared within 2.5s (regression of #123)", errors)
 
-        # Filter out the expected 500 console.error from our own fail_save
-        # route — Chromium logs 'Failed to load resource' on any non-OK
-        # response, and that lands in errors via watch_errors' console
-        # listener. Everything up to the #123 block was asserted clean above;
-        # only post-#123 *unexpected* entries should fail the check.
-        errors[:] = [e for e in errors if "500 (Internal Server Error)" not in e]
+        # Chromium logs the forced 500 as a console error. Exempt only the
+        # entries this step added; a 500 from earlier in the run must still fail.
+        errors[:] = errors[:errors_before_500] + [
+            e for e in errors[errors_before_500:] if "500 (Internal Server Error)" not in e
+        ]
 
         if errors:
             fail("JS errors during page load:", errors)
