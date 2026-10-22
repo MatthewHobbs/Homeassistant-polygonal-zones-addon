@@ -1341,14 +1341,14 @@ def test_overlay_point_keeps_only_map_fields_and_rounds():
 
     p = main._overlay_point(
         "device_tracker.a",
-        _ha_state("device_tracker.a", 51.947133802662975, -0.6274616792121955, 2.34),
+        _ha_state("device_tracker.a", 51.50076543210987, -0.12467654321098, 2.34),
     )
     assert p == {
         "entity_id": "device_tracker.a",
         "name": "Thing",
         "state": "home",
-        "latitude": 51.9471,
-        "longitude": -0.6275,
+        "latitude": 51.5008,
+        "longitude": -0.1247,
         "gps_accuracy": 2.3,
         "battery_level": 42,
     }
@@ -1373,7 +1373,7 @@ def test_overlay_point_keeps_only_map_fields_and_rounds():
 def test_overlay_point_battery(battery, expected):
     import main
 
-    attrs = {"latitude": 51.9, "longitude": -0.6}
+    attrs = {"latitude": 51.5, "longitude": -0.12}
     if battery is not None:
         attrs["battery_level"] = battery
     p = main._overlay_point("device_tracker.a", {"attributes": attrs})
@@ -1389,10 +1389,10 @@ def test_overlay_point_battery(battery, expected):
         {"attributes": "not a dict"},
         {"attributes": {}},
         {"attributes": {"latitude": 1}},
-        {"attributes": {"latitude": "51.9", "longitude": -0.6}},
-        {"attributes": {"latitude": True, "longitude": -0.6}},
-        {"attributes": {"latitude": float("nan"), "longitude": -0.6}},
-        {"attributes": {"latitude": float("inf"), "longitude": -0.6}},
+        {"attributes": {"latitude": "51.5", "longitude": -0.12}},
+        {"attributes": {"latitude": True, "longitude": -0.12}},
+        {"attributes": {"latitude": float("nan"), "longitude": -0.12}},
+        {"attributes": {"latitude": float("inf"), "longitude": -0.12}},
     ],
 )
 def test_overlay_point_rejects_unusable_payloads(payload):
@@ -1410,7 +1410,7 @@ def test_overlay_point_tolerates_bad_accuracy(acc):
         "device_tracker.a",
         {
             "state": "home",
-            "attributes": {"latitude": 51.9, "longitude": -0.6, "gps_accuracy": acc},
+            "attributes": {"latitude": 51.5, "longitude": -0.12, "gps_accuracy": acc},
         },
     )
     assert p is not None and p["gps_accuracy"] is None
@@ -1422,7 +1422,7 @@ def test_overlay_point_falls_back_to_entity_id_for_name():
     p = main._overlay_point(
         "device_tracker.a",
         {
-            "attributes": {"latitude": 51.9, "longitude": -0.6},
+            "attributes": {"latitude": 51.5, "longitude": -0.12},
         },
     )
     assert p["name"] == "device_tracker.a" and p["state"] == "unknown"
@@ -1490,7 +1490,7 @@ def test_trackers_json_tells_the_editor_how_often_to_poll(app_factory, monkeypat
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
     monkeypatch.setattr(
-        main, "_fetch_state", lambda eid, _t: _ha_state(eid, 51.9471338, -0.6274617)
+        main, "_fetch_state", lambda eid, _t: _ha_state(eid, 51.5007654, -0.1246765)
     )
     client = _ingress(
         app_factory(
@@ -1544,7 +1544,7 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
 
     def fake_fetch(entity_id, token):
         asked.append((entity_id, token))
-        return _ha_state(entity_id, 51.9471338, -0.6274617, 5, name=entity_id)
+        return _ha_state(entity_id, 51.5007654, -0.1246765, 5, name=entity_id)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     client = _ingress(
@@ -1578,7 +1578,7 @@ def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypa
     def fake_fetch(entity_id, token):
         if entity_id.endswith("broken"):
             return None
-        return _ha_state(entity_id, 51.9471338, -0.6274617)
+        return _ha_state(entity_id, 51.5007654, -0.1246765)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     client = _ingress(
@@ -1604,7 +1604,7 @@ def test_trackers_json_drops_entities_that_report_no_position(app_factory, monke
     def fake_fetch(entity_id, token):
         if entity_id.endswith("indoors"):
             return {"entity_id": entity_id, "state": "home", "attributes": {}}
-        return _ha_state(entity_id, 51.9471338, -0.6274617)
+        return _ha_state(entity_id, 51.5007654, -0.1246765)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     client = _ingress(
@@ -1635,7 +1635,7 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
             # this fetch, the response could only come after it returned.
             release.wait(timeout=10)
             stalled_returned.set()
-        return _ha_state(entity_id, 51.9471338, -0.6274617)
+        return _ha_state(entity_id, 51.5007654, -0.1246765)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     client = _ingress(
@@ -1668,7 +1668,7 @@ def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
             barrier.wait()
         except threading.BrokenBarrierError:
             return None
-        return _ha_state(entity_id, 51.9471338, -0.6274617)
+        return _ha_state(entity_id, 51.5007654, -0.1246765)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     entities = [f"device_tracker.t{i:02d}" for i in range(2 * main.OVERLAY_FETCH_WORKERS)]
@@ -1697,7 +1697,7 @@ def test_trackers_json_caps_fetches_in_flight_across_all_polls(app_factory, monk
         time.sleep(0.05)
         with lock:
             in_flight["now"] -= 1
-        return _ha_state(entity_id, 51.9471338, -0.6274617)
+        return _ha_state(entity_id, 51.5007654, -0.1246765)
 
     monkeypatch.setattr(main, "_fetch_state", fake_fetch)
     entities = [f"device_tracker.t{i}" for i in range(8)]
@@ -1771,7 +1771,7 @@ def _fake_urlopen(req, timeout=None):
     if isinstance(outcome, BaseException):
         raise outcome
     if outcome is None:
-        outcome = json.dumps(_ha_state(f"device_tracker.{name}", 51.9, -0.6)).encode()
+        outcome = json.dumps(_ha_state(f"device_tracker.{name}", 51.5, -0.12)).encode()
     return _Body(outcome)
 
 

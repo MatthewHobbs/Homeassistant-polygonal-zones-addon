@@ -118,11 +118,11 @@ function attach_tile_error_watch(layer) {
     });
 }
 
-// Default to Groningen (the original upstream author's home) only when no
-// persisted viewport is available AND the user has no existing zones. It's
-// an obvious "not-my-area" signal rather than a plausible-looking wrong
-// location, so users outside the Netherlands know to pan immediately.
-const DEFAULT_CENTER = [52.96523540264812, 6.52002831753822];
+// Default to central Groningen only when no persisted viewport is available
+// AND the user has no existing zones. It's an obvious "not-my-area" signal
+// rather than a plausible-looking wrong location, so users outside the
+// Netherlands know to pan immediately.
+const DEFAULT_CENTER = [53.22, 6.57];
 const DEFAULT_ZOOM = 13;
 
 // Read pz:viewport from PZStorage and validate its shape. Returns an
