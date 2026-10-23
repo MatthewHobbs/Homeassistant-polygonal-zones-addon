@@ -66,6 +66,7 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `overlay_entities` | list of strings | empty | Entity ids (for example `device_tracker.my_car`) to plot on the map. At most 25 are used. See **Plotting live positions on the map**. |
 | `tracker_refresh_seconds` | integer, 0 to 3600 | `60` | Seconds between position updates while the editor is open. `0` loads them once. 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty. |
 | `log_level` | list | `info` | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting. |
+| `push_to_core` | bool | `true` | After every save, send the zones to the Polygonal Zones integration through Home Assistant, with no token to set. It needs an integration version that supports it; until then the editor shows "Not sent automatically" under Save, which is fine if you use a zone URL. Turn off to stop sending. |
 
 ### Network ports
 
