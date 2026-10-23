@@ -33,6 +33,21 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: it would resend the Bearer token to wherever it points."""
+
+    def redirect_request(self, *_args, **_kwargs):
+        return None  # urllib then raises the 3xx as an HTTPError
+
+
+def build_opener() -> urllib.request.OpenerDirector:
+    """No redirects, and no proxy: an http_proxy in the environment must not see the token."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
+OPEN = build_opener().open
+
 # What the editor shows. "off" and "pending" are decided here; the rest come
 # from classify().
 OFF, PENDING, DELIVERED, WAITING, REJECTED, RETRYING = (
@@ -62,7 +77,7 @@ def clean_message(body: bytes) -> str | None:
     """The integration's `message`, made safe to show: plain, short, one line."""
     try:
         parsed = json.loads(body.decode("utf-8", "replace"))
-    except ValueError:
+    except (ValueError, RecursionError):  # deeply nested garbage raises the latter
         return None
     message = parsed.get("message") if isinstance(parsed, dict) else None
     if not isinstance(message, str):
@@ -73,7 +88,7 @@ def clean_message(body: bytes) -> str | None:
 
 def classify(status: int | None, body: bytes) -> Outcome:
     """Map a reply (None: no reply at all) to a state and a retry rule."""
-    if status == 200:
+    if status is not None and 200 <= status < 300:
         return Outcome(DELIVERED, None, NONE)
     if status in (401, 403):
         return Outcome(
@@ -131,7 +146,7 @@ class Pusher:
         *,
         etag_for: Callable[[bytes], str],
         token: str | None = None,
-        opener: Callable = urllib.request.urlopen,
+        opener: Callable = OPEN,
         monotonic: Callable[[], float] = time.monotonic,
         rng: Callable[[], float] = random.random,
     ) -> None:
@@ -147,6 +162,8 @@ class Pusher:
         self._detail: str | None = None
         self._attempt = 0
         self._rejected_etag: str | None = None
+        self._rejected_detail: str | None = None
+        self._waits = 0  # consecutive "no integration yet" replies
         # Nothing sent since this start: the first run always sends, whatever was
         # stored (the integration may have lost its copy meanwhile).
         self._last_ok = -float("inf")
@@ -201,7 +218,10 @@ class Pusher:
             return const.PUSH_WAITING_RETRY_SECONDS
         etag = self._etag_for(data)
         if etag == self._rejected_etag:
-            return None  # refused for exactly these bytes; wait for a change
+            # Refused for exactly these bytes: wait for a change, but say so again,
+            # in case another state replaced the message meanwhile.
+            self._note(REJECTED, self._rejected_detail)
+            return None
         if etag == self._delivered_etag:
             due = self._last_ok + const.PUSH_RESYNC_SECONDS - self._monotonic()
             if due > 0:
@@ -212,15 +232,30 @@ class Pusher:
 
     # --- internals ------------------------------------------------------
 
-    def _loop(self) -> None:  # pragma: no cover - drives run_once with a real thread
+    def _loop(self) -> None:  # pragma: no cover - only repeats _cycle in a real thread
         while True:
-            self._event.clear()
-            delay = self.run_once()
-            self._event.wait(timeout=delay)
+            self._cycle()
+
+    def _cycle(self) -> None:
+        """One turn: clear first, so a save that lands during the send is not lost."""
+        self._event.clear()
+        self._event.wait(timeout=self._guarded_run())
+
+    def _guarded_run(self) -> float | None:
+        """run_once, but whatever goes wrong, the thread lives to try again."""
+        try:
+            return self.run_once()
+        except Exception as err:
+            self._note(RETRYING, "Unexpected error while sending the zones.")
+            _LOGGER.warning(
+                "Unexpected %s while sending the zones; will retry.", type(err).__name__
+            )
+            return const.PUSH_BACKOFF_MAX_SECONDS
 
     def _apply(self, outcome: Outcome, etag: str) -> float | None:
         if outcome.state == DELIVERED:
             self._attempt = 0
+            self._waits = 0
             self._rejected_etag = None
             self._last_ok = self._monotonic()
             self._delivered_etag = etag
@@ -234,15 +269,28 @@ class Pusher:
             self._attempt = 0
         if outcome.schedule == UNTIL_CHANGED:
             self._rejected_etag = etag
+            self._rejected_detail = outcome.detail
+        delay = outcome.delay
+        if outcome.state == WAITING:
+            # The integration has no entry for us (or never did): what it held
+            # before is gone, so the last delivery no longer counts.
+            self._delivered_etag, self._last_ok = None, -float("inf")
+            self._waits += 1
+            if self._waits > const.PUSH_WAITING_FAST_ATTEMPTS:
+                delay = const.PUSH_WAITING_SLOW_RETRY_SECONDS
+        else:
+            self._waits = 0
         self._note(outcome.state, outcome.detail)
         if outcome.schedule == FIXED:
-            return outcome.delay
+            return delay
         if outcome.schedule == BACKOFF:
             return backoff_delay(self._attempt, self._rng)
         return None
 
     def _note(self, state: str, detail: str | None) -> None:
         """Record the state; log only when it changes, never per retry."""
+        if detail and self._token:
+            detail = detail.replace(self._token, "***")  # the integration's text is untrusted
         with self._lock:
             self._state, self._detail = state, detail
             changed = state != self._logged_state

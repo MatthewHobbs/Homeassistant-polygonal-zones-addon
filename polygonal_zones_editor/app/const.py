@@ -87,6 +87,10 @@ PUSH_BACKOFF_JITTER = 0.2
 PUSH_RATE_LIMITED_RETRY_SECONDS = 2.5
 # No integration entry yet, or the integration is not installed: cheap to ask again.
 PUSH_WAITING_RETRY_SECONDS = 60.0
+# After this many of those in a row, ask only every ten minutes: most installs
+# never use the integration's add-on mode, and a save or restart asks at once.
+PUSH_WAITING_FAST_ATTEMPTS = 10
+PUSH_WAITING_SLOW_RETRY_SECONDS = 600.0
 # Home Assistant refused the add-on's access: unlikely to fix itself quickly.
 PUSH_REFUSED_RETRY_SECONDS = 300.0
 # Push again this often even when nothing changed, so an integration entry

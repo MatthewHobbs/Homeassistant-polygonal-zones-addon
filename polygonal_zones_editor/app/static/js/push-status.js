@@ -61,6 +61,8 @@ function pz_push_status_create(deps) {
     const { element, fetch: doFetch, visible } = deps;
     let shown = null; // the text on screen, so an unchanged state is not re-announced
     let pollTimer = null;
+    let latest = 0; // the newest request started; an older one finishing late is ignored
+    const KEEP = Symbol('keep what is on screen');
 
     function render(description) {
         if (!element) return;
@@ -73,13 +75,19 @@ function pz_push_status_create(deps) {
 
     function refresh() {
         if (!visible()) return Promise.resolve();
+        const mine = ++latest;
         const controller = new deps.AbortController();
         const timer = deps.setTimeout(() => controller.abort(), PZ_PUSH_TIMEOUT_MS);
         return Promise.resolve()
             .then(() => doFetch(PZ_PUSH_ENDPOINT, { signal: controller.signal, cache: 'no-store' }))
-            .then((response) => (response.ok ? response.json() : null))
-            .then((status) => render(pz_push_describe(status)))
-            .catch(() => render(null)) // never break the editor over a status line
+            // A refused request keeps what is shown; a reply that is not JSON clears it.
+            .then((response) => (response.ok ? response.json().catch(() => null) : KEEP))
+            .then((status) => {
+                if (mine === latest && status !== KEEP) render(pz_push_describe(status));
+            })
+            // A dropped connection keeps what is shown too: blanking and redrawing a
+            // rejection on every blip would announce it again each time.
+            .catch(() => {})
             .finally(() => deps.clearTimeout(timer));
     }
 

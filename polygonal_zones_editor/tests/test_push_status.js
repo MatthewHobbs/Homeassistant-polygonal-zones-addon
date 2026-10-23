@@ -113,19 +113,40 @@ test('off clears a line that was showing', async () => {
     assert.equal(h.element.className, 'push-status');
 });
 
-test('a failed, refused or garbled reply hides the line and never throws', async () => {
-    const replies = [
-        new Error('network down'),
-        { ok: false, json: () => Promise.resolve({ state: 'pending' }) },
-        { ok: true, json: () => Promise.reject(new SyntaxError('bad json')) },
-    ];
+test('a dropped or refused request keeps what is shown, so a blip does not blank or re-announce it', async () => {
+    const replies = [new Error('network down'), { ok: false, json: () => Promise.resolve({ state: 'off' }) }];
     for (const reply of replies) {
-        const h = harness({ replies: [ok({ state: 'pending' }), reply] });
+        const h = harness({ replies: [ok({ state: 'rejected', detail: 'too many vertices' }), reply] });
         await h.controller.refresh();
-        assert.equal(h.element.textContent, 'Sending to Home Assistant…');
+        const before = h.element.textContent;
+        assert.match(before, /rejected the zones: too many vertices/);
         await h.controller.refresh();
-        assert.equal(h.element.textContent, '');
+        assert.equal(h.element.textContent, before);
+        assert.equal(h.element.sets, 1, 'the text was written again');
     }
+});
+
+test('a reply that is not JSON clears the line and never throws', async () => {
+    const h = harness({
+        replies: [ok({ state: 'pending' }), { ok: true, json: () => Promise.reject(new SyntaxError('bad json')) }],
+    });
+    await h.controller.refresh();
+    assert.equal(h.element.textContent, 'Sending to Home Assistant…');
+    await h.controller.refresh();
+    assert.equal(h.element.textContent, '');
+});
+
+test('an older reply that arrives late does not overwrite a newer one', async () => {
+    let finishOlder;
+    const older = new Promise((resolve) => { finishOlder = resolve; });
+    const h = harness({ replies: [older, ok({ state: 'delivered', in_sync: true })] });
+    const first = h.controller.refresh();
+    const second = h.controller.refresh();
+    await second;
+    assert.match(h.element.textContent, /^Sent to Home Assistant/);
+    finishOlder(ok({ state: 'pending' }));
+    await first;
+    assert.match(h.element.textContent, /^Sent to Home Assistant/, 'the stale reply won');
 });
 
 test('a hidden tab asks nothing', async () => {

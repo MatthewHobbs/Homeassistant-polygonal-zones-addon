@@ -410,17 +410,135 @@ def test_each_state_is_logged_once_not_per_retry(env, caplog):
     assert lines[0][0] == logging.WARNING
 
 
-def test_the_token_never_reaches_a_log_line(env, caplog):
-    body = json.dumps({"message": f"bad bearer {TOKEN}"}).encode()
-    pusher = make(Opener((401, body), (502, b""), (422, body), (200, b"{}")))
+def test_the_token_never_reaches_a_log_line_or_the_status(env, caplog):
+    echoed = json.dumps({"message": f"bad bearer {TOKEN}"}).encode()
+    pusher = make(Opener((401, echoed), (502, b""), (422, echoed), (200, b"{}")))
     with caplog.at_level(logging.DEBUG, logger=push.__name__):
         for n in range(4):
             env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":%d}' % n)
             pusher.run_once()
-    # The integration's own message is shown to the user, but the add-on's own
-    # lines never include the header, the payload or the response body.
-    assert f"Bearer {TOKEN}" not in caplog.text.replace(f"bad bearer {TOKEN}", "")
+            assert TOKEN not in json.dumps(pusher.status())
+    assert TOKEN not in caplog.text
     assert "Authorization" not in caplog.text
+
+
+def test_a_token_echoed_by_the_integration_is_blanked_wherever_it_is_shown(env):
+    body = json.dumps({"message": f"unknown bearer {TOKEN} given"}).encode()
+    pusher = make(Opener((422, body)))
+    pusher.run_once()
+    assert pusher.status()["detail"] == "unknown bearer *** given"
+
+
+# --- hostile or broken replies and servers -------------------------------
+
+
+def test_deeply_nested_garbage_in_a_reply_is_survived():
+    assert push.clean_message(b"[" * 65536) is None
+    outcome = push.classify(422, b"[" * 65536)
+    assert outcome.state == push.REJECTED
+    assert outcome.detail == "The integration refused the zones."
+
+
+def test_an_unexpected_error_cannot_end_the_delivery_thread(env, caplog):
+    pusher = make(Opener())
+
+    def boom():
+        raise RuntimeError(f"surprise with {TOKEN}")
+
+    pusher.run_once = boom
+    with caplog.at_level(logging.WARNING, logger=push.__name__):
+        assert pusher._guarded_run() == const.PUSH_BACKOFF_MAX_SECONDS
+    assert pusher.status()["state"] == push.RETRYING
+    assert "RuntimeError" in caplog.text
+    assert TOKEN not in caplog.text  # only the error's type is logged
+
+
+@pytest.mark.parametrize("returned", [None, 12.5])
+def test_a_normal_run_passes_through_the_guard(env, returned):
+    pusher = make(Opener())
+    pusher.run_once = lambda: returned
+    assert pusher._guarded_run() == returned
+
+
+class Recorder:
+    """A local web server that records what reaches it, answering with a fixed reply."""
+
+    def __init__(self, status=200, location=None, body=b"{}"):
+        import http.server
+        import threading
+
+        outer = self
+        outer.seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def handle_any(self):
+                outer.seen.append(dict(self.headers))
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(status)
+                if location:
+                    self.send_header("Location", location)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_POST = do_GET = handle_any
+
+            def log_message(self, *_args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/x"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def servers():
+    made = []
+
+    def make_one(**kw):
+        made.append(Recorder(**kw))
+        return made[-1]
+
+    yield make_one
+    for each in made:
+        each.close()
+
+
+def test_a_redirect_is_not_followed_and_the_token_goes_nowhere_else(env, monkeypatch, servers):
+    elsewhere = servers()
+    redirecting = servers(status=302, location=elsewhere.url)
+    monkeypatch.setattr(const, "PUSH_ENDPOINT", redirecting.url)
+    pusher = push.Pusher({}, etag_for=etag_for, token=TOKEN, opener=push.OPEN)
+    assert pusher.run_once() == pytest.approx(2.0, abs=0.5)  # a retry, never a delivery
+    assert pusher.status()["state"] == push.RETRYING
+    assert len(redirecting.seen) == 1
+    assert elsewhere.seen == []
+
+
+def test_the_redirect_check_can_fail(servers):
+    """Control: plain urlopen carries the token to the redirect target."""
+    elsewhere = servers()
+    redirecting = servers(status=302, location=elsewhere.url)
+    request = urllib.request.Request(
+        redirecting.url, data=b"{}", method="POST", headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+    urllib.request.urlopen(request, timeout=5)
+    assert any(h.get("Authorization") == f"Bearer {TOKEN}" for h in elsewhere.seen)
+
+
+def test_the_opener_ignores_environment_proxies_and_refuses_redirects(monkeypatch):
+    monkeypatch.setenv("http_proxy", "http://203.0.113.9:3128")
+    monkeypatch.setenv("https_proxy", "http://203.0.113.9:3128")
+    opener = push.build_opener()
+    # An empty ProxyHandler is dropped by urllib; the default one, built from
+    # the environment, would be present and would route the token to the proxy.
+    assert [h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler)] == []
+    redirects = [h for h in opener.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    assert [type(h).__name__ for h in redirects] == ["_NoRedirect"]
 
 
 # --- persisted state ------------------------------------------------------
@@ -554,3 +672,91 @@ def test_exactly_10000_vertices_in_total_save_and_10001_do_not(app_with):
     over = post(client, collection(*([1000] * 9 + [996, 5])))
     assert over.status_code == 422
     assert "more than 10000 vertices in total" in over.json()["detail"]
+
+
+# --- sequences the reviews found ------------------------------------------
+
+
+def test_the_loop_clears_first_so_a_save_during_a_send_is_not_lost(env):
+    import time
+
+    pusher = make(Opener())
+    pusher._event.set()  # a save before this turn
+    pusher.run_once = lambda: 0.2
+    started = time.monotonic()
+    pusher._cycle()
+    assert time.monotonic() - started >= 0.15  # cleared, so it really waited
+
+    def save_during_send():
+        pusher.wake()
+        return 5.0
+
+    pusher.run_once = save_during_send
+    started = time.monotonic()
+    pusher._cycle()
+    assert time.monotonic() - started < 2.0  # the wake that landed mid-send ended the wait
+
+
+def test_reverting_to_refused_zones_shows_the_refusal_again(env):
+    body = json.dumps({"message": "too many vertices"}).encode()
+    pusher = make(Opener((422, body), (502, b"")))
+    refused = env.read_bytes()
+    pusher.run_once()
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"b":1}')
+    pusher.run_once()
+    assert pusher.status()["state"] == push.RETRYING
+    env.write_bytes(refused)
+    assert pusher.run_once() is None
+    assert pusher.status()["state"] == push.REJECTED
+    assert pusher.status()["detail"] == "too many vertices"
+
+
+def test_a_missing_integration_entry_cancels_the_last_delivery(env):
+    pusher = make(Opener((200, b"{}"), (409, b"")))
+    delivered = env.read_bytes()
+    pusher.run_once()
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"b":1}')
+    pusher.run_once()
+    assert pusher.status()["state"] == push.WAITING
+    env.write_bytes(delivered)
+    assert pusher.status()["state"] != push.DELIVERED
+    assert pusher.status()["in_sync"] is False
+
+
+def test_going_back_to_what_the_integration_still_holds_is_sent(env):
+    opener = Opener((200, b"{}"), (502, b""))
+    pusher = make(opener)
+    first = env.read_bytes()
+    pusher.run_once()
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"b":1}')
+    pusher.run_once()
+    assert pusher.status()["state"] == push.RETRYING
+    env.write_bytes(first)
+    assert pusher.run_once() == pytest.approx(const.PUSH_RESYNC_SECONDS, rel=0.01)
+    assert len(opener.requests) == 2  # nothing more to send: it holds these already
+    assert pusher.status()["state"] == push.DELIVERED
+
+
+@pytest.mark.parametrize("code", [200, 201, 202, 204, 299])
+def test_any_2xx_counts_as_delivered(code):
+    assert push.classify(code, b"").state == push.DELIVERED
+
+
+@pytest.mark.parametrize("code", [199, 300, 302, 399])
+def test_codes_outside_2xx_never_count(code):
+    assert push.classify(code, b"").state == push.RETRYING
+
+
+def test_waiting_slows_down_after_ten_asks_and_a_delivery_resets_it(env):
+    opener = Opener(*[(409, b"")] * 12, (200, b"{}"), (409, b""))
+    pusher = make(opener)
+    delays = []
+    for n in range(12):
+        env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":%d}' % n)
+        delays.append(pusher.run_once())
+    assert delays[:10] == [const.PUSH_WAITING_RETRY_SECONDS] * 10
+    assert delays[10:] == [const.PUSH_WAITING_SLOW_RETRY_SECONDS] * 2
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":99}')
+    pusher.run_once()  # delivered
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":100}')
+    assert pusher.run_once() == const.PUSH_WAITING_RETRY_SECONDS  # fast again
