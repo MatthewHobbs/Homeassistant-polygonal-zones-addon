@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 
 from draw_and_save import SMOKE_ZONES, draw_and_save, fail, watch_errors
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 from playwright.async_api import async_playwright
 
 # A name that maps to the same Core but is not loopback, so the page is not a
@@ -348,6 +349,20 @@ async def open_editor(context, origin, ingress, errors, expect_secure):
     count = await page.locator("zone-entry").count()
     if count < 2:
         fail(f"{origin}: expected the 2 smoke zones to render, got {count}", errors)
+    # No integration is installed here, so the add-on's push finds no endpoint
+    # and waits for one. Seeing that on the page shows the pusher, /push_status
+    # and the editor's line agree under a real Supervisor and Core.
+    try:
+        await page.wait_for_function(
+            "() => (document.getElementById('push-status')?.textContent || '')"
+            ".startsWith('Not sent automatically')",
+            timeout=30000,
+        )
+    except PlaywrightTimeout:
+        shown = await page.locator("#push-status").text_content()
+        fail(
+            f"{origin}: the delivery line never said the integration is missing: {shown!r}", errors
+        )
     return page
 
 

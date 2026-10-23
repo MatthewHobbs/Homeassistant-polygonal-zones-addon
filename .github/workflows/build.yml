@@ -154,6 +154,10 @@ jobs:
           # startup if /data/polygonal_zones/zones.json is absent).
           curl -fsS -H "$AUTH" http://127.0.0.1:8000/zones.json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("type")=="FeatureCollection" and isinstance(d.get("features"), list), d; print("OK /zones.json shape")'
 
+          # No Supervisor token in this container, so nothing is ever sent and
+          # the editor's delivery line stays empty.
+          curl -fsS -H "$AUTH" http://127.0.0.1:8000/push_status | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["state"]=="off" and d["detail"] is None, d; print("OK /push_status is off without a Supervisor")'
+
           # /save_zones round-trip with a mix of Polygon and MultiPolygon
           # features. The MultiPolygon exercises the frontend's shape-count
           # indicator and the save path's toGeoJSON-based export (the
