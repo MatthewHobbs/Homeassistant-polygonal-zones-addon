@@ -607,6 +607,8 @@ function save_zones() {
         }
         return response.json().catch(() => null).then(body => {
             show_save_state('success', 'Zones saved.');
+            // Look at the delivery status sooner than the next poll would.
+            window.pz_push_status_after_save?.();
             // Only a save that landed moves the editor to the new version: a
             // 412 carries the other session's ETag, and adopting it would let
             // the next click overwrite their edits. The body carries it too,

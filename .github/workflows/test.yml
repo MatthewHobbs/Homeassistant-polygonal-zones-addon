@@ -66,4 +66,4 @@ jobs:
         # node is preinstalled on ubuntu-latest, same as shellcheck in
         # lint.yml — no explicit version pin, matching that precedent.
         working-directory: polygonal_zones_editor
-        run: node --test tests/test_trackers.js tests/test_map.js
+        run: node --test tests/test_trackers.js tests/test_map.js tests/test_push_status.js
