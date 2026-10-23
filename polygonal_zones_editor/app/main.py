@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from push import Pusher
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
@@ -33,9 +34,11 @@ from const import (
     ALLOWED_IPS,
     DATA_FOLDER,
     DEFAULT_TRACKER_REFRESH_SECONDS,
+    MAX_FEATURES_PER_COLLECTION,
     MAX_HA_REPLY_BYTES,
     MAX_OVERLAY_ENTITIES,
     MAX_SAVE_BYTES,
+    MAX_TOTAL_VERTICES_PER_COLLECTION,
     MAX_TRACKER_REFRESH_SECONDS,
     MIN_TRACKER_REFRESH_SECONDS,
     OVERLAY_COORD_DECIMALS,
@@ -370,8 +373,14 @@ def _validate_feature_collection(obj) -> None:
     if not isinstance(features, list):
         raise ValueError("features must be a list")
 
+    if len(features) > MAX_FEATURES_PER_COLLECTION:
+        raise ValueError(
+            f"features: {len(features)} zones exceeds the cap of {MAX_FEATURES_PER_COLLECTION}"
+        )
+
     seen_names: set[str] = set()
     seen_ids: set[str] = set()
+    collection_vertices = 0
     for idx, f in enumerate(features):
         where = f"features[{idx}]"
         if not isinstance(f, dict) or f.get("type") != "Feature":
@@ -403,6 +412,11 @@ def _validate_feature_collection(obj) -> None:
         if total_vertices > _MAX_VERTICES_PER_FEATURE:
             raise ValueError(
                 f"{where}: vertex count {total_vertices} exceeds cap of {_MAX_VERTICES_PER_FEATURE}"
+            )
+        collection_vertices += total_vertices
+        if collection_vertices > MAX_TOTAL_VERTICES_PER_COLLECTION:
+            raise ValueError(
+                f"{where}: the zones hold more than {MAX_TOTAL_VERTICES_PER_COLLECTION} vertices in total"
             )
 
         props = f.get("properties")
@@ -523,7 +537,7 @@ def _gate(options: dict, request: Request, label: str, check_origin=True) -> Res
     return None
 
 
-def save_zones_generator(options: dict):
+def save_zones_generator(options: dict, pusher: Pusher):
     async def save_zones(request: Request):
         refusal = _gate(options, request, "/save_zones")
         if refusal is not None:
@@ -613,6 +627,7 @@ def save_zones_generator(options: dict):
 
         new_etag = _etag_for_bytes(written)
         _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
+        pusher.wake()  # non-blocking: the save is already done
         return JSONResponse({"status": "ok", "etag": new_etag}, headers={"ETag": new_etag})
 
     return save_zones
@@ -1013,7 +1028,15 @@ async def healthz(_request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-def generate_app(options: dict) -> TransportPeerMiddleware:
+def push_status_generator(pusher: Pusher):
+    async def push_status(_request: Request) -> JSONResponse:
+        # Gated like /config.json by AuthoriseMiddleware (not an exempt path).
+        return JSONResponse(pusher.status(), headers={"Cache-Control": "no-store"})
+
+    return push_status
+
+
+def generate_app(options: dict, pusher: Pusher | None = None) -> TransportPeerMiddleware:
     """Build the ASGI app exactly as it is served.
 
     Proxy headers are applied here rather than by uvicorn, inside the layer
@@ -1022,10 +1045,13 @@ def generate_app(options: dict) -> TransportPeerMiddleware:
     static_folder = "static"
     # Once, so a bad entry is warned about once.
     entities = overlay_entities(options)
+    # Never started here (tests build apps freely); __main__ starts the real one.
+    pusher = pusher or Pusher(options, etag_for=_etag_for_bytes)
     routes = [
-        Route("/save_zones", save_zones_generator(options), methods=["POST"]),
+        Route("/save_zones", save_zones_generator(options, pusher), methods=["POST"]),
         Route("/zones.json", zones_json_generator(options), methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
+        Route("/push_status", push_status_generator(pusher), methods=["GET"]),
         Route("/trackers.json", trackers_json_generator(options, entities), methods=["GET"]),
         Route("/trackers/here_since", here_since_generator(options, entities), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
@@ -1212,6 +1238,12 @@ if __name__ == "__main__":  # pragma: no cover
     # No access log: it records every client's IP and request line at INFO in
     # an add-on log any HA user can read and nothing expires.
     # Port 8000 is what config.yaml's ingress_port and the HEALTHCHECK expect.
+    pusher = Pusher(options, etag_for=_etag_for_bytes)
+    pusher.start()
     uvicorn.run(
-        generate_app(options), host="0.0.0.0", port=8000, access_log=False, proxy_headers=False
+        generate_app(options, pusher=pusher),
+        host="0.0.0.0",
+        port=8000,
+        access_log=False,
+        proxy_headers=False,
     )

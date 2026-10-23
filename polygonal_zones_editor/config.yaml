@@ -55,6 +55,7 @@ options:
   log_level: info
   save_token: ""
   theme: auto
+  push_to_core: true
 schema:
   # Grants nothing; kept so existing configs still validate.
   allow_all_ips: bool
@@ -76,3 +77,7 @@ schema:
   log_level: list(debug|info|warning|error|critical)?
   save_token: password?
   theme: list(auto|light|dark)?
+  # Send the zones to the companion integration after every save, through
+  # Home Assistant, with no token to type. Turn off to leave delivery to the
+  # integration's own zone URL.
+  push_to_core: bool?
