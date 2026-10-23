@@ -68,3 +68,38 @@ OVERLAY_COORD_DECIMALS = 4
 DEFAULT_TRACKER_REFRESH_SECONDS = 60
 MIN_TRACKER_REFRESH_SECONDS = 10
 MAX_TRACKER_REFRESH_SECONDS = 3600
+
+
+# --- Delivery to the integration -------------------------------------------
+# After every save the add-on pushes zones.json to a dedicated endpoint of the
+# companion integration through Core's API, authenticated with the add-on's own
+# Supervisor token: nobody types or stores a secret. See app/push.py.
+PUSH_STATE_FILE = os.path.join(DATA_FOLDER, "push-state.json")
+PUSH_ENDPOINT = f"{SUPERVISOR_API}/polygonal_zones/addon"
+PUSH_TIMEOUT_SECONDS = 20.0
+# The integration's replies are a few dozen bytes; anything bigger is garbage.
+PUSH_REPLY_LIMIT_BYTES = 64 * 1024
+# Transient failures back off from the first figure to the second, with jitter.
+PUSH_BACKOFF_MIN_SECONDS = 2.0
+PUSH_BACKOFF_MAX_SECONDS = 60.0
+PUSH_BACKOFF_JITTER = 0.2
+# The integration allows one write per entry every 2 s.
+PUSH_RATE_LIMITED_RETRY_SECONDS = 2.5
+# No integration entry yet, or the integration is not installed: cheap to ask again.
+PUSH_WAITING_RETRY_SECONDS = 60.0
+# After this many of those in a row, ask only every ten minutes: most installs
+# never use the integration's add-on mode, and a save or restart asks at once.
+PUSH_WAITING_FAST_ATTEMPTS = 10
+PUSH_WAITING_SLOW_RETRY_SECONDS = 600.0
+# Home Assistant refused the add-on's access: unlikely to fix itself quickly.
+PUSH_REFUSED_RETRY_SECONDS = 300.0
+# Push again this often even when nothing changed, so an integration entry
+# created or reset after the last save still receives the zones.
+PUSH_RESYNC_SECONDS = 6 * 3600
+PUSH_DETAIL_MAX_CHARS = 200
+
+# The integration refuses a zone set bigger than either of these, so the
+# editor must too: a save the add-on accepts but the integration rejects would
+# never be delivered.
+MAX_FEATURES_PER_COLLECTION = 500
+MAX_TOTAL_VERTICES_PER_COLLECTION = 10_000

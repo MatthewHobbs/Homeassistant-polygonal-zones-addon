@@ -41,4 +41,4 @@ test: venv
     scripts/test-check-lock-pins.sh
     scripts/check-lock-pins.sh polygonal_zones_editor/requirements-dev.txt polygonal_zones_editor/requirements-dev-lock.txt
     scripts/changelog-notes.sh "$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml)" >/dev/null
-    cd polygonal_zones_editor && node --test tests/test_trackers.js tests/test_map.js
+    cd polygonal_zones_editor && node --test tests/test_trackers.js tests/test_map.js tests/test_push_status.js
