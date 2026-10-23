@@ -227,7 +227,10 @@ class Pusher:
             if due > 0:
                 self._note(DELIVERED, None)
                 return due
-        outcome = classify(*self._post(data))
+        status, body = self._post(data)
+        # Before anything reads or truncates it: a token cut in half by the
+        # length cap would no longer match, and a prefix of it is still a leak.
+        outcome = classify(status, body.replace(self._token.encode(), b"***"))
         return self._apply(outcome, etag)
 
     # --- internals ------------------------------------------------------
@@ -246,10 +249,9 @@ class Pusher:
         try:
             return self.run_once()
         except Exception as err:
-            self._note(RETRYING, "Unexpected error while sending the zones.")
-            _LOGGER.warning(
-                "Unexpected %s while sending the zones; will retry.", type(err).__name__
-            )
+            # Only the type: an exception's message could hold anything. _note logs
+            # when the state changes, so a steady fault is not logged on every try.
+            self._note(RETRYING, f"Unexpected {type(err).__name__} while sending the zones.")
             return const.PUSH_BACKOFF_MAX_SECONDS
 
     def _apply(self, outcome: Outcome, etag: str) -> float | None:
@@ -340,7 +342,7 @@ class Pusher:
         try:
             with open(const.PUSH_STATE_FILE, encoding="utf-8") as f:
                 stored = json.load(f)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return None, None
         if not isinstance(stored, dict):
             return None, None

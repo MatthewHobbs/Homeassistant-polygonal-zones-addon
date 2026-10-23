@@ -447,10 +447,38 @@ def test_an_unexpected_error_cannot_end_the_delivery_thread(env, caplog):
 
     pusher.run_once = boom
     with caplog.at_level(logging.WARNING, logger=push.__name__):
-        assert pusher._guarded_run() == const.PUSH_BACKOFF_MAX_SECONDS
+        assert [pusher._guarded_run() for _ in range(3)] == [const.PUSH_BACKOFF_MAX_SECONDS] * 3
     assert pusher.status()["state"] == push.RETRYING
+    assert pusher.status()["detail"] == "Unexpected RuntimeError while sending the zones."
+    assert len([r for r in caplog.records if r.name == push.__name__]) == 1  # once, not per try
     assert "RuntimeError" in caplog.text
     assert TOKEN not in caplog.text  # only the error's type is logged
+
+
+def test_a_token_cut_by_the_length_cap_leaves_no_prefix(env):
+    message = "x" * 190 + TOKEN
+    pusher = make(Opener((422, json.dumps({"message": message}).encode())))
+    pusher.run_once()
+    detail = pusher.status()["detail"]
+    assert TOKEN[:10] not in detail
+    assert "***" in detail
+
+
+def test_a_state_file_that_recurses_too_deep_is_ignored(env):
+    Path(const.PUSH_STATE_FILE).write_text("[" * 100000)
+    assert make(Opener()).status()["delivered_at"] is None
+
+
+def test_a_non_waiting_failure_resets_the_waiting_count(env):
+    opener = Opener(*[(409, b"")] * 10, (502, b""), (409, b""))
+    pusher = make(opener)
+    for n in range(10):
+        env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":%d}' % n)
+        pusher.run_once()
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":10}')
+    pusher.run_once()  # a transient failure in between
+    env.write_bytes(b'{"type":"FeatureCollection","features":[],"n":11}')
+    assert pusher.run_once() == const.PUSH_WAITING_RETRY_SECONDS  # counting began again
 
 
 @pytest.mark.parametrize("returned", [None, 12.5])
