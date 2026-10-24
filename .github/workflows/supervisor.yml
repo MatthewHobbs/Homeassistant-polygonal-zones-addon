@@ -71,12 +71,10 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["amd64"]' || '["amd64", "aarch64"]') }}
-        # "stable" is whatever stable.json names today; the other leg pins
-        # Core to the declared floor under the same stable Supervisor, resolved
-        # by the floor job above.
-        # vars.PILOT_STABLE_CORE pins the "stable" leg on PRs and dispatches,
-        # to unblock them while a new stable Core is broken upstream. Scheduled
-        # runs ignore it, so they show when upstream is fixed.
+        # "stable" is whatever stable.json names today; the other leg pins the declared
+        # floor under the same Supervisor. vars.PILOT_STABLE_CORE pins the stable leg on
+        # PRs and dispatches while a new stable Core is broken upstream; schedules ignore
+        # it.
         core: ${{ fromJson(github.event.schedule == '37 3 * * 0-4,6' && '["stable"]' || format('["{0}", "{1}"]', (github.event_name != 'schedule' && vars.PILOT_STABLE_CORE) || 'stable', needs.floor.outputs.core)) }}
     env:
       CORE_VERSION: ${{ matrix.core }}

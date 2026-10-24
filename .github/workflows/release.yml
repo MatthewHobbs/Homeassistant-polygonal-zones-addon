@@ -124,12 +124,10 @@ jobs:
 
   build:
     name: Build + smoke
-    # Re-run the multi-arch docker build, boot-smoke and Playwright smoke, each
-    # arch on its native runner, for the tagged SHA. Without this gate, a
-    # release can publish from a SHA whose image has never been booted.
-    # Publish rebuilds the image, so this proves the SHA, not the pushed bytes.
-    # Its `include` output is the arch matrix publish uses, so the two cannot
-    # disagree on which arches exist.
+    # Rebuild, boot-smoke and Playwright-smoke the tagged SHA, each arch natively, so a
+    # release cannot publish from a SHA whose image was never booted. Publish rebuilds,
+    # so this proves the SHA, not the pushed bytes. Its `include` output is publish's
+    # arch matrix.
     uses: ./.github/workflows/build.yml
     permissions:
       contents: read
