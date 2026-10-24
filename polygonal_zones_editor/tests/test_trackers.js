@@ -396,6 +396,12 @@ test('here since shows the time today, and the date too before today', async () 
     );
     assert.equal(pz_here_since_text({ since: today.toISOString(), over_window: true }, now), 'over 24 h');
     assert.equal(pz_here_since_text(null, now), 'unknown');
+    /* A reason says which unknown: no history is not a failed read. */
+    assert.equal(pz_here_since_text({ reason: 'no_history' }, now), 'no history');
+    assert.equal(pz_here_since_text({ reason: 'no_coordinates' }, now), 'no positions recorded');
+    assert.equal(pz_here_since_text({ reason: 'lookup_failed' }, now), 'history unavailable');
+    assert.equal(pz_here_since_text({ reason: 'busy' }, now), 'too many lookups, try again');
+    assert.equal(pz_here_since_text({ reason: 'over_window' }, now), 'unknown');
 
     const { settled } = await openPopup(CAR, reply({ since: new Date().toISOString(), over_window: false }));
     assert.match(settled.at(-1), /^Here since \S/);

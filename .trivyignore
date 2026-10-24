@@ -1,0 +1,8 @@
+# Accepted vulnerabilities in the shipped image, so the release scan does not
+# fail on them. One entry per line: the CVE id, then optionally
+# `exp:<YYYY-MM-DD>` and `statement:<reason>`. Only fixable HIGH/CRITICAL
+# findings fail a release, so an entry here is a deliberate accepted risk, not
+# a way past the gate.
+#
+# Example (commented out, not an acceptance):
+# CVE-2024-00000 exp:2026-12-31 statement:no fix in the pinned base image

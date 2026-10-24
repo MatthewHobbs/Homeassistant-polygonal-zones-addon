@@ -745,6 +745,28 @@ def _get_json(path: str, token: str):
         return None
 
 
+# Entities already named in a warning. The overlay is polled every refresh, so
+# warning each time would fill the log with one broken id.
+_overlay_unreadable: set[str] = set()
+
+
+def _report_unreadable_overlay(entity_id: str) -> None:
+    """Name a configured overlay entity that cannot be read, once.
+
+    A mistyped id or one withheld from the app used to fail at DEBUG only, which
+    looks exactly like a tracker with no position at the default log level.
+    """
+    if entity_id in _overlay_unreadable:
+        return
+    _overlay_unreadable.add(entity_id)
+    _LOGGER.warning(
+        "Overlay entity %s could not be read: check the id in overlay_entities, "
+        "and that the app may read it (homeassistant_api). It will keep being "
+        "retried but is left off the map until it answers.",
+        entity_id,
+    )
+
+
 def _fetch_state(entity_id: str, token: str) -> dict | None:
     return _get_json(f"states/{entity_id}", token)
 
@@ -847,6 +869,29 @@ _HISTORY_MAX_PENDING = 4
 _history_pending = 0
 
 
+def _here_since_reason(reply, since: str | None, over_window: bool) -> str:
+    """Why "here since" has no time, so the popup can say which.
+
+    Four different situations used to look identical: no history, every row
+    without coordinates, the history read failing, and too many lookups running.
+    """
+    if over_window:
+        return "over_window"
+    if since is not None:
+        return "ok"
+    # None means the read failed; an empty or misshapen reply means it succeeded
+    # and there was nothing in it.
+    if reply is None:
+        return "lookup_failed"
+    states = reply[0] if isinstance(reply, list) and reply and isinstance(reply[0], list) else []
+    if not states:
+        return "no_history"
+    if not any(isinstance(st, dict) and _fix(st.get("attributes")) for st in states):
+        return "no_coordinates"
+    # Fixes exist but none carries a usable timestamp: still unknown, not empty.
+    return "unknown"
+
+
 def here_since_generator(options: dict, entities: list[str]):
     async def here_since(request: Request) -> Response:
         refusal = _gate(options, request, "/trackers/here_since")
@@ -864,7 +909,8 @@ def here_since_generator(options: dict, entities: list[str]):
         # One more for ingress, so a token holder finds it harder to crowd out the HA UI.
         if _history_pending >= _HISTORY_MAX_PENDING + allowed_ip(request):
             return JSONResponse(
-                {"since": None, "over_window": False}, headers={"Cache-Control": "no-store"}
+                {"since": None, "over_window": False, "reason": "busy"},
+                headers={"Cache-Control": "no-store"},
             )
         window_start = datetime.now(UTC) - _HERE_SINCE_WINDOW
         start = urllib.parse.quote(window_start.isoformat())
@@ -888,7 +934,12 @@ def here_since_generator(options: dict, entities: list[str]):
             _history_pending -= 1
         since, over_window = _here_since(reply, window_start)
         return JSONResponse(
-            {"since": since, "over_window": over_window}, headers={"Cache-Control": "no-store"}
+            {
+                "since": since,
+                "over_window": over_window,
+                "reason": _here_since_reason(reply, since, over_window),
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     return here_since
@@ -945,6 +996,11 @@ def trackers_json_generator(options: dict, entities: list[str]):
             return found, unavailable
 
         trackers, unavailable = await run_in_threadpool(_gather)
+        # On the event loop, not in the worker: the warned-about set is shared.
+        for entity_id in unavailable:
+            _report_unreadable_overlay(entity_id)
+        for entity_id in set(entities) - set(unavailable):
+            _overlay_unreadable.discard(entity_id)
         return _uncached(
             {
                 "configured": True,

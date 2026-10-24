@@ -206,6 +206,32 @@ jobs:
           # run unverified downloads, so publish must not read it.
           no-cache: true
 
+      - name: Scan the pushed image for known vulnerabilities
+        # Provenance says who built these bytes, not what is in them. OS
+        # packages on the base are unmeasured. Runs before the attestation,
+        # so a failing scan is never signed as shipped. Trivy by digest,
+        # pulling with this job's token: no docker socket needed.
+        # --ignore-unfixed: fail only where a fix exists.
+        env:
+          IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+            -v "$PWD/.trivyignore:/trivyignore:ro" \
+            aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+            image \
+            --quiet --no-progress \
+            --cache-dir /tmp/trivy \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile /trivyignore \
+            --exit-code 1 \
+            "$IMAGE"
+
       # Sign the pushed image with a Sigstore build-provenance attestation
       # (keyless, via GitHub OIDC — no secret to manage).
       # The attestation is pushed to GHCR alongside the image and is

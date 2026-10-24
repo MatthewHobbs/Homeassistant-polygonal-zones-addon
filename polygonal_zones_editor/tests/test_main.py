@@ -1674,6 +1674,28 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
     assert {a[1] for a in asked} == {"stub-token"}
 
 
+def test_trackers_json_warns_once_about_an_unreadable_entity(app_factory, monkeypatch, caplog):
+    import logging
+
+    import main
+
+    monkeypatch.setattr(main, "_overlay_unreadable", set())
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
+    # A 404: the entity does not exist, or the app may not read it. At DEBUG
+    # this was invisible and looked like a tracker with no fix.
+    monkeypatch.setattr(
+        main.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("404"))
+    )
+    client = _ingress(app_factory({"overlay_entities": ["device_tracker.gone"]}))
+
+    with caplog.at_level(logging.WARNING):
+        assert client.get("/trackers.json").json()["unavailable"] == ["device_tracker.gone"]
+        client.get("/trackers.json")
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len([r for r in warnings if "device_tracker.gone" in r.getMessage()]) == 1
+
+
 def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypatch):
     """One unreachable entity must not empty the whole overlay."""
     import main
@@ -2110,7 +2132,7 @@ def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monk
     client, calls = _history_client(app_factory, monkeypatch, reply)
     r = client.get(HERE_SINCE_URL)
     assert r.status_code == 200
-    assert r.json() == {"since": _ts(reply, 1), "over_window": False}
+    assert r.json() == {"since": _ts(reply, 1), "over_window": False, "reason": "ok"}
     assert r.headers["cache-control"] == "no-store"
 
     [(url, auth, timeout)] = calls
@@ -2128,15 +2150,28 @@ def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monk
 
 def test_here_since_endpoint_over_window(app_factory, monkeypatch):
     client, _ = _history_client(app_factory, monkeypatch, _hist((*HERE, 10), (*HERE, 10)))
-    assert client.get(HERE_SINCE_URL).json() == {"since": None, "over_window": True}
+    assert client.get(HERE_SINCE_URL).json() == {
+        "since": None,
+        "over_window": True,
+        "reason": "over_window",
+    }
 
 
-@pytest.mark.parametrize("outcome", [*_FETCH_FAILURES.values(), [], [[]]])
-def test_here_since_endpoint_unreachable_or_empty_is_unknown(app_factory, monkeypatch, outcome):
+@pytest.mark.parametrize("outcome", list(_FETCH_FAILURES.values()))
+def test_here_since_endpoint_a_failed_read_says_so(app_factory, monkeypatch, outcome):
     client, _ = _history_client(app_factory, monkeypatch, outcome)
     r = client.get(HERE_SINCE_URL)
     assert r.status_code == 200
-    assert r.json() == {"since": None, "over_window": False}
+    # Not "no history": the read itself failed, which the popup now says.
+    assert r.json() == {"since": None, "over_window": False, "reason": "lookup_failed"}
+
+
+@pytest.mark.parametrize("outcome", [[], [[]]])
+def test_here_since_endpoint_empty_history_says_no_history(app_factory, monkeypatch, outcome):
+    client, _ = _history_client(app_factory, monkeypatch, outcome)
+    r = client.get(HERE_SINCE_URL)
+    assert r.status_code == 200
+    assert r.json() == {"since": None, "over_window": False, "reason": "no_history"}
 
 
 def test_here_since_answers_unknown_at_once_when_lookups_are_backed_up(app_factory, monkeypatch):
@@ -2154,7 +2189,7 @@ def test_here_since_answers_unknown_at_once_when_lookups_are_backed_up(app_facto
     lan = TestClient(
         app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
     )
-    unknown = {"since": None, "over_window": False}
+    unknown = {"since": None, "over_window": False, "reason": "busy"}
 
     # At the cap a token holder gets unknown at once; ingress has one slot more.
     monkeypatch.setattr(main, "_history_pending", max_)
@@ -2214,7 +2249,7 @@ def test_here_since_with_the_token_is_served(app_factory, monkeypatch):
         app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
     )
     r = client.get(HERE_SINCE_URL, headers={"X-Save-Token": "sekrit"})
-    assert r.json() == {"since": None, "over_window": True}
+    assert r.json() == {"since": None, "over_window": True, "reason": "over_window"}
     assert len(calls) == 1
 
 
@@ -2520,3 +2555,21 @@ def test_save_zones_rejects_more_vertices_in_total_than_the_cap(ingress_client, 
     r = ingress_client.post("/save_zones", json={"type": "FeatureCollection", "features": features})
     assert r.status_code == 422
     assert "vertices in total" in r.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "since", "over_window", "reason"),
+    [
+        (None, None, False, "lookup_failed"),
+        ([], None, False, "no_history"),
+        ([[]], None, False, "no_history"),
+        (_hist((None, None, None)), None, False, "no_coordinates"),
+        (_hist((*HERE, 10)), None, False, "unknown"),
+        (_hist((*HERE, 10)), _ts(_hist((*HERE, 10)), 0), False, "ok"),
+        (None, None, True, "over_window"),
+    ],
+)
+def test_here_since_reason_names_which_unknown(reply, since, over_window, reason):
+    import main
+
+    assert main._here_since_reason(reply, since, over_window) == reason
