@@ -57,9 +57,14 @@ class TestAnnounce:
 class TestNotifySaved:
     def test_success(self, monkeypatch):
         monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
-        monkeypatch.setattr(core_link, "_post", MagicMock(return_value=200))
+        post = MagicMock(return_value=200)
+        monkeypatch.setattr(core_link, "_post", post)
 
         assert core_link.notify_saved() == ("ok", "")
+        # A save waits on this call, and the file is already written: it must
+        # not inherit the longer discovery timeout.
+        assert post.call_args.kwargs["timeout"] == core_link.NOTIFY_TIMEOUT_SECONDS
+        assert core_link.NOTIFY_TIMEOUT_SECONDS < core_link.TIMEOUT_SECONDS
 
     def test_without_a_token_it_is_unreachable(self, monkeypatch):
         monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)

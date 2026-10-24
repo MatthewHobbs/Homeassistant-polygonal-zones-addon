@@ -17,6 +17,9 @@ _LOGGER = logging.getLogger(__name__)
 DISCOVERY_URL = "http://supervisor/discovery"
 RELOAD_URL = "http://supervisor/core/api/services/polygonal_zones/reload_all_zones"
 TIMEOUT_SECONDS = 5.0
+# A save waits on this one, and the file is already written by then: a slow
+# Supervisor must not make the editor feel hung.
+NOTIFY_TIMEOUT_SECONDS = 2.0
 PORT = 8000
 
 
@@ -27,7 +30,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(newurl, code, "redirect refused", headers, fp)
 
 
-def _post(url: str, payload: dict, token: str) -> int:
+def _post(url: str, payload: dict, token: str, timeout: float = TIMEOUT_SECONDS) -> int:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
@@ -35,7 +38,7 @@ def _post(url: str, payload: dict, token: str) -> int:
         method="POST",
     )
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
-    with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+    with opener.open(request, timeout=timeout) as response:
         return response.status
 
 
@@ -73,7 +76,7 @@ def notify_saved() -> tuple[str, str]:
     if not token:
         return "unreachable", "not connected to Home Assistant"
     try:
-        _post(RELOAD_URL, {}, token)
+        _post(RELOAD_URL, {}, token, timeout=NOTIFY_TIMEOUT_SECONDS)
         return "ok", ""
     except urllib.error.HTTPError as err:
         # Home Assistant answers 400 for a service it does not know
