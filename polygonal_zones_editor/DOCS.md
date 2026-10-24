@@ -4,6 +4,8 @@ Home Assistant now calls these **apps**. Some versions call them **add-ons**; it
 
 Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
 
+Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
+
 > **32-bit hosts.** Home Assistant 2025.12 deprecated the `armhf`, `armv7` and `i386` architectures for apps. The last release for those is 0.2.25. From 0.2.26 only `aarch64` and `amd64` images are published. On a 32-bit host (Raspberry Pi 0 or 1, a 32-bit OS on a Pi 2 or 3, a 32-bit Intel Atom) 0.2.25 is the last version you can run. To keep receiving updates, move to a 64-bit Home Assistant OS installation. The Supervisor stops offering updates once it sees the architecture mismatch.
 
 ## What this app is good for, and what it isn't
