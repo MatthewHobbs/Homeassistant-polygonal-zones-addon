@@ -29,9 +29,9 @@ set -euo pipefail
 # Renovate keeps these current (customManagers in .github/renovate.json5),
 # matching the quoted "name:tag@digest"; the tag must exist upstream. Not the
 # Playwright image: bump it by hand with supervisor-probe-requirements.txt.
-DEVCONTAINER_IMAGE="ghcr.io/home-assistant/devcontainer:6-apps@sha256:4e2d6efd9ac472c27f5cc522672ea9bbfdf35a897266ff4b1ac1f21ee611a4a9"
+DEVCONTAINER_IMAGE="ghcr.io/home-assistant/devcontainer:6-apps@sha256:9c08de75a4d91938dab76d44846a2d297d4ce92bf80024ff15a4f6dff766855e"
 PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright/python:v1.63.0-noble@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0"
-REGISTRY_IMAGE="docker.io/library/registry:3@sha256:852b3e4d378c426dda6b318fe9d9bfe8e92a0eccb9926671ec3d3ea17a196696"
+REGISTRY_IMAGE="docker.io/library/registry:3@sha256:01cd312e67026f06f5d89c3e133a4a9adc7cb9eeb9b1194e0b2954dfd770efd2"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADDON_DIR="polygonal_zones_editor"
