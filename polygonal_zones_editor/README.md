@@ -8,7 +8,7 @@
 Draw polygonal zones inside Home Assistant, name them, and let the companion
 [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
 
-Home Assistant needs at least version 2026.8.1 to offer this app.
+Home Assistant needs at least version 2026.8.1 to offer this app, and it must be a 64-bit installation (`aarch64` or `amd64`). 32-bit installations are not supported.
 
 > **Is this the right tool for your zones?**
 >
