@@ -4,53 +4,92 @@ Home Assistant now calls these **apps**. Some versions call them **add-ons**; it
 
 Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
 
-> **32-bit hosts.** Home Assistant 2025.12 deprecated the `armhf`, `armv7` and `i386` architectures for apps. The last release for those is 0.2.25. From 0.2.26 only `aarch64` and `amd64` images are published. On a 32-bit host (Raspberry Pi 0 or 1, a 32-bit OS on a Pi 2 or 3, a 32-bit Intel Atom) 0.2.25 is the last version you can run. To keep receiving updates, move to a 64-bit Home Assistant OS installation. The Supervisor stops offering updates once it sees the architecture mismatch.
+## Set it up
 
-## What this app is good for, and what it isn't
+You need both halves: this app, and the integration that tracks devices against the zones.
 
-Zones are compared against positions reported by phones, cars and trackers. The accuracy of the answer comes from those devices, not from how carefully you draw. A boundary placed to the centimetre is still only as good as the position being tested against it.
+1. Install this app (see the [installation steps](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon#installation)), then start it.
+2. Install the [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) and restart Home Assistant if it does not appear in the list.
+3. Open **Settings → Devices & services**. **Polygonal Zones** appears as a discovered entry. Choose **Confirm**.
+4. Open the entry's **⋮** menu, choose **Reconfigure**, and tick the `device_tracker` entities you want compared against your zones.
 
-Real devices, as a sense of scale:
+That is the whole setup for app 0.7.0 and integration 1.16.0 or later. There is no port to map, no URL to type and no token to copy: the app tells Home Assistant where it is, and generates a token that only Home Assistant sees. Every save in the editor then asks the integration to re-read the zones, so an edit is live without a reload.
 
-| Source                                | Typical reported accuracy              |
-| ------------------------------------- | -------------------------------------- |
-| Phone outdoors, good sky view         | 5–15 m                                 |
-| Phone indoors                         | 15–65 m                                |
-| Vehicle tracker with a proper antenna | 3–10 m                                 |
-| Some vehicle APIs                     | reports `0`, meaning _no figure given_ |
+**Nothing appeared under Devices & services?** Follow [If the app is not discovered](#if-the-app-is-not-discovered-manual-setup). **It is set up but a tracker is wrong?** See [If it isn't working](#if-it-isnt-working) and the integration's [troubleshooting page](https://matthewhobbs.github.io/Homeassistant-polygonal-zones/troubleshooting/).
 
-A position is a circle, not a point. A device standing still drifts several metres between reports. The integration also widens each zone by the reported accuracy before testing, so a device can match a zone it is several metres outside.
+## If the app is not discovered (manual setup)
 
-**Good for:**
+Only for the cases the automatic path cannot cover: an app older than 0.7.0, an integration older than 1.16.0, or an app Home Assistant cannot discover (a different machine, a bridged network). You are wiring three things by hand — a port, a token, and the URL — and they have to agree.
 
-- property boundaries, paddocks, yards and car parks
-- "is the car home or not", "is the van on site"
-- any zone comfortably larger than the accuracy of the devices you test with. As a rule of thumb, 20 m across or more.
+1. **Give the app a port.** **Settings → Apps → Polygonal Zones → Network**, map host port `8000`, restart the app.
+2. **Set a token in the app.** **Configuration** tab, `save_token` to a long random value, restart.
+3. **Add the integration.** **Settings → Devices & services → Add integration → Polygonal Zones**.
+4. **Point it at the app.** Zones URL `http://<app-LAN-IP>:8000/zones.json`. Use the IP address, not a name: the integration never sends a token to a name, so the app answers `403`.
+5. **Turn on the private-network allowance and paste the token.** Both fields are advanced, so enable **Advanced mode** in your user profile first. Turn on **Allow private-network URLs (LAN)** and put the app's `save_token` in **App save token**.
+6. **Choose your trackers**, and tick the tracking notice.
 
-**Bad for:**
+An integration older than 1.15.0 cannot send a token at all, so it can only reach an app that has open LAN access — which this app stopped offering in 0.5.8. Put a TLS reverse proxy in front instead: see [a private reverse proxy](#alternative-a-private-reverse-proxy-with-tls-on-a-public-name).
 
-- rooms inside a building. A 4 m by 5 m room is smaller than the error circle of a phone standing in it. Neighbouring rooms will swap at random, and a device outside the building can match one: a car on the driveway has matched an indoor kitchen zone, because a 5 m ring reached it.
-- anything needing pinpoint accuracy, or "which side of this line"
-- telling apart places a few metres apart
+The LAN port is plain HTTP: the token and your zones cross the network unencrypted.
 
-**For room-level presence, use another tool.** The limit is the positioning, not the polygon. Wi-Fi access-point association, Bluetooth room sensors such as ESPresense, or mmWave occupancy sensors solve that problem. This app is for outdoor zones at the scale of a property.
+## Settings
 
-The tracker overlay (described below) draws each device's accuracy ring over your zones, so you can judge whether a boundary means anything at the size you drew it.
+All options are under **Settings → Apps → Polygonal Zones → Configuration**. Most people never open this page; the groups below say when each one matters.
 
-## Configuration
+### The two you might change
 
-All options are under **Settings → Apps → Polygonal Zones → Configuration**. Most people only change `zone_colour`.
+Appearance only.
 
-| Option                    | Type               | Default  | What it does                                                                                                                                                                                                                                                                                                                           |
-| ------------------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zone_colour`             | string             | `purple` | Colour used for zones on the map. A CSS colour name in letters, or a hex value such as `#800080`. `rgb()` and `hsl()` are refused.                                                                                                                                                                                                     |
-| `theme`                   | list               | `auto`   | `auto` follows the operating system's `prefers-color-scheme`. Set `light` or `dark` to override it. It sets the editor colours and, with **Map style** on Auto, the map.                                                                                                                                                               |
-| `allow_all_ips`           | bool               | `false`  | Grants nothing any more. It is kept so old configurations still load. When `true`, the app logs an error at startup telling you to set `save_token` instead. See **LAN access**.                                                                                                                                                       |
-| `save_token`              | password           | empty    | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**), as `X-Save-Token: <value>`. Leave it empty for automatic setup: the app generates one for Home Assistant. Set it yourself only for the LAN URL flow. See **LAN access**.                                                        |
-| `trusted_proxies`         | string             | empty    | Comma-separated IP addresses of reverse proxies whose `X-Forwarded-For` header should be believed. List each proxy's own address, not a range: every address listed is trusted about which client it forwards for, and that is what the log and the failed-attempt limit record. Leave it empty unless you run your own reverse proxy. |
-| `overlay_entities`        | list of strings    | empty    | Entity ids to plot on the map, for example `device_tracker.my_car`. At most 25 are used. See **Plotting live positions on the map**.                                                                                                                                                                                                   |
-| `tracker_refresh_seconds` | integer, 0 to 3600 | `60`     | Seconds between position updates while the editor is open. `0` loads them once. Values from 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty.                                                                                                                                                                   |
-| `log_level`               | list               | `info`   | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting.                                                                                                                                                                                                                                              |
+| Option        | Type   | Default  | What it does                                                                                                                                                             |
+| ------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `zone_colour` | string | `purple` | Colour used for zones on the map. A CSS colour name in letters, or a hex value such as `#800080`. `rgb()` and `hsl()` are refused.                                       |
+| `theme`       | list   | `auto`   | `auto` follows the operating system's `prefers-color-scheme`. Set `light` or `dark` to override it. It sets the editor colours and, with **Map style** on Auto, the map. |
+
+### When something is wrong
+
+| Option      | Type | Default | What it does                                                                              |
+| ----------- | ---- | ------- | ----------------------------------------------------------------------------------------- |
+| `log_level` | list | `info`  | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting. |
+
+### Only if Home Assistant cannot discover the app
+
+Setting this yourself is the manual path; with automatic setup it stays empty and the app generates one. It must then match the integration's **App save token** exactly.
+
+| Option       | Type     | Default | What it does                                                                                                                                                                                                                                                                    |
+| ------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `save_token` | password | empty   | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**), as `X-Save-Token: <value>`. Leave it empty for automatic setup: the app generates one for Home Assistant. Set it yourself only for the LAN URL flow. See **LAN access**. |
+
+### Only if you plot live positions on the map
+
+`overlay_entities` is the list of devices to draw. The other two exist to make that list safe and readable.
+
+| Option                    | Type               | Default | What it does                                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `overlay_entities`        | list of strings    | empty   | Entity ids to plot on the map, for example `device_tracker.my_car`. At most 25 are used. See **Plotting live positions on the map**.                                                                                                                                                                                                   |
+| `tracker_refresh_seconds` | integer, 0 to 3600 | `60`    | Seconds between position updates while the editor is open. `0` loads them once. Values from 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty.                                                                                                                                                                   |
+| `trusted_proxies`         | string             | empty   | Comma-separated IP addresses of reverse proxies whose `X-Forwarded-For` header should be believed. List each proxy's own address, not a range: every address listed is trusted about which client it forwards for, and that is what the log and the failed-attempt limit record. Leave it empty unless you run your own reverse proxy. |
+
+### Kept only so old configurations still load
+
+| Option          | Type | Default | What it does                                                                                                                                                                     |
+| --------------- | ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow_all_ips` | bool | `false` | Grants nothing any more. It is kept so old configurations still load. When `true`, the app logs an error at startup telling you to set `save_token` instead. See **LAN access**. |
+
+## If it isn't working
+
+The app and the integration are two things that must agree, so the symptom usually names which one to look at. The integration's [troubleshooting page](https://matthewhobbs.github.io/Homeassistant-polygonal-zones/troubleshooting/) covers its side in more detail.
+
+| What you see                                                     | What it means                                                                         | What to do                                                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Zones are saved, but the integration has no zones                | The integration was refused, or is pointed at something else                          | Check the app log: a refusal is a `403`. See [LAN access](#lan-access-save_token) for which token must match where. |
+| Every tracker stays `away` while the car or phone sits in a zone | The integration has no zones loaded, or the tracker is not one of the chosen entities | Confirm zones reach the integration first; then **⋮ → Reconfigure** and re-tick the entities.                       |
+| Many entities called "Polygonal Zones", numbered `_1`, `_2` …    | An old integration released one sensor per zone and left them behind                  | Update the integration; if the strays remain, delete them by hand once.                                             |
+| The app's page shows "Couldn't load zones"                       | `zones.json` is not valid JSON. The file is served as-is, so nothing reports it       | Restore the file from a backup: see [Failure modes and recovery](#availability-and-failure-modes).                  |
+| The sidebar entry or **Open Web UI** is missing                  | The app is not running or not started                                                 | Start it under **Settings → Apps**; the log says why it stopped.                                                    |
+
+## Reference
+
+Everything below is detail: ports, tokens, backups, failure modes, and the editor itself.
 
 ### Network ports
 
@@ -214,9 +253,9 @@ Then choose your devices: open the entry's **⋮ → Reconfigure**, pick the `de
 
 From then on, every save asks Home Assistant to re-read the zones, so an edit is live without a manual reload. The line under **Save** says what happened. With an older integration it says the reload needs v1.16.0 or later, and the `reload_zones` action still works.
 
-#### Alternative: LAN URL with `allow_private_urls: true`
+#### The LAN URL path in detail
 
-Use this for an integration older than v1.16.0, or when the app runs somewhere Home Assistant cannot discover.
+The steps are in [If the app is not discovered](#if-the-app-is-not-discovered-manual-setup). This is what each part is doing.
 
 From integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) onward, the integration has an advanced option called `allow_private_urls`. Turn it on and point `zone_urls` at the app's LAN address.
 
@@ -332,3 +371,34 @@ Deleting a zone in the editor does not remove it from earlier backups. If you ar
 **Map tiles come from a third party.** Your browser fetches the map background from the provider of the style in use: OpenStreetMap, CARTO or Esri. Auto picks OpenStreetMap or CARTO by theme; Esri is used only if you choose Satellite. That provider sees your IP address, the area you are viewing (from the tiles you request) and your Home Assistant address as the referring site, such as a `*.ui.nabu.casa` hostname.
 
 **Your browser remembers the last map view.** The editor stores where you last panned and zoomed in browser storage, under `pz:viewport`, so it opens there next time. Map style and sidebar choice are kept the same way (`pz:basemap`, `pz:sidebar`). None of it is sent to the app. Clearing site data for your Home Assistant address removes it.
+
+## Is this the right tool? What the accuracy allows
+
+Zones are compared against positions reported by phones, cars and trackers. The accuracy of the answer comes from those devices, not from how carefully you draw. A boundary placed to the centimetre is still only as good as the position being tested against it.
+
+Real devices, as a sense of scale:
+
+| Source                                | Typical reported accuracy              |
+| ------------------------------------- | -------------------------------------- |
+| Phone outdoors, good sky view         | 5–15 m                                 |
+| Phone indoors                         | 15–65 m                                |
+| Vehicle tracker with a proper antenna | 3–10 m                                 |
+| Some vehicle APIs                     | reports `0`, meaning _no figure given_ |
+
+A position is a circle, not a point. A device standing still drifts several metres between reports. The integration also widens each zone by the reported accuracy before testing, so a device can match a zone it is several metres outside.
+
+**Good for:**
+
+- property boundaries, paddocks, yards and car parks
+- "is the car home or not", "is the van on site"
+- any zone comfortably larger than the accuracy of the devices you test with. As a rule of thumb, 20 m across or more.
+
+**Bad for:**
+
+- rooms inside a building. A 4 m by 5 m room is smaller than the error circle of a phone standing in it. Neighbouring rooms will swap at random, and a device outside the building can match one: a car on the driveway has matched an indoor kitchen zone, because a 5 m ring reached it.
+- anything needing pinpoint accuracy, or "which side of this line"
+- telling apart places a few metres apart
+
+**For room-level presence, use another tool.** The limit is the positioning, not the polygon. Wi-Fi access-point association, Bluetooth room sensors such as ESPresense, or mmWave occupancy sensors solve that problem. This app is for outdoor zones at the scale of a property.
+
+The tracker overlay (described below) draws each device's accuracy ring over your zones, so you can judge whether a boundary means anything at the size you drew it.
