@@ -3,11 +3,11 @@
 ARG BUILD_FROM
 
 # ── tempio builder ───────────────────────────────────────────────────────────
-# The stock /usr/bin/tempio in the HA base image is built against golang.org/x/crypto
-# 0.26.0 on a stale Go toolchain, so scanners flag it for a batch of CVEs (all in the
-# unused crypto/ssh path, plus Go stdlib). Rebuild it on a current Go toolchain with
-# x/crypto >= 0.52.0 and overwrite the base copy below. Verified: trivy reports 0 CVEs
-# on the result. Tracking upstream fix: https://github.com/home-assistant/tempio/issues/132
+# The stock /usr/bin/tempio in the HA base image is built on a stale Go toolchain,
+# so scanners flag it for CVEs in crypto/ssh and the Go stdlib. Rebuild it on the
+# pinned Go image with a current x/crypto and overwrite the base copy below.
+# Verified: trivy reports none on the result. Tracking upstream fix:
+# https://github.com/home-assistant/tempio/issues/132
 # Remove this stage (and the COPY below) once a patched tempio ships in the base image.
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS tempio
 # Pinned to an immutable commit for reproducible builds. The SHA is an upstream *release*
@@ -26,7 +26,7 @@ RUN git init -q . \
  && git remote add origin https://github.com/home-assistant/tempio \
  && git fetch -q --depth 1 origin "${TEMPIO_REF}" \
  && git checkout -q FETCH_HEAD \
- && go get golang.org/x/crypto@v0.52.0 \
+ && go get golang.org/x/crypto@v0.55.0 \
  && go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
     GOARM="$(echo "${TARGETVARIANT}" | tr -d v)" \
@@ -43,6 +43,11 @@ ENV VIRTUAL_ENV=/opt/venv \
 # Overwrite the base image's vulnerable /usr/bin/tempio with the patched build above.
 COPY --from=tempio /tempio /usr/bin/tempio
 
+# The base image's apk world is fixed at its own build date, so a package patched
+# upstream since then stays vulnerable in every add-on built on it. Take Alpine's
+# current security patches here, where the release scan can see them.
+RUN apk --no-cache upgrade
+
 # The venv's own pip, bundled by ensurepip, does the hashed install below; an
 # unpinned `--upgrade pip` would be the one unhashed download here.
 RUN apk add --no-cache python3 \
@@ -56,7 +61,13 @@ RUN apk add --no-cache python3 \
 # so transitive deps like typing_extensions
 # are included even when the maintainer regenerates on a newer host.
 COPY requirements-lock.txt /app/requirements-lock.txt
-RUN pip install --no-cache-dir --require-hashes -r /app/requirements-lock.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements-lock.txt \
+ && rm -rf "$VIRTUAL_ENV/lib/python3.14/site-packages/pip" \
+           "$VIRTUAL_ENV"/lib/python3.14/site-packages/pip-*.dist-info \
+           "$VIRTUAL_ENV/bin/pip" "$VIRTUAL_ENV/bin/pip3" "$VIRTUAL_ENV/bin/pip3.14"
+
+# pip is a build tool: nothing at runtime installs anything, and keeping it put
+# its bundled dependencies in every release scan. Removing it also drops ~10 MB.
 
 # Non-root runtime user. Permissions on /data are fixed up at boot by
 # rootfs/etc/cont-init.d/00-fix-perms so the Supervisor-mounted
