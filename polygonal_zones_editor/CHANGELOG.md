@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.1 — 2026-10-25
+
+A documentation update, and the one correction the writing of it turned up.
+
+The documentation page now leads with setup: install this app, install the companion
+integration, confirm the entry it offers, then pick your devices. The manual
+port-and-token path sits below it, under a heading that says it is only for the cases
+automatic setup cannot cover. The page also says plainly that only 64-bit
+installations are supported, rather than recording which release was the last one for
+32-bit.
+
+Fixed:
+
+- **"Here since" says why it is unknown.** The popup on a mapped device now
+  distinguishes "no history", "no positions recorded", "history unavailable" and
+  "too many lookups, try again", instead of reporting all four as unknown.
+- A mapped device that cannot be read warns once in the log, where it previously
+  appeared only at debug level.
+
 ## 0.7.0 — 2026-10-24
 
 Automatic setup, and edits that Home Assistant sees straight away.
