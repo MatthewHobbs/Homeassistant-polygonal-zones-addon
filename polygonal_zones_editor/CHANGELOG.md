@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 — 2026-10-24
+
+Automatic setup, and edits that Home Assistant sees straight away.
+
+- **The app introduces itself.** Once started, Home Assistant offers the companion
+  integration as a discovered entry. Confirm it and pick your devices; there is no
+  URL to type, no port to open and no token to copy.
+- **A save is picked up immediately.** After each save the app asks Home Assistant
+  to re-read the zones, so an edit is live without any manual step.
+- **Zones keep their settings.** Every property is written back on save, including
+  `priority` (which decides overlapping zones) and any editor-specific fields.
+- **A save that Home Assistant could not read is refused.** A zone with no name, or
+  a `priority` that is not a whole number, is stopped in the editor instead of
+  being written to the file.
+
+Changed:
+
+- Delivery to Home Assistant is now a single call rather than an upload to a custom
+  endpoint, and the `push_to_core` option is gone.
+- Positions with four or more values are refused; altitude is dropped on save.
+- A save is capped at 500 zones and 10,000 vertices in total, matching the
+  integration's limits.
+- The default map view is open water at world scale rather than a city, so it is
+  obviously not your area and points at nobody.
+
+**This version needs a manual update.** Install it from the app store when you see
+it; automatic updates stop before 0.7.0.
+
 ## 0.6.1 — 2026-10-22
 
 Bug and security fixes.
