@@ -1,7 +1,7 @@
 """Fail on a code comment block longer than 50 words.
 
-Code comments only: Python ``#`` runs, JavaScript ``//`` runs and ``/* ... */``
-blocks. Docstrings are documentation, not comments, and are not counted.
+Code comments only: Python and YAML ``#`` runs, JavaScript ``//`` runs and
+``/* ... */`` blocks. Docstrings are documentation, not comments, and are not counted.
 
 Usage: python scripts/check_comment_length.py [PATH ...]
 """
@@ -13,8 +13,18 @@ import re
 import sys
 
 MAX_WORDS = 50
-SKIP = {"node_modules", "vendor", ".venv", "venv", "__pycache__", ".git", "build", "dist"}
-SUFFIXES = {".py": "#", ".js": "//"}
+SKIP = {
+    "node_modules",
+    "vendor",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".git",
+    "build",
+    "dist",
+    ".semgrep",
+}
+SUFFIXES = {".py": "#", ".js": "//", ".yml": "#", ".yaml": "#"}
 
 
 def line_blocks(text: str, marker: str) -> list[tuple[int, str]]:
