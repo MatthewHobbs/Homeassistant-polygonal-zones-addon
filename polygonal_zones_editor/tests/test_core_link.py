@@ -13,9 +13,14 @@ def _http_error(code: int) -> urllib.error.HTTPError:
 
 
 class TestAnnounce:
-    def test_posts_host_port_path_and_token(self, monkeypatch):
+    def test_announces_the_supervisor_ip(self, monkeypatch):
+        """The container hostname does not resolve from Core on every install;
+        the Supervisor's own ip_address does."""
         monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
         monkeypatch.setattr(core_link.socket, "gethostname", lambda: "local-polygonal-zones")
+        monkeypatch.setattr(
+            core_link, "_get_json", MagicMock(return_value={"data": {"ip_address": "172.30.33.1"}})
+        )
         post = MagicMock(return_value=200)
         monkeypatch.setattr(core_link, "_post", post)
 
@@ -27,12 +32,25 @@ class TestAnnounce:
         assert payload == {
             "service": "polygonal_zones",
             "config": {
-                "host": "local-polygonal-zones",
+                "host": "172.30.33.1",
                 "port": 8000,
                 "path": "/zones.json",
                 "token": "save-me",
             },
         }
+
+    def test_falls_back_to_the_hostname(self, monkeypatch):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(core_link.socket, "gethostname", lambda: "local-polygonal-zones")
+        monkeypatch.setattr(
+            core_link, "_get_json", MagicMock(side_effect=urllib.error.URLError("no"))
+        )
+        post = MagicMock(return_value=200)
+        monkeypatch.setattr(core_link, "_post", post)
+
+        core_link.announce("save-me")
+
+        assert post.call_args.args[1]["config"]["host"] == "local-polygonal-zones"
 
     def test_without_a_supervisor_token_it_does_nothing(self, monkeypatch):
         monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
@@ -129,3 +147,29 @@ def test_post_sends_the_bearer_token_and_returns_the_status(monkeypatch):
     assert request.get_header("Authorization") == "Bearer sv"
     assert json.loads(request.data) == {"a": 1}
     assert captured["timeout"] == core_link.TIMEOUT_SECONDS
+
+
+def test_get_json_sends_the_bearer_token_and_parses(monkeypatch):
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"data": {"ip_address": "172.30.33.1"}}'
+
+    class _Opener:
+        def open(self, request, timeout):
+            captured["request"] = request
+            return _Response()
+
+    monkeypatch.setattr(core_link.urllib.request, "build_opener", lambda *handlers: _Opener())
+
+    assert core_link._get_json("http://supervisor/addons/self/info", "sv") == {
+        "data": {"ip_address": "172.30.33.1"}
+    }
+    assert captured["request"].get_header("Authorization") == "Bearer sv"
