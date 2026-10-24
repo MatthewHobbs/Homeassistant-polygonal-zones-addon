@@ -1,4 +1,4 @@
-# Polygonal Zones Add-on
+# Polygonal Zones App
 
 [![GitHub release](https://img.shields.io/github/v/release/MatthewHobbs/Homeassistant-polygonal-zones-addon?style=flat-square&logo=github)](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon/releases)
 [![License](https://img.shields.io/github/license/MatthewHobbs/Homeassistant-polygonal-zones-addon?style=flat-square)](../LICENSE)
@@ -27,7 +27,7 @@ Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, n
 
 > **Fork Notice**
 >
-> This add-on is a community-maintained continuation of the original [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon), which was deprecated by its original author. This fork is maintained to address current issues, including the OpenStreetMap tile referrer policy change that broke map rendering in the upstream project.
+> This app is a community-maintained continuation of the original [MichelGerding/Homeassistant-polygonal-zones-addon](https://github.com/MichelGerding/Homeassistant-polygonal-zones-addon), which was deprecated by its original author. This fork is maintained to address current issues, including the OpenStreetMap tile referrer policy change that broke map rendering in the upstream project.
 >
 > Maintained fork: [MatthewHobbs/Homeassistant-polygonal-zones-addon](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon)
 >
@@ -39,12 +39,12 @@ Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, n
 
 ## Installation
 
-1. Click the button above to add the repository to your Home Assistant Supervisor, **or** add `https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon.git` manually under Supervisor → Add-on Store → ⋮ → Repositories.
+1. Click the button above to add the repository to your Home Assistant Supervisor, **or** add `https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon.git` manually under Supervisor → App Store → ⋮ → Repositories.
 2. Find "Polygonal Zones" in the store and click **Install**.
 
 ## Documentation
 
-Configuration, LAN access, backing up and restoring zones, and how the companion integration reads `/zones.json` are in [`DOCS.md`](./DOCS.md), shown in the add-on's **Documentation** tab in Home Assistant.
+Configuration, LAN access, backing up and restoring zones, and how the companion integration reads `/zones.json` are in [`DOCS.md`](./DOCS.md), shown in the app's **Documentation** tab in Home Assistant.
 
 ## Roadmap
 

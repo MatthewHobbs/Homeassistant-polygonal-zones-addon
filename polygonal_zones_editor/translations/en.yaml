@@ -24,14 +24,14 @@ configuration:
       Assistant itself (the sidebar or Open Web UI). Every such
       request, read or write, must send the header
       X-Save-Token: <value>. With this empty, nothing outside Home
-      Assistant can reach the add-on. The value is never logged.
+      Assistant can reach the app. The value is never logged.
   trusted_proxies:
     name: Trusted proxies
     description: >-
       Comma-separated list of the IP address of each reverse proxy whose
       X-Forwarded-For header should be honoured. List each proxy's own IP
       rather than a range: a range is accepted with a warning in the log.
-      Leave empty unless you front the addon with your own reverse proxy.
+      Leave empty unless you front the app with your own reverse proxy.
       Wildcards (*, 0.0.0.0/0) and the HA ingress IP (172.30.32.2) are
       refused and logged as errors.
   overlay_entities:
@@ -40,7 +40,7 @@ configuration:
       Entity ids (e.g. device_tracker.my_car) whose live positions the
       editor plots over your zones. At most 25 are used. Opening one's
       popup reads its last 24 h of history to show when it arrived.
-      Empty by default, and while empty the add-on asks Home Assistant
+      Empty by default, and while empty the app asks Home Assistant
       for nothing. These positions are readable by anyone holding the
       save_token, so prefer vehicles over people.
   tracker_refresh_seconds:
@@ -53,4 +53,4 @@ configuration:
   log_level:
     name: Log level
     description: >-
-      Verbosity of the addon log. Bump to debug when troubleshooting.
+      Verbosity of the app log. Bump to debug when troubleshooting.
