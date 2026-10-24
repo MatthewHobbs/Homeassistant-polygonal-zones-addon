@@ -2118,7 +2118,9 @@ def test_here_since_endpoint_asks_for_one_entity_over_24_hours(app_factory, monk
     prefix = f"{main.SUPERVISOR_API}/history/period/"
     assert url.startswith(prefix)
     path, query = url[len(prefix) :].split("?")
-    assert query == "filter_entity_id=device_tracker.car"
+    # A stationary tracker only has unchanged rows, which Home Assistant omits
+    # by default; without this the lookup always answers unknown.
+    assert query == "filter_entity_id=device_tracker.car&significant_changes_only=0"
     start = datetime.fromisoformat(urllib.parse.unquote(path))
     expected = datetime.now(UTC) - timedelta(hours=24)
     assert abs((start - expected).total_seconds()) < 60

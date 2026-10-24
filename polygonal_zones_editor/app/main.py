@@ -876,7 +876,12 @@ def here_since_generator(options: dict, entities: list[str]):
             reply = await asyncio.get_running_loop().run_in_executor(
                 _HISTORY_POOL,
                 _get_json,
-                f"history/period/{start}?filter_entity_id={urllib.parse.quote(entity_id)}",
+                f"history/period/{start}"
+                f"?filter_entity_id={urllib.parse.quote(entity_id)}"
+                # Home Assistant defaults to significant changes only, which
+                # drops every row where a stationary tracker reported the same
+                # position again: exactly the rows "here since" needs.
+                "&significant_changes_only=0",
                 os.environ.get(SUPERVISOR_TOKEN_ENV, ""),
             )
         finally:
