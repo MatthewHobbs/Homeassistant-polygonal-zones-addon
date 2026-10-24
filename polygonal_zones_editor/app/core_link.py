@@ -15,6 +15,7 @@ import urllib.request
 _LOGGER = logging.getLogger(__name__)
 
 DISCOVERY_URL = "http://supervisor/discovery"
+SELF_INFO_URL = "http://supervisor/addons/self/info"
 RELOAD_URL = "http://supervisor/core/api/services/polygonal_zones/reload_all_zones"
 TIMEOUT_SECONDS = 5.0
 # A save waits on this one, and the file is already written by then: a slow
@@ -28,6 +29,32 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(newurl, code, "redirect refused", headers, fp)
+
+
+def _get_json(url: str, token: str) -> dict:
+    request = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _announced_host(token: str) -> str:
+    """The address Home Assistant should fetch the zones from.
+
+    The Supervisor's own ``ip_address`` for this app, because the container
+    hostname does not resolve from Core on every install: on a supervised
+    instance a name resolved through ``*.local.hass.io`` came back as the host
+    address and Core's resolver refused the answer, while the IP answered 403
+    (i.e. it was reaching the app).
+    """
+    try:
+        info = _get_json(SELF_INFO_URL, token).get("data") or {}
+    except (urllib.error.URLError, OSError, ValueError):
+        _LOGGER.warning("Could not read this app's address from the Supervisor", exc_info=True)
+        return socket.gethostname()
+    return info.get("ip_address") or info.get("hostname") or socket.gethostname()
 
 
 def _post(url: str, payload: dict, token: str, timeout: float = TIMEOUT_SECONDS) -> int:
@@ -53,7 +80,7 @@ def announce(save_token: str) -> None:
         _LOGGER.warning("No SUPERVISOR_TOKEN: cannot announce zones to Home Assistant")
         return
     config = {
-        "host": socket.gethostname(),
+        "host": _announced_host(token),
         "port": PORT,
         "path": "/zones.json",
         "token": save_token,
