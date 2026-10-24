@@ -113,12 +113,11 @@ function attach_tile_error_watch(layer) {
     });
 }
 
-// Default to central Groningen only when no persisted viewport is available
-// AND the user has no existing zones. It's an obvious "not-my-area" signal
-// rather than a plausible-looking wrong location, so users outside the
-// Netherlands know to pan immediately.
-const DEFAULT_CENTER = [53.22, 6.57];
-const DEFAULT_ZOOM = 13;
+// Only used when there is no remembered viewport and no zones to fit: an empty
+// stretch of ocean at world scale. It is obviously "not your area", so the
+// first pan is the user's own, and it points at nobody.
+const DEFAULT_CENTER = [0, 0];
+const DEFAULT_ZOOM = 2;
 
 function restore_viewport() {
     const raw = window.PZStorage.get('pz:viewport');
