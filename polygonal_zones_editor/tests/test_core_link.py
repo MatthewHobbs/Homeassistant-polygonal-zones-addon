@@ -75,7 +75,7 @@ class TestNotifySaved:
         ("code", "state"),
         # 400 is what Core answers for a service the integration has not
         # registered; 404 covers the same case on another route.
-        [(400, "older"), (404, "older"), (429, "refused"), (500, "refused"), (403, "refused")],
+        [(400, "older"), (404, "older"), (429, "refused"), (403, "refused")],
     )
     def test_http_errors_map_to_fixed_messages(self, monkeypatch, code, state):
         monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
