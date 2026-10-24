@@ -8,7 +8,11 @@
 # `just ha-floor` runs it on demand, `just ci` never does.
 
 # Local CI gate - the same commands remote CI runs, for the checks it covers.
-ci: venv lint test comments
+ci: venv lint test comments vendor
+
+# Every vendored file matches the hash recorded in VENDOR.md.
+vendor:
+    python3 scripts/check-vendor-hashes.py
 
 # One rule, measured: no code comment block over 50 words. Docstrings are docs.
 comments:

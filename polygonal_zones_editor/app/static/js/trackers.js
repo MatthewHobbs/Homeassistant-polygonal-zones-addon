@@ -186,11 +186,21 @@ function pz_render_readout() {
     panel.appendChild(note);
 }
 
-/* "over 24 h", "unknown", or the arrival time, with the date when not today. */
+/* "over 24 h", why it is unknown, or the arrival time (with the date when not today). */
 function pz_here_since_text(body, now = new Date()) {
     if (body && body.over_window) return 'over 24 h';
     const since = new Date(body && typeof body.since === 'string' ? body.since : NaN);
-    if (Number.isNaN(since.getTime())) return 'unknown';
+    if (Number.isNaN(since.getTime())) {
+        /* A reason the server gave for having no time, so "no history" is not
+         * shown for a mistyped entity or a failed read. */
+        const reasons = {
+            busy: 'too many lookups, try again',
+            lookup_failed: 'history unavailable',
+            no_history: 'no history',
+            no_coordinates: 'no positions recorded',
+        };
+        return (body && reasons[body.reason]) || 'unknown';
+    }
     const time = since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     return since.toDateString() === now.toDateString() ? time : `${since.toLocaleDateString()} ${time}`;
 }
