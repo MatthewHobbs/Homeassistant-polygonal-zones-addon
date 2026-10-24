@@ -109,24 +109,6 @@
 
 /* Whether the saved zones reached Home Assistant. Like .save-status it stays in
    the page when empty, so a screen reader announces the text when it appears. */
-.push-status {
-    margin: 0.3em 0 0;
-    font-size: 0.8em;
-    color: var(--muted-text);
-}
-.push-status:empty {
-    margin: 0;
-}
-.push-status.push-warn {
-    color: var(--text-color);
-    font-weight: bold;
-}
-.push-status.push-error {
-    color: var(--text-color);
-    font-weight: bold;
-    border-left: 3px solid currentColor;
-    padding-left: 0.5em;
-}
 
 
 body {

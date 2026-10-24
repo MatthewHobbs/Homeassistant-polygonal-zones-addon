@@ -1,19 +1,9 @@
 /*
- * Geometry helpers for the zone editor.
+ * Geometry helpers for the zone editor. They MEASURE, never PREDICT: a ruler
+ * cannot contradict the integration's verdict (see trackers.js).
  *
- * These MEASURE; they do not PREDICT. Given a point and a ring they answer
- * "is this inside?" and "how far from the edge?" — they never rank zones or
- * claim which one the companion integration would report.
- *
- * That restraint is deliberate. The integration tie-breaks on
- * distance-to-exterior; a second copy of that rule here would drift from it,
- * and the editor being confidently wrong about a verdict is worse than it
- * offering none. A ruler cannot contradict a verdict, because it makes none.
- *
- * All functions take rings as GeoJSON [lon, lat] pairs and return metres.
- * The projection is a local equirectangular approximation, which at property
- * scale (hundreds of metres) is accurate to well under the GPS noise it is
- * being compared against.
+ * Rings are GeoJSON [lon, lat]; areas are m², distances metres. The projection
+ * is local equirectangular, accurate far below GPS noise at property scale.
  */
 
 const PZ_EARTH_RADIUS_M = 6371000;

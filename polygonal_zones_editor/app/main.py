@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from push import Pusher
+from core_link import announce, notify_saved
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
@@ -56,6 +56,7 @@ from helpers import (
     configure_logging,
     load_options,
     resolve_log_level,
+    save_token,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,11 +68,9 @@ AUTHZ_EXEMPT_PATHS = frozenset(
     {"/healthz", "/save_zones", "/zones.json", "/trackers.json", "/trackers/here_since"}
 )
 
-# Rate limit on authorisation failures, shared by every gated path.
-# Protects against brute-forcing save_token when the port is exposed on LAN.
-# Only failures count. A request whose TCP peer is ingress is never limited,
-# so failures recorded against a forwarded "172.30.32.2" cannot lock the HA
-# UI out. Behind a trusted proxy the budget is per forwarded client.
+# Rate limit on authorisation failures, shared by every gated path, against
+# brute-forcing save_token on the LAN. Only failures count, and ingress peers
+# are never limited, so a forwarded 172.30.32.2 cannot lock the HA UI out.
 _AUTH_FAILURE_LIMIT = 10
 _AUTH_FAILURE_WINDOW_SECONDS = 60
 # Above this many tracked clients, expired entries are swept, so forwarded
@@ -217,25 +216,13 @@ class AuthoriseMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# Content-Security-Policy tailored to the addon's frontend.
-#
-# Leaflet and Leaflet-Geoman are vendored under app/static/vendor/, so
-# script-src and style-src need no CDN. The editor has no inline script, so
-# script-src needs no 'unsafe-inline'.
-#
-# style-src KEEPS 'unsafe-inline': Leaflet injects runtime inline styles
-# for tile positioning (transform translate3d on every tile); without
-# 'unsafe-inline' the map renders blank. The upstream issue for this is
-# leaflet/Leaflet#4430; removing it requires a nonce per request which
-# isn't feasible on static-served assets.
-#
-# img-src covers the three tile providers (OSM, CARTO dark, Esri World
-# Imagery) plus data:/blob: for Leaflet's inline-rendered markers.
-#
-# frame-ancestors permits HA ingress (same-origin under HA's web frontend,
-# covered by 'self') and Nabu Casa remote. Not *.home-assistant.io: that is
-# HA's docs domain, not an embedding origin, and listing it would let any
-# page hosted there frame the editor.
+# CSP for the addon's frontend. Leaflet and Geoman are vendored, so no CDN and
+# no inline script; img-src covers the three tile providers plus data:/blob:
+# for markers. frame-ancestors allows HA ingress and Nabu Casa remote.
+
+# style-src keeps 'unsafe-inline': Leaflet injects tile transforms at runtime
+# and the map renders blank without it (leaflet#4430). Not *.home-assistant.io:
+# that is HA's docs domain, and listing it would let any page there frame us.
 _CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -420,35 +407,35 @@ def _validate_feature_collection(obj) -> None:
             )
 
         props = f.get("properties")
-        if props is not None and not isinstance(props, dict):
-            raise ValueError(f"{where}.properties: must be a dict or null")
-        if isinstance(props, dict):
-            name = props.get("name")
-            if name is not None and not isinstance(name, str):
-                raise ValueError(f"{where}.properties.name: must be a string if present")
-            if isinstance(name, str):
-                if name in seen_names:
-                    raise ValueError(
-                        f"{where}.properties.name: duplicate zone name (must be unique)"
-                    )
-                seen_names.add(name)
+        if not isinstance(props, dict):
+            raise ValueError(f"{where}.properties: required, and must be an object")
+        # A name is how the integration and the add/edit/delete actions address
+        # a zone; a blank one makes the whole file unloadable, so it is refused
+        # here rather than written and discovered later.
+        name = props.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{where}.properties.name: required, and must not be blank")
+        name = name.strip()
+        if name in seen_names:
+            raise ValueError(f"{where}.properties.name: duplicate zone name (must be unique)")
+        seen_names.add(name)
 
-            # properties.id is the stable binding handle automations bind to
-            # across renames. Optional on input (older clients, curl restores
-            # of pre-versioned files); the server backfills one during
-            # _normalise_feature_collection if missing. When present it must
-            # be a non-empty string AND unique — duplicates would defeat the
-            # "stable handle" contract since a consumer couldn't route a
-            # matched id to a specific zone unambiguously.
-            feature_id = props.get("id")
-            if feature_id is not None:
-                if not isinstance(feature_id, str) or not feature_id:
-                    raise ValueError(
-                        f"{where}.properties.id: must be a non-empty string if present"
-                    )
-                if feature_id in seen_ids:
-                    raise ValueError(f"{where}.properties.id: duplicate zone id (must be unique)")
-                seen_ids.add(feature_id)
+        # The integration picks the highest-priority overlapping zone by this
+        # number and refuses a file where it is not an int.
+        priority = props.get("priority")
+        if priority is not None and (isinstance(priority, bool) or not isinstance(priority, int)):
+            raise ValueError(f"{where}.properties.priority: must be an integer if present")
+
+        # properties.id is the stable handle automations bind to across renames.
+        # Optional on input; the server backfills one. When present it must be a
+        # non-empty, unique string, or a matched id could not be routed to one zone.
+        feature_id = props.get("id")
+        if feature_id is not None:
+            if not isinstance(feature_id, str) or not feature_id:
+                raise ValueError(f"{where}.properties.id: must be a non-empty string if present")
+            if feature_id in seen_ids:
+                raise ValueError(f"{where}.properties.id: duplicate zone id (must be unique)")
+            seen_ids.add(feature_id)
 
 
 def _drop_altitude(coords):
@@ -479,10 +466,10 @@ def _normalise_feature_collection(obj: dict) -> dict:
     for feature in obj.get("features", []):
         geometry = feature["geometry"]
         geometry["coordinates"] = _drop_altitude(geometry["coordinates"])
-        props = feature.get("properties")
-        if not isinstance(props, dict):
-            props = {}
-            feature["properties"] = props
+        props = feature["properties"]
+        # Store the name exactly as it was validated, so "Home " and "Home"
+        # cannot coexist on disk.
+        props["name"] = props["name"].strip()
         if not props.get("id"):
             # uuid4 hex (no dashes) is compact and URL-safe for any future
             # id-bearing endpoint.
@@ -537,7 +524,7 @@ def _gate(options: dict, request: Request, label: str, check_origin=True) -> Res
     return None
 
 
-def save_zones_generator(options: dict, pusher: Pusher):
+def save_zones_generator(options: dict):
     async def save_zones(request: Request):
         refusal = _gate(options, request, "/save_zones")
         if refusal is not None:
@@ -578,11 +565,9 @@ def save_zones_generator(options: dict, pusher: Pusher):
                 status_code=422,
             )
 
-        # Optimistic concurrency: when the client provides If-Match, refuse to
-        # overwrite if the on-disk file has changed since they read it. Nothing
-        # awaits between this check and atomic_write_json, so on the one event
-        # loop no other save can slip in between. Keep it that way: moving the
-        # write to a thread would open that race.
+        # Optimistic concurrency: with If-Match, refuse to overwrite a file that changed
+        # since the client read it. Nothing awaits before atomic_write_json, so on the
+        # one event loop no save slips in between — keep it that way.
         if_match = request.headers.get("if-match", "").strip()
         if if_match:
             current = _current_zones_etag()
@@ -627,8 +612,14 @@ def save_zones_generator(options: dict, pusher: Pusher):
 
         new_etag = _etag_for_bytes(written)
         _LOGGER.info("Saved %d features to zones.json", len(geo_json["features"]))
-        pusher.wake()  # non-blocking: the save is already done
-        return JSONResponse({"status": "ok", "etag": new_etag}, headers={"ETag": new_etag})
+        # One call, so Home Assistant re-reads the file now. Off the event loop:
+        # the request to the Supervisor is blocking. The outcome rides back on
+        # the save response instead of a polling endpoint.
+        state, note = await asyncio.to_thread(notify_saved)
+        return JSONResponse(
+            {"status": "ok", "etag": new_etag, "reload": {"state": state, "note": note}},
+            headers={"ETag": new_etag},
+        )
 
     return save_zones
 
@@ -655,11 +646,9 @@ def config_json_generator(options: dict):
 
 # --- Tracker overlay -------------------------------------------------------
 
-# Entity ids are user-supplied config that ends up in a URL path. Accept only
-# the shape Home Assistant itself guarantees — lowercase domain, dot, object id
-# — so nothing can smuggle a path traversal or query string into the Supervisor
-# call. Anything else is dropped and logged rather than sanitised: a silently
-# rewritten entity id would be a confusing thing to debug.
+# Entity ids come from config and end up in a URL path: accept only HA's own
+# shape (lowercase domain, dot, object id) so nothing can smuggle a traversal
+# or query. Anything else is dropped and logged, never sanitised.
 _ENTITY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
 
 
@@ -931,12 +920,10 @@ def trackers_json_generator(options: dict, entities: list[str]):
             return _uncached({"configured": True, "trackers": [], "error": "no_supervisor_token"})
 
         def _gather() -> tuple[list[dict], list[str]]:
-            # One deadline for the whole overlay, with the fetches concurrent:
-            # sequential per-entity timeouts would let 25 entities behind an
-            # unreachable Supervisor hold this worker for 25 timeouts, and the
-            # editor polls this. An entity Home Assistant could not be asked
-            # about in time is listed, not dropped, so a polling client can tell
-            # "unreachable" from "reported no position" and keep its marker.
+            # One deadline for the whole overlay, with concurrent fetches: sequential
+            # per-entity timeouts would let 25 unreachable entities hold this worker for 25
+            # timeouts. An entity that missed the deadline is listed as unavailable, not
+            # dropped, so a client keeps its marker.
             futures = {_OVERLAY_POOL.submit(_fetch_state, e, token): e for e in entities}
             done, pending = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
             for future in pending:
@@ -1028,15 +1015,7 @@ async def healthz(_request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-def push_status_generator(pusher: Pusher):
-    async def push_status(_request: Request) -> JSONResponse:
-        # Gated like /config.json by AuthoriseMiddleware (not an exempt path).
-        return JSONResponse(pusher.status(), headers={"Cache-Control": "no-store"})
-
-    return push_status
-
-
-def generate_app(options: dict, pusher: Pusher | None = None) -> TransportPeerMiddleware:
+def generate_app(options: dict) -> TransportPeerMiddleware:
     """Build the ASGI app exactly as it is served.
 
     Proxy headers are applied here rather than by uvicorn, inside the layer
@@ -1045,13 +1024,10 @@ def generate_app(options: dict, pusher: Pusher | None = None) -> TransportPeerMi
     static_folder = "static"
     # Once, so a bad entry is warned about once.
     entities = overlay_entities(options)
-    # Never started here (tests build apps freely); __main__ starts the real one.
-    pusher = pusher or Pusher(options, etag_for=_etag_for_bytes)
     routes = [
-        Route("/save_zones", save_zones_generator(options, pusher), methods=["POST"]),
+        Route("/save_zones", save_zones_generator(options), methods=["POST"]),
         Route("/zones.json", zones_json_generator(options), methods=["GET"]),
         Route("/config.json", config_json_generator(options), methods=["GET"]),
-        Route("/push_status", push_status_generator(pusher), methods=["GET"]),
         Route("/trackers.json", trackers_json_generator(options, entities), methods=["GET"]),
         Route("/trackers/here_since", here_since_generator(options, entities), methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
@@ -1083,18 +1059,15 @@ def generate_app(options: dict, pusher: Pusher | None = None) -> TransportPeerMi
     return TransportPeerMiddleware(app)
 
 
-# Ingress is decided by the TCP peer (TransportPeerMiddleware), never by a
-# forwarded header, so no trusted_proxies entry can make a request ingress.
-# What a trusted proxy decides is which client a request is logged and
-# rate-limited as. These entries are dropped, with a logged error rather than
-# a failed startup so a typo can't lock a user out:
-#   - wildcards, which would let every client name its own address and so
-#     escape the per-client failure limit;
-#   - the ingress IP or any range covering it: ingress is HA's own proxy and
-#     needs no listing, and a range that wide trusts every other host on the
-#     Supervisor network to name any client it likes.
-# Every message is a constant string: CodeQL flags %s-logging of any value
-# derived from the options dict, which also carries save_token.
+# Ingress is the TCP peer, never a forwarded header, so trusted_proxies cannot
+# make a request ingress; it decides which client a request is logged and
+# rate-limited as. Bad entries are dropped with a logged error, not a failed
+# startup, because a typo must not lock a user out.
+
+# Dropped: wildcards (a client could name any address) and the ingress IP or
+# any range covering it (it needs no listing and would trust the whole
+# Supervisor network). Messages are constants: CodeQL flags %s of options,
+# which hold the token.
 _INGRESS_IPS = tuple(ipaddress.ip_address(ip) for ip in ALLOWED_IPS)
 
 
@@ -1219,12 +1192,9 @@ if __name__ == "__main__":  # pragma: no cover
     configure_logging(resolve_log_level(options.get("log_level")))
     _LOGGER.info("Loaded options: %s", loggable_options(options))
     if os.getuid() == 0:
-        # The s6 init in rootfs/etc/services.d/web/run is supposed to drop
-        # privileges to the 'app' user. If we got here as root, one of its
-        # fallbacks fired (missing s6-setuidgid, missing app user, or
-        # options.json unreadable). Log prominently on every boot so a
-        # fallback-running install can't go unnoticed — the AppArmor profile
-        # is less effective when the workload runs as uid 0.
+        # The s6 script should have dropped to the 'app' user. Running as root means one
+        # of its fallbacks fired (missing s6-setuidgid, app user, or a readable
+        # options.json); log loudly, because AppArmor protects a uid-0 workload less.
         _LOGGER.warning(
             "Running as uid 0 (root). The s6 service script fell back from "
             "dropping privileges to the 'app' user — check the service log "
@@ -1232,16 +1202,17 @@ if __name__ == "__main__":  # pragma: no cover
         )
     log_retired_allow_all_ips(options)
 
-    # generate_app applies trusted_proxies itself, inside the layer that
-    # records the TCP peer; uvicorn's own proxy handling (on by default)
-    # would rewrite the client before that record is taken.
-    # No access log: it records every client's IP and request line at INFO in
-    # an add-on log any HA user can read and nothing expires.
-    # Port 8000 is what config.yaml's ingress_port and the HEALTHCHECK expect.
-    pusher = Pusher(options, etag_for=_etag_for_bytes)
-    pusher.start()
+    # generate_app applies trusted_proxies inside the layer that records the TCP
+    # peer; uvicorn's own proxy handling would rewrite the client first, so it is
+    # off. Port 8000 is what ingress_port and the HEALTHCHECK expect.
+
+    # No access log: it writes every client IP and request line to an add-on log any
+    # HA user can read, and nothing expires. Discovery hands the integration the
+    # generated save token; a configured one still wins for the zone-URL flow.
+    options["save_token"] = save_token(options)
+    announce(options["save_token"])
     uvicorn.run(
-        generate_app(options, pusher=pusher),
+        generate_app(options),
         host="0.0.0.0",
         port=8000,
         access_log=False,

@@ -1,7 +1,5 @@
-// Module-scope handles so render_zone_list / save_zones / load_bulk_json /
-// edit_zone_event can reference them via closure regardless of when
-// generate_map runs. Assigned once /config.json comes back (we need
-// ZONE_COLOUR set before any zones render).
+// Module scope, assigned once /config.json comes back: several functions
+// below run before or after generate_map and need the same handles.
 let map;
 let editableLayers;
 // Tracks the ETag of the last zones.json we read or wrote, sent as If-Match
@@ -60,11 +58,8 @@ function update_dirty_indicator() {
 
 window.addEventListener('beforeunload', (e) => {
     if (!isDirty) return;
-    // Modern Chrome/Firefox/Safari ignore the string; they show a generic
-    // "Leave site?" prompt when preventDefault is called. returnValue = ''
-    // is kept for older Safari compatibility. The prompt can't be
-    // customised, and triggers only on user-initiated navigations — the
-    // browser still suppresses it on programmatic location changes.
+    // Browsers show a generic "Leave site?" prompt and ignore the text.
+    // returnValue is kept for older Safari; programmatic navigation is exempt.
     e.preventDefault();
     e.returnValue = '';
 });
@@ -118,17 +113,12 @@ function attach_tile_error_watch(layer) {
     });
 }
 
-// Default to central Groningen only when no persisted viewport is available
-// AND the user has no existing zones. It's an obvious "not-my-area" signal
-// rather than a plausible-looking wrong location, so users outside the
-// Netherlands know to pan immediately.
-const DEFAULT_CENTER = [53.22, 6.57];
-const DEFAULT_ZOOM = 13;
+// Only used when there is no remembered viewport and no zones to fit: an empty
+// stretch of ocean at world scale. It is obviously "not your area", so the
+// first pan is the user's own, and it points at nobody.
+const DEFAULT_CENTER = [0, 0];
+const DEFAULT_ZOOM = 2;
 
-// Read pz:viewport from PZStorage and validate its shape. Returns an
-// object carrying the initial center / zoom to hand L.map(), and a
-// `restored` flag the caller uses to decide whether to auto-fit to zone
-// bounds on first load.
 function restore_viewport() {
     const raw = window.PZStorage.get('pz:viewport');
     if (!raw) return {center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, restored: false};
@@ -167,8 +157,6 @@ function setup_basemap_picker(layers, onChange) {
         select.appendChild(opt);
     });
 
-    // Reflect the current state. When pz:basemap is unset or 'auto', the
-    // picker shows 'auto'; otherwise it shows the stored id.
     const stored = window.PZStorage.get('pz:basemap');
     select.value = (stored && stored !== 'auto' && layers[stored]) ? stored : 'auto';
 
@@ -203,7 +191,6 @@ function generate_map(zones_url) {
         activeId = window.PZBasemaps.getDefaultBasemap(window.PZ_THEME).id;
     }
 
-    // Open where the user last left the map, not at the default.
     const {center: initialCenter, zoom: initialZoom, restored: restoredViewport} =
         restore_viewport();
 
@@ -329,8 +316,6 @@ function setup_editing(map, editableLayers) {
         allowSelfIntersection: false,
         snappable: true,
         snapDistance: 12,
-        // Drawn shapes inherit the configured zone colour, matching what the
-        // loaded zones are rendered with.
         pathOptions: { color: window.ZONE_COLOUR },
         templineStyle: { color: window.ZONE_COLOUR },
         hintlineStyle: { color: window.ZONE_COLOUR, dashArray: '5,5' },
@@ -355,20 +340,13 @@ function setup_editing(map, editableLayers) {
         drawText: false,
     });
 
-    // Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman falls short in two
-    // different ways:
-    //
-    //  - Its *action* buttons (Finish, Cancel, Remove Last Vertex) carry a
-    //    `title` only. Many screen readers — NVDA, VoiceOver on iOS — ignore or
-    //    inconsistently announce `title` on interactive anchors, so mirror it
-    //    into an aria-label.
-    //  - Its *primary* buttons (draw, delete) carry no title, no text and no
-    //    label at all: they are bare icon anchors, so there is nothing to
-    //    mirror. They have to be named outright, keyed off the icon class
-    //    Geoman puts on the child div.
-    //
-    // They are also anchors without href, which are not links; role="button"
-    // makes them announce as the controls they actually are.
+// Toolbar accessibility (WCAG 2.2 SC 4.1.2). Geoman's action buttons (Finish,
+// Cancel, Remove Last Vertex) carry only a title, which NVDA and VoiceOver
+// announce inconsistently, so it is mirrored into aria-label.
+
+// Its primary draw and delete buttons are bare icons with nothing to mirror,
+// so they are named from the icon class. Anchors have no href, so
+// role="button" makes them announce as the controls they are.
     const PM_CONTROL_LABELS = {
         'leaflet-pm-icon-polygon': 'Draw a zone',
         'leaflet-pm-icon-rectangle': 'Draw a rectangular zone',
@@ -491,7 +469,6 @@ function edit_zone_event(e) {
         e.target.setAttribute('name', e.detail.name);
         if ((layer.feature.properties.name ?? '') !== (old_name ?? '')) {
             mark_dirty();
-            // The tracker readout names the zone a device is in.
             map.fire('pz:zoneschanged');
         }
     }
@@ -511,8 +488,6 @@ function render_zone_list() {
     close_open_edit();
     let zone_list = document.querySelector('.zone-list');
     zone_list.innerHTML = '';
-    // Whatever called us has finished loading (this is also the success path of
-    // the initial fetch), so clear the loading affordance.
     zone_list.removeAttribute('aria-busy');
     editableLayers.eachLayer(layer => {
         let zone_entry = document.createElement('zone-entry');
@@ -550,10 +525,11 @@ function zones_collection() {
     const features = [];
     editableLayers.eachLayer(layer => {
         const feature = layer.toGeoJSON();
-        // Only name and id are sent; the id keeps a renamed zone bound to
-        // the same automations.
+        // Every property is sent back: priority decides overlapping zones and
+        // polygonal_zones_ext belongs to whoever wrote it. Only the name and id
+        // are the editor's to set.
         const src = layer.feature.properties || {};
-        feature.properties = {name: src.name};
+        feature.properties = {...src, name: src.name};
         if (src.id) feature.properties.id = src.id;
         features.push(feature);
     });
@@ -606,20 +582,20 @@ function save_zones() {
             });
         }
         return response.json().catch(() => null).then(body => {
-            show_save_state('success', 'Zones saved.');
-            // Look at the delivery status sooner than the next poll would.
-            window.pz_push_status_after_save?.();
-            // Only a save that landed moves the editor to the new version: a
-            // 412 carries the other session's ETag, and adopting it would let
-            // the next click overwrite their edits. The body carries it too,
-            // for a proxy that strips the header.
-            // The body's value is checked: it ends up in a request header.
+            // The save response says whether Home Assistant re-read the file.
+            const reload = body?.reload;
+            const note = typeof reload?.note === 'string' && reload.note ? ` ${reload.note}` : '';
+            show_save_state('success', `Zones saved.${note}`);
+// Only a save that landed moves the editor to the new version: a 412 carries
+// the other session's ETag, and adopting it would let the next click overwrite
+// their edits. The body's value is checked too — it becomes a request header.
             const body_etag = /^"[0-9a-f]+"$/.test(body?.etag) ? body.etag : null;
             const new_etag = response.headers.get('ETag') || body_etag;
             if (new_etag) zones_etag = new_etag;
             // An edit made while the request was in flight is still unsaved.
             if (edit_seq === sent_seq) mark_clean();
-            save_status_timer = setTimeout(() => show_save_state(null, ''), 2000);
+            // A note about Home Assistant stays up; a bare "saved" fades.
+            if (!note) save_status_timer = setTimeout(() => show_save_state(null, ''), 2000);
         });
     }).catch(err => {
         show_save_state('error', timed_out
@@ -681,25 +657,21 @@ function load_saved_zones(data, restoredViewport) {
     }
     // Always offered: it is how a conflict download gets back in.
     create_load_btn();
-    // A remembered view wins over centring on the zones.
     if (editableLayers.getLayers().length > 0 && !restoredViewport) {
         map.setView(editableLayers.getBounds().getCenter(), 13);
     }
 }
 
 /* Add the polygon zones in `data`; return {count, skipped}. Layers are built
- * before anything changes. With `replace`, anything that is not a polygon
- * throws and leaves the editor as it was, and the current zones are cleared
- * only when there is something to replace them with. Without it (the first
- * load), zones are added beside any already drawn and anything else is
- * skipped and counted. A zone needs no name: the server accepts unnamed ones,
- * and dropping them here would delete them on the next save. */
+ * before anything changes. With `replace`, a non-polygon throws and leaves the
+ * editor as it was; otherwise zones are added beside what is drawn. An unnamed
+ * zone is kept — dropping it would delete it on the next save. */
 function add_zones(data, replace) {
     const layers = [];
     L.geoJSON(data, {
         style: () => ({color: window.ZONE_COLOUR}),
         onEachFeature: (feature, layer) => {
-            // GeoJSON allows null properties; the editor reads and writes them.
+            // GeoJSON allows null properties, and older files contain them.
             if (!feature.properties) feature.properties = {};
             // A function, so the popup reads the name at open, after any rename.
             layer.bindPopup(l => text_element(l.feature.properties.name));
@@ -711,12 +683,11 @@ function add_zones(data, replace) {
     const skipped = layers.length - zones.length;
     if (replace) {
         if (skipped) throw new Error('not polygon zones');
-        // The server takes a name that is text, null or absent, and an id that
-        // is null, absent or unique non-empty text; refuse anything else now
-        // rather than at save.
+        // The server requires a non-blank name and an id that is unique,
+        // non-empty text; refuse here rather than at save.
         const ids = new Set();
         for (const {feature: {properties: {name, id}}} of zones) {
-            if (name != null && typeof name !== 'string') throw new Error('zone name is not text');
+            if (typeof name !== 'string' || !name.trim()) throw new Error('a zone has no name');
             if (id == null) continue;
             if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('bad zone id');
             ids.add(id);
@@ -735,7 +706,6 @@ function add_zones(data, replace) {
 }
 
 function load_bulk_json() {
-    // open a file dialog
     let input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';

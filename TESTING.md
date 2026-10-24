@@ -4,14 +4,15 @@ This repo has four layers of automated testing, plus a manual live-HA-OS layer f
 
 ## Automated (CI)
 
-| Layer | What it runs | Where |
-|---|---|---|
-| `Tests` | `pytest -v` (100% line and branch coverage, gated by `--cov-fail-under=100`), the shell script tests in `scripts/`, and the node tests in `polygonal_zones_editor/tests/` | [`.github/workflows/test.yml`](.github/workflows/test.yml) |
-| `Lint addon` | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within its bound, and `shellcheck` of `scripts/` and `rootfs/` shell files | [`.github/workflows/lint.yml`](.github/workflows/lint.yml) |
-| `Build addon` | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches (`scripts/ui_smoke.py`) | [`.github/workflows/build.yml`](.github/workflows/build.yml) |
-| `Supervisor pilot` (every PR, nightly, on demand; required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
+| Layer                                                       | What it runs                                                                                                                                                                                                                                               | Where                                                                  |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `Tests`                                                     | `pytest -v` (100% line and branch coverage, gated by `--cov-fail-under=100`), the shell script tests in `scripts/`, and the node tests in `polygonal_zones_editor/tests/`                                                                                  | [`.github/workflows/test.yml`](.github/workflows/test.yml)             |
+| `Lint addon`                                                | `frenck/action-addon-linter`, an AppArmor profile compile (`apparmor_parser -Q -K`), `ruff`, a non-required check that the declared HA floor is within its bound, and `shellcheck` of `scripts/` and `rootfs/` shell files                                 | [`.github/workflows/lint.yml`](.github/workflows/lint.yml)             |
+| `Build addon`                                               | Multi-arch Dockerfile build (per `polygonal_zones_editor/build.yaml`), each arch built and booted natively (amd64 on `ubuntu-latest`, aarch64 on `ubuntu-24.04-arm`, no QEMU), plus a Playwright headless page load on both arches (`scripts/ui_smoke.py`) | [`.github/workflows/build.yml`](.github/workflows/build.yml)           |
+| `Supervisor pilot` (every PR, nightly, on demand; required) | Installs, configures and probes the add-on under a real stable-channel Supervisor and Core, in the official add-on devcontainer                                                                                                                            | [`.github/workflows/supervisor.yml`](.github/workflows/supervisor.yml) |
 
 The smoke step in `build.yml` boots the container on each arch's native runner with a stub `options.json` mount and probes:
+
 - `/healthz` returning `ok`
 - `/zones.json` without `X-Save-Token` returning `403`
 - `/zones.json` returning a valid GeoJSON `FeatureCollection`
@@ -32,9 +33,9 @@ Every PR, every Friday and every manual run uses the full matrix (both arches, b
 
 ## Manual: live HA OS
 
-The Supervisor pilot covers install, setting a *valid* option through the Supervisor API, ingress, AppArmor enforcement, and the watchdog restarting the add-on when its web process dies. It runs on a devcontainer, not HA OS itself, and only the happy path. Some things still only show up under a real HA OS install, or need a case the pilot doesn't probe:
+The Supervisor pilot covers install, setting a _valid_ option through the Supervisor API, ingress, AppArmor enforcement, and the watchdog restarting the add-on when its web process dies. It runs on a devcontainer, not HA OS itself, and only the happy path. Some things still only show up under a real HA OS install, or need a case the pilot doesn't probe:
 
-- `config.yaml` schema *rejection* (e.g. `zone_colour: match(...)` refusing `""` or `rgb(...)`): the pilot only round-trips a valid value.
+- `config.yaml` schema _rejection_ (e.g. `zone_colour: match(...)` refusing `""` or `rgb(...)`): the pilot only round-trips a valid value.
 - Backing up and restoring the add-on through the Supervisor.
 - Provenance of the published images. `config.yaml` leaves `codenotary` unset (CAS is discontinued); the images carry Sigstore
   build-provenance attestations, which the Supervisor does not verify on install. Verify them yourself after a release:
@@ -46,7 +47,15 @@ The Supervisor pilot covers install, setting a *valid* option through the Superv
 
 ### Setup
 
-- [ ] Install the branch as an addon via the **Add Repository** flow pointing at your fork / branch URL.
+Test a branch as a **local add-on**, not through the repository. With `image:` in `config.yaml` the Supervisor pulls the published image for that `version`, so a branch whose version is unchanged silently runs the released code.
+
+- [ ] Copy the branch's `polygonal_zones_editor/` folder to `/addons/polygonal_zones_editor/` on the HA host: the Samba `addons` share, or SSH.
+- [ ] In that copy only, delete the `image:` line and set `version:` to something you will recognise, such as `0.7.0-dev1`. Never commit either change: without `image` a release would never be pulled, because the Supervisor would build on every device instead.
+- [ ] Keep `build.yaml`. The `Dockerfile` takes its base image from `BUILD_FROM`, which `build.yaml` supplies.
+- [ ] **Settings → Add-ons → Add-on store → ⋮ → Check for updates**, then **Local add-ons → Polygonal Zones → Install**. After a code change, copy again and raise `version`: the Supervisor keys the build on it, so an unchanged version offers nothing to install.
+- [ ] Run the integration from the branch too, or discovery will not appear: copy `custom_components/polygonal_zones/` from the integration branch to `/config/custom_components/`, replacing the HACS copy, and restart Home Assistant. Discovery needs integration 1.16.0 or later, which has not been released.
+- [ ] Disable or uninstall the store version of the add-on. The local copy has slug `local_polygonal_zones`, so both would claim port 8000.
+- [ ] The add-on log shows `Announced zones to Home Assistant` at startup. Without it, discovery did not reach Core: check `SUPERVISOR_TOKEN` is set and that `discovery: [polygonal_zones]` is still in the copied `config.yaml`.
 - [ ] Confirm the addon starts cleanly: **Settings → Add-ons → Polygonal Zones → Log**, no tracebacks.
 - [ ] The startup `Loaded options:` line shows `save_token: ***` if a token is set and `save_token: not set` if not. `overlay_entities` and `trusted_proxies` show a count of entries, not the entries.
 

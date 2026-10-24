@@ -54,9 +54,3 @@ configuration:
     name: Log level
     description: >-
       Verbosity of the addon log. Bump to debug when troubleshooting.
-  push_to_core:
-    name: Send zones to the integration
-    description: >-
-      After every save, send the zones to the Polygonal Zones integration
-      through Home Assistant. Nothing to configure here; the integration needs
-      its add-on setup choice. Turn off to stop sending.

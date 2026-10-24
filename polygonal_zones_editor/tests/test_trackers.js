@@ -1,10 +1,8 @@
-// Node tests for trackers.js and the geometry.js it measures with. Run
-// with `node --test tests/test_trackers.js` from polygonal_zones_editor/
-// (also run in CI by test.yml).
+// Node tests for trackers.js and the geometry.js it measures with:
+// `node --test tests/test_trackers.js` (also run in CI by test.yml).
 //
-// trackers.js reads Leaflet layers via layer.getLatLngs(), so these tests
-// build minimal fake layers with that one method rather than loading real
-// Leaflet (which expects a browser/DOM at load time).
+// trackers.js reads layers via layer.getLatLngs(), so these tests build minimal
+// fakes with that one method rather than loading Leaflet, which needs a browser.
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');

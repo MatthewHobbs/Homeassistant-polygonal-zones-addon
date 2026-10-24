@@ -303,3 +303,20 @@ def test_every_option_has_a_name_and_description_in_the_ui():
     assert sorted(schema) == sorted(translated)
     text = (addon / "translations" / "en.yaml").read_text()
     assert "readable by anyone holding the save_token" in " ".join(text.split())
+
+
+class TestSaveToken:
+    """The token that gates non-ingress requests."""
+
+    def test_a_configured_token_wins(self):
+        import helpers
+
+        assert helpers.save_token({"save_token": "  typed-in  "}) == "typed-in"
+
+    def test_an_empty_or_missing_option_generates_one(self):
+        import helpers
+
+        for options in ({}, {"save_token": ""}, {"save_token": "   "}):
+            token = helpers.save_token(options)
+            assert len(token) >= 32
+            assert token != helpers.save_token(options)

@@ -1,9 +1,6 @@
-// Thin wrapper over window.localStorage so callers never have to think
-// about Safari private-mode, disabled storage, or quota errors. On any
-// failure we silently fall back to an in-memory Map — state simply
-// does not persist across reloads, which is the right failure mode for
-// UI preferences (pz:sidebar, pz:basemap, etc.) where losing the value
-// is strictly better than throwing on every read.
+// Thin wrapper over localStorage: Safari private mode, disabled storage and
+// quota errors all fall back to an in-memory Map. State then does not persist,
+// which beats throwing on every read for UI preferences.
 (function () {
     const fallback = new Map();
     let storageOk = true;

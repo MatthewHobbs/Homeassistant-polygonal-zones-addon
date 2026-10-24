@@ -154,9 +154,8 @@ jobs:
           # startup if /data/polygonal_zones/zones.json is absent).
           curl -fsS -H "$AUTH" http://127.0.0.1:8000/zones.json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("type")=="FeatureCollection" and isinstance(d.get("features"), list), d; print("OK /zones.json shape")'
 
-          # No Supervisor token in this container, so nothing is ever sent and
-          # the editor's delivery line stays empty.
-          curl -fsS -H "$AUTH" http://127.0.0.1:8000/push_status | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["state"]=="off" and d["detail"] is None, d; print("OK /push_status is off without a Supervisor")'
+          # No Supervisor token in this container, so the save must report that
+          # it could not ask Home Assistant to reload — and must still succeed.
 
           # /save_zones round-trip with a mix of Polygon and MultiPolygon
           # features. The MultiPolygon exercises the frontend's shape-count
@@ -168,8 +167,8 @@ jobs:
           PAYLOAD=$(python3 -c 'import json, sys; sys.path.insert(0, "scripts"); from draw_and_save import SMOKE_ZONES; print(json.dumps(SMOKE_ZONES))')
           SAVED=$(curl -fsS -X POST -H 'Content-Type: application/json' -H "$AUTH" \
             --data "$PAYLOAD" http://127.0.0.1:8000/save_zones)
-          python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d.get("status") == "ok", d' "$SAVED"
-          echo "OK /save_zones round-trip"
+          python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d.get("status") == "ok", d; r = d.get("reload") or {}; assert r.get("state") == "unreachable", d' "$SAVED"
+          echo "OK /save_zones round-trip, and reports the missing Supervisor"
           # SMOKE_ZONES carry no ids, so the server must have filled one in
           # for each: the integration binds automations to it.
           STORED=$(curl -fsS -H "$AUTH" http://127.0.0.1:8000/zones.json)

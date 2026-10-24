@@ -95,15 +95,11 @@ async def main():
         if overlay_body != {"configured": False, "trackers": []}:
             fail(f"unexpected /trackers.json body: {overlay_body!r}", errors)
 
-        # A11y regression guard (#116). The Geoman toolbar anchors are patched
-        # post-addControls to mirror their title= into aria-label (WCAG 2.2
-        # SC 4.1.2). The zone-entry rename input lives inside shadow DOM where
-        # <label for=…> never associates per spec, so it uses aria-label
-        # directly. Assert the PRIMARY controls specifically. Geoman labels its
-        # action buttons (Finish/Cancel) itself, so a check for "any
-        # aria-label in the toolbar" passes even when the draw and delete
-        # buttons are bare unlabelled icons — which is exactly what the
-        # Leaflet-Draw -> Geoman swap initially produced.
+        # A11y regression guard (#116): Geoman's anchors mirror title= into
+        # aria-label (WCAG 2.2 SC 4.1.2), and the shadow-DOM rename input uses
+        # aria-label (<label for> cannot associate). Assert the PRIMARY controls:
+        # Finish/Cancel are labelled already, so "any label" passes with bare
+        # draw and delete icons.
         draw_aria = await page.evaluate(
             "() => Array.from(document.querySelectorAll("
             "'.leaflet-pm-toolbar a.leaflet-buttons-control-button'))"
@@ -191,14 +187,11 @@ async def main():
         await page.select_option("#pz-basemap-select", "auto")
         await page.wait_for_timeout(150)
 
-        # Draw→save round-trip regression guard. The pm:create handler once
-        # built a feature without `type: "Feature"` (422 on save), and later
-        # called crypto.randomUUID(), which does not exist over plain HTTP, so
-        # the new zone was silently dropped (#46). An earlier version of this
-        # check fired Leaflet-Draw's draw:created, which nothing has listened
-        # to since the Geoman swap, and passed with no create handler at all.
-        # It now draws through the toolbar, first on 127.0.0.1 and then on a
-        # non-secure origin.
+        # Draw→save guard. pm:create once built a feature without
+        # `type: "Feature"` (422), then called crypto.randomUUID(), absent over
+        # plain HTTP, so the zone vanished (#46). An earlier version fired
+        # Leaflet-Draw's draw:created, which nothing listens to. It draws
+        # through the toolbar now.
         await draw_and_save(page, "secure origin", errors, fail)
         await draw_rectangle_and_save(page, errors, fail)
 

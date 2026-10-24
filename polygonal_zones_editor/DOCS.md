@@ -1,102 +1,91 @@
 # Polygonal Zones Editor
 
-Create and manage polygonal zones inside Home Assistant. Draw shapes on a map, name them, and have the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) consume them for location-based automations.
+Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
 
-> **32-bit hosts.** Home Assistant 2025.12 (released 2025-12-03) deprecated `armhf`, `armv7`, and `i386` as supported host architectures for add-ons. The last release of this add-on for those arches is 0.2.25. From 0.2.26 only `aarch64` and `amd64` images are published. If you run a 32-bit host (Raspberry Pi 0/1, a 32-bit OS on a Pi 2/3, 32-bit Intel Atom), 0.2.25 is the last version you can run. To keep receiving updates, move to a 64-bit HA OS installation. Supervisor stops offering updates once it detects the architecture mismatch.
+> **32-bit hosts.** Home Assistant 2025.12 deprecated the `armhf`, `armv7` and `i386` architectures for add-ons. The last release for those is 0.2.25. From 0.2.26 only `aarch64` and `amd64` images are published. On a 32-bit host (Raspberry Pi 0 or 1, a 32-bit OS on a Pi 2 or 3, a 32-bit Intel Atom) 0.2.25 is the last version you can run. To keep receiving updates, move to a 64-bit Home Assistant OS installation. The Supervisor stops offering updates once it sees the architecture mismatch.
 
 ## What this add-on is good for, and what it isn't
 
-Zones drawn here are compared against positions reported by phones, cars and
-trackers. **The accuracy of the answer is set by those devices, not by how
-carefully you draw.** A boundary placed to the centimetre is still only as good
-as the fix being tested against it.
+Zones are compared against positions reported by phones, cars and trackers. The accuracy of the answer comes from those devices, not from how carefully you draw. A boundary placed to the centimetre is still only as good as the position being tested against it.
 
-For a sense of scale, from real devices:
+Real devices, as a sense of scale:
 
-| Source | Typical reported accuracy |
-| --- | --- |
-| Phone outdoors, good sky view | 5–15 m |
-| Phone indoors | 15–65 m |
-| Vehicle tracker with a proper antenna | 3–10 m |
-| Some vehicle APIs | reports `0`, meaning *no figure given* |
+| Source                                | Typical reported accuracy              |
+| ------------------------------------- | -------------------------------------- |
+| Phone outdoors, good sky view         | 5–15 m                                 |
+| Phone indoors                         | 15–65 m                                |
+| Vehicle tracker with a proper antenna | 3–10 m                                 |
+| Some vehicle APIs                     | reports `0`, meaning _no figure given_ |
 
-A fix is a circle, not a point. A device standing still will drift across
-several metres between reports, and the companion integration inflates each
-zone by the reported accuracy before testing containment, so a device can
-match a zone whose edge it is several metres outside.
+A position is a circle, not a point. A device standing still drifts several metres between reports. The integration also widens each zone by the reported accuracy before testing, so a device can match a zone it is several metres outside.
 
-**This works well for:**
+**Good for:**
 
-- property boundaries, paddocks, yards, car parks
+- property boundaries, paddocks, yards and car parks
 - "is the car home or not", "is the van on site"
-- any zone whose smallest dimension is comfortably larger than the accuracy of
-  the devices you are testing against: as a rule of thumb, 20 m across or
-  more
+- any zone comfortably larger than the accuracy of the devices you test with. As a rule of thumb, 20 m across or more.
 
-**This works badly for:**
+**Bad for:**
 
-- rooms inside a building. A 4 m × 5 m room is smaller than the error circle of
-  a phone standing still in it. Adjacent rooms will swap at random, and a
-  device *outside the building* can match one: a car parked on a driveway has
-  been observed matching an indoor kitchen zone, because a 5 m accuracy ring
-  reached it.
-- anything needing pinpoint or "which side of this line" precision
-- distinguishing places a few metres apart
+- rooms inside a building. A 4 m by 5 m room is smaller than the error circle of a phone standing in it. Neighbouring rooms will swap at random, and a device outside the building can match one: a car on the driveway has matched an indoor kitchen zone, because a 5 m ring reached it.
+- anything needing pinpoint accuracy, or "which side of this line"
+- telling apart places a few metres apart
 
-**For room-level presence indoors, use another tool.** The limit is the
-positioning technology, not the polygon. Wi-Fi access-point association,
-Bluetooth room sensors (ESPresense and similar), or mmWave occupancy sensors
-solve that problem. This add-on is for outdoor, property-scale zones.
+**For room-level presence, use another tool.** The limit is the positioning, not the polygon. Wi-Fi access-point association, Bluetooth room sensors such as ESPresense, or mmWave occupancy sensors solve that problem. This add-on is for outdoor zones at the scale of a property.
 
-The editor's optional tracker overlay (below) shows each device's accuracy ring
-against your zones, so you can see whether a boundary is meaningful at the
-scale you have drawn it.
+The tracker overlay (described below) draws each device's accuracy ring over your zones, so you can judge whether a boundary means anything at the size you drew it.
 
 ## Configuration
 
-All options live under **Settings → Add-ons → Polygonal Zones → Configuration**. The only setting most people change is `zone_colour`.
+All options are under **Settings → Add-ons → Polygonal Zones → Configuration**. Most people only change `zone_colour`.
 
-| Option | Type | Default | What it does |
-| --- | --- | --- | --- |
-| `zone_colour` | string | `purple` | Colour used to render zones on the map. A CSS colour name (letters only) or a hex value such as `#800080`. `rgb()` and `hsl()` are refused. |
-| `theme` | list | `auto` | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override. It sets the editor palette and, with **Map style** on Auto, the map. |
-| `allow_all_ips` | bool | `false` | No longer grants anything. Kept so existing configurations still load; when `true`, the add-on logs an error at startup telling you to set `save_token` instead. See **LAN access**. |
-| `save_token` | password | empty | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**): it must carry `X-Save-Token: <value>`. Empty means nothing outside Home Assistant can reach the add-on. See **LAN access**. |
-| `trusted_proxies` | string | empty | Comma-separated list of the IP address of each reverse proxy whose `X-Forwarded-For` header should be honoured. List each proxy's own IP rather than a range: every address listed is believed about which client it forwards for, and that is what the add-on's log and failed-attempt limit record. Leave empty unless you front the add-on with your own reverse proxy. |
-| `overlay_entities` | list of strings | empty | Entity ids (for example `device_tracker.my_car`) to plot on the map. At most 25 are used. See **Plotting live positions on the map**. |
-| `tracker_refresh_seconds` | integer, 0 to 3600 | `60` | Seconds between position updates while the editor is open. `0` loads them once. 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty. |
-| `log_level` | list | `info` | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting. |
-| `push_to_core` | bool | `true` | After every save, send the zones to the Polygonal Zones integration through Home Assistant, with no token to set. It needs an integration version that supports it; until then the editor shows "Not sent automatically" under Save, which is fine if you use a zone URL. Turn off to stop sending. |
+| Option                    | Type               | Default  | What it does                                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zone_colour`             | string             | `purple` | Colour used for zones on the map. A CSS colour name in letters, or a hex value such as `#800080`. `rgb()` and `hsl()` are refused.                                                                                                                                                                                                     |
+| `theme`                   | list               | `auto`   | `auto` follows the operating system's `prefers-color-scheme`. Set `light` or `dark` to override it. It sets the editor colours and, with **Map style** on Auto, the map.                                                                                                                                                               |
+| `allow_all_ips`           | bool               | `false`  | Grants nothing any more. It is kept so old configurations still load. When `true`, the add-on logs an error at startup telling you to set `save_token` instead. See **LAN access**.                                                                                                                                                    |
+| `save_token`              | password           | empty    | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**), as `X-Save-Token: <value>`. Leave it empty for automatic setup: the add-on generates one for Home Assistant. Set it yourself only for the LAN URL flow. See **LAN access**.                                                     |
+| `trusted_proxies`         | string             | empty    | Comma-separated IP addresses of reverse proxies whose `X-Forwarded-For` header should be believed. List each proxy's own address, not a range: every address listed is trusted about which client it forwards for, and that is what the log and the failed-attempt limit record. Leave it empty unless you run your own reverse proxy. |
+| `overlay_entities`        | list of strings    | empty    | Entity ids to plot on the map, for example `device_tracker.my_car`. At most 25 are used. See **Plotting live positions on the map**.                                                                                                                                                                                                   |
+| `tracker_refresh_seconds` | integer, 0 to 3600 | `60`     | Seconds between position updates while the editor is open. `0` loads them once. Values from 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty.                                                                                                                                                                   |
+| `log_level`               | list               | `info`   | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting.                                                                                                                                                                                                                                              |
 
 ### Network ports
 
-The add-on's web interface runs on port 8000 inside the container. Use the editor through Home Assistant: the **Open Web UI** button or the sidebar entry. That route (ingress) needs no extra configuration.
+The web interface listens on port 8000 inside the container. Use the editor through Home Assistant: the **Open Web UI** button or the sidebar entry. That route (ingress) needs no setup.
 
-Direct LAN access on `http://<your-ha-host>:8000/` is off by default (`8000/tcp: null` in the add-on manifest). To enable it, go to **Settings → Add-ons → Polygonal Zones → Network**, assign a host port, and restart the add-on. This is how the companion integration fetches `zone_urls` and how `curl` backups work. Every such request needs `save_token`: see **LAN access**.
+Direct access on `http://<your-ha-host>:8000/` is off by default (`8000/tcp: null` in the add-on manifest). To turn it on, open **Settings → Add-ons → Polygonal Zones → Network**, assign a host port and restart the add-on. You need this for `curl` backups, for a reverse proxy, and for an integration older than 1.16.0 that fetches the zones over your network.
 
-**The LAN port is plain HTTP.** The add-on does not terminate TLS, so `save_token`, zones and tracker positions cross your network unencrypted. Use it only on a network you trust, or put a TLS-terminating reverse proxy in front of it (see **Pointing the integration at the add-on**).
+Home Assistant does not need the host port. Core reaches port 8000 in the container over the add-on network, which is the address discovery hands over. Every request that does not come through ingress needs `save_token`: see **LAN access**.
+
+**The LAN port is plain HTTP.** The add-on does not terminate TLS, so the token, your zones and tracker positions cross your network unencrypted. Use it only on a network you trust, or put a TLS-terminating reverse proxy in front of it (see **Pointing the integration at the add-on**).
 
 ### LAN access (`save_token`)
 
-Only requests that come through Home Assistant's ingress (TCP peer `172.30.32.2`) are served without a token. Every other request needs the header `X-Save-Token: <value>` matching `save_token`, whatever it asks for: `GET /zones.json`, `GET /trackers.json`, `GET /trackers/here_since`, `POST /save_zones`, `/config.json` and the editor's own page and scripts. With `save_token` empty, nothing outside Home Assistant can reach the add-on. `/healthz` is the one exception: it stays open so health checks work.
+Only requests that arrive through Home Assistant's ingress (TCP peer `172.30.32.2`) are served without a token. Every other request needs `X-Save-Token: <value>` matching `save_token`, whatever it asks for: `GET /zones.json`, `GET /trackers.json`, `GET /trackers/here_since`, `POST /save_zones`, `/config.json`, and the editor's own page and scripts. When `save_token` is empty, the add-on generates one for Home Assistant's discovery message, and nothing outside Home Assistant can reach it. `/healthz` is the one exception: it stays open so health checks work.
 
-**`allow_all_ips` no longer grants anything.** Up to 0.5.7 it let any client on your network read and overwrite the zones with no token. When it is on, the add-on logs an error at startup telling you to set `save_token` instead.
+**`allow_all_ips` no longer grants anything.** Up to 0.5.7 it let any client on your network read and overwrite zones without a token. When it is on, the add-on logs an error at startup telling you to set `save_token` instead.
 
-**The editor is used from Home Assistant, not from the LAN port.** A browser cannot add a header to a page it navigates to, so opening `http://<ha-host>:8000/` directly gets `403`. Use the sidebar or **Open Web UI**.
+**Use the editor through Home Assistant, not the LAN port.** A browser cannot add a header to a page it navigates to, so opening `http://<ha-host>:8000/` directly gets `403`. Use the sidebar or **Open Web UI**.
 
-**Ingress is for the editor, not for the integration's data fetch.** Ingress is Home Assistant's browser-session proxy and needs a logged-in user, so a background component like the integration cannot use it to poll a URL. The integration fetches `zone_urls` directly over HTTP, so it needs `save_token` like any other LAN client. That holds even when it runs inside Core on the same host: Core can reach the add-on's internal hostname, but that request does not come from the ingress address and is refused without the token.
+**Ingress is for the editor, not for the integration.** Ingress is Home Assistant's browser-session proxy and needs a logged-in user, so a background job like the integration cannot use it. The integration fetches the zones over HTTP, so it needs the token like any other client. That holds on the same machine: Core reaches the add-on's internal address, but the request does not come from the ingress address and is refused without a token.
 
-Every refusal looks identical from the outside: `403` and `{"error": "not authorised"}`, so the response does not reveal whether a token is set. The precise reason is in the add-on's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
+Every refusal looks the same from outside: `403` with `{"error": "not authorised"}`, so the reply never reveals whether a token is set. The real reason is in the add-on's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
 
-The companion integration sends the header itself from [v1.15.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.15.0): put this add-on's `save_token` in the integration's **Add-on save token** field (`zone_source_token`). It is sent only to local add-on URLs, never to a public source. An older integration, or an empty field, gets `403` and loads no zones.
+The companion integration sends the header itself from [v1.15.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.15.0), in one of two ways.
 
-Pick a long random string (the field is masked in the UI). To rotate, change the value and restart the add-on.
+- **Automatic setup** (integration 1.16.0 or later): the token travels in the discovery message, so there is nothing to type.
+- **Manual setup**: put the add-on's `save_token` in the integration's **Add-on save token** field (`zone_source_token`).
 
-The token is never logged. The `Loaded options:` line at startup shows `save_token: ***` when a token is set and `save_token: not set` when it is empty.
+In both cases the token goes only to a local add-on address, never to a public source. An older integration, or an empty field on a manual setup, gets `403` and loads no zones.
 
-### Backing up / restoring zones with `curl`
+Pick a long random string. The field is masked in the UI. To rotate it, change the value and restart the add-on.
 
-The zones are kept in `/data/polygonal_zones/zones.json` inside the container, but you don't need a shell to read them. With a host port mapped and `save_token` set:
+The token is never logged. The `Loaded options:` line at startup shows `save_token: ***` when one is set, and `save_token: not set` when it is empty.
+
+### Backing up and restoring zones with `curl`
+
+Your zones live in `/data/polygonal_zones/zones.json` inside the container, but you do not need a shell to read them. Map a host port, set `save_token`, then:
 
 ```sh
 # Backup
@@ -110,11 +99,11 @@ curl -X POST -H 'Content-Type: application/json' \
   http://<ha-host>:8000/save_zones
 ```
 
-A restore must be sent as `Content-Type: application/json`, as above; any other content type is refused with `415`.
+A restore must use `Content-Type: application/json`, as above. Any other type is refused with `415`.
 
-`GET /zones.json` returns an `ETag` header (a fingerprint of the file's current contents). Pass it back as `If-Match` on `POST /save_zones` to refuse the write if anything changed in between (the editor does this by default). Plain `curl` posts without `If-Match` are last-write-wins.
+`GET /zones.json` returns an `ETag` header, which is a fingerprint of the file. Send it back as `If-Match` on `POST /save_zones` to refuse the write if the file changed in between. The editor does this by default. A plain `curl` post without `If-Match` wins, whatever came before.
 
-`GET /zones.json` also honours `If-None-Match` and returns a `Last-Modified` header. The companion integration reads the zones file at startup and again whenever you call the `reload_zones` action; it does not poll. A `304 Not Modified` answer means the file is unchanged and your cached copy is current. It helps those on-demand fetches and any script that requests the file repeatedly:
+`GET /zones.json` also honours `If-None-Match` and returns `Last-Modified`. The integration reads the file at startup and when you call `reload_zones` or `reload_all_zones`; it does not poll. A `304 Not Modified` reply means your cached copy is current. That helps those on-demand reads, and any script that asks for the file repeatedly:
 
 ```sh
 # First request
@@ -129,9 +118,9 @@ curl -I -H 'X-Save-Token: <yourtoken>' -H "If-None-Match: $etag" \
 
 ## Plotting live positions on the map (`overlay_entities`)
 
-`overlay_entities` lets the editor plot live tracker positions over the map, so you can see whether a device falls inside a boundary, and by how much.
+`overlay_entities` plots live tracker positions over the map, so you can see whether a device falls inside a boundary, and by how much.
 
-It is empty by default, and while it is empty this add-on asks Home Assistant for nothing at all.
+The list is empty by default. While it is empty, the add-on asks Home Assistant for nothing.
 
 ```yaml
 overlay_entities:
@@ -139,29 +128,31 @@ overlay_entities:
   - device_tracker.the_van
 ```
 
-Each device appears on the map as a marker with a dashed ring showing its reported GPS accuracy. The sidebar lists which zones it is inside and how far it sits from their edges.
+Each device appears as a marker with a dashed ring showing its reported accuracy. The sidebar lists the zones it is inside and how far it sits from their edges.
 
 Click a marker for its popup:
 
 - the position error and battery level, when the tracker reports them;
-- **Here since**, when it arrived where it is now. Movement within twice its position error, or 20 m if that is more, is ignored.
+- **Here since**, which is when it arrived where it is now. Movement within twice its position error, or 20 m if that is more, is ignored.
 
-Working out **Here since** reads up to 24 hours of that tracker's history from Home Assistant when you open the popup, and again if it moves while open. Nothing is stored. The line reads:
+Working out **Here since** reads up to 24 hours of that tracker's history from Home Assistant when you open the popup, and again if it moves while open. Nothing is stored.
 
-| Shows | Meaning |
-| --- | --- |
-| `Here since checking…` | The lookup is running. |
-| a time, or a date and time | When it arrived. The date is shown when that was not today. |
-| `Here since over 24 h` | It has not moved for the whole 24 hours, so the real time is earlier. |
-| `Here since unknown` | There is no usable history, the lookup failed or timed out (10 seconds), or the add-on was busy with other lookups. |
+| Shows                      | Meaning                                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Here since checking…`     | The lookup is running.                                                                              |
+| a time, or a date and time | When it arrived. A date appears when that was not today.                                            |
+| `Here since over 24 h`     | It has not moved for the whole 24 hours, so the real time is earlier.                               |
+| `Here since unknown`       | No usable history, the lookup failed or timed out (10 seconds), or the add-on was busy with others. |
 
-The readout measures; it does not predict. It tells you a device is "3.8 m outside Annex (within its accuracy)". It does not tell you which zone the integration will report, because the integration makes that decision with rules that are deliberately not duplicated here.
+The readout measures. It does not predict. It tells you a device is "3.8 m outside Annex (within its accuracy)". It does not say which zone the integration will report, because the integration makes that call with rules that are deliberately not copied here.
 
-Each entity is fetched from Home Assistant and reduced to six fields: entity id, friendly name, state, coordinates, GPS accuracy and battery level. Every other attribute is discarded, so it never reaches the browser. Coordinates are rounded to four decimal places (about 11 m).
+Each entity is fetched from Home Assistant and cut down to six fields: entity id, friendly name, state, coordinates, accuracy and battery level. Every other attribute is thrown away, so it never reaches the browser. Coordinates are rounded to four decimal places, about 11 m.
 
 ### How often positions refresh (`tracker_refresh_seconds`)
 
-While the editor is open it re-reads the listed entities every `tracker_refresh_seconds` seconds (default 60) and moves the markers in place. Set it to `0` to load positions once when the page opens. Values from 1 to 9 are raised to 10, because each poll is one Supervisor call per listed entity for every open tab. The largest accepted value is 3600.
+While the editor is open it re-reads the listed entities every `tracker_refresh_seconds` seconds (default 60) and moves the markers. Set it to `0` to load positions once, when the page opens.
+
+Values from 1 to 9 are raised to 10, because each poll is one Supervisor call per listed entity for every open tab. The largest accepted value is 3600.
 
 ```yaml
 overlay_entities:
@@ -169,138 +160,169 @@ overlay_entities:
 tracker_refresh_seconds: 30
 ```
 
-Polling pauses while the browser tab is hidden and catches up when you return. If Home Assistant cannot be asked about an entity on a poll, its last position stays on the map. An entity Home Assistant answers for without coordinates is removed. The option does nothing while `overlay_entities` is empty.
+Polling pauses while the tab is hidden and catches up when you return. If Home Assistant cannot answer for an entity, its last position stays on the map. An entity that comes back without coordinates is removed. The option does nothing while `overlay_entities` is empty.
 
 ### Before you add people
 
-Positions and arrival times are served from `GET /trackers.json` and `GET /trackers/here_since`, under the same rules as `/zones.json`: ingress, or `save_token` from anywhere else. Anyone holding the token can read them over your LAN. List only what you are content to expose on those terms. Vehicles are the intended case. A household member's phone is a decision to make deliberately, and ideally with them.
+Positions and arrival times are served by `GET /trackers.json` and `GET /trackers/here_since`, under the same rules as `/zones.json`: ingress, or `save_token` from anywhere else. Anyone holding the token can read them over your network. List only what you are content to expose on those terms.
 
-At most 25 entities are fetched. Anything that is not a valid entity id is ignored with a warning in the log.
+Vehicles are the intended case. A household member's phone is a decision to make deliberately, and ideally with them.
+
+At most 25 entities are fetched. Anything that is not a valid entity id is ignored, with a warning in the log.
 
 ### The `homeassistant_api` grant
 
-Reading those states needs Home Assistant's state API, so the add-on's manifest (`config.yaml`) sets `homeassistant_api: true`. The grant applies when the add-on is installed, whatever you configure. Leaving `overlay_entities` empty does not withhold it; it only means the add-on uses none of it.
+Reading those states needs Home Assistant's state API, so the manifest (`config.yaml`) sets `homeassistant_api: true`. The grant applies when the add-on is installed, whatever you configure. Leaving `overlay_entities` empty does not withhold it; it only means the add-on uses none of it.
 
-The grant is not read-only: it gives the add-on Home Assistant API access in general. What the add-on does with it is narrow. It issues `GET /states/<entity_id>` for each entity you list, and a history read for one of them when you open its popup (again if it moves while open). With the list empty it does nothing.
+The grant is not read-only. It gives the add-on general access to the Home Assistant API. What the add-on does with it is narrow: `GET /states/<entity_id>` for each entity you list, and one history read when you open that entity's popup, again if it moves while open. With the list empty it does nothing.
 
 ## Integration with the Polygonal Zones HA integration
 
-The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this add-on. It fetches the zones file at startup and again whenever you call the `reload_zones` action. It never reaches the add-on through ingress, even on the same host: it needs a mapped host port and `save_token`, as described in **LAN access**.
+The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this add-on. It fetches the zones at startup, and again when you save here or call `reload_zones` or `reload_all_zones`. It never reaches the add-on through ingress, even on the same machine.
+
+With automatic setup the integration uses the add-on's internal address and the token from discovery. With manual setup you map a host port and share `save_token`, as described in **LAN access**.
 
 ### Availability and failure modes
 
-The add-on serves `/zones.json` from local disk. What happens when the zones file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem corruption) depends on which side notices first:
+The add-on serves `/zones.json` from local disk. What happens when that file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem damage) depends on who notices first.
 
-- **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the error with a traceback. The Docker `HEALTHCHECK` also fails, because `/healthz` checks that the zones file is readable rather than only that the process is alive, so Docker marks the container unhealthy.
-- **The Supervisor** restarts the add-on when the container's health check (`/healthz`, every 30 seconds) fails three times in a row, or when the web service stops. It does this only while **Watchdog** is switched on in the add-on's **Info** tab, so switch it on.
-- **The integration** sees the 503 the next time it tries to read zones (on startup or on a `reload_zones` call). By default it keeps its last-known-good state, so zone-based automations keep using the zone definitions it last fetched. If the add-on is down entirely (process gone, port unreachable), the integration surfaces an unavailable state, and automations that guard on `zone.* != 'unavailable'` stop firing until the add-on is back.
+- **The add-on** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the error with a traceback. The Docker `HEALTHCHECK` also fails, because `/healthz` checks that the file is readable, not merely that the process runs, so Docker marks the container unhealthy.
+- **The Supervisor** restarts the add-on when the health check (`/healthz`, every 30 seconds) fails three times in a row, or when the web service stops. It only does this while **Watchdog** is on in the add-on's **Info** tab, so turn it on.
+- **The integration** sees the `503` the next time it reads zones, at startup or on a reload. By default it keeps its last good zones, so automations carry on with the definitions it last fetched. If the add-on is gone entirely (process dead, port unreachable), the integration reports the entities as unavailable, and automations that guard on `zone.* != 'unavailable'` stop until the add-on returns.
 
-A file that is readable but not valid JSON is a different case. The add-on never parses `zones.json` when serving it, so it hands the bytes over as they are and the health check stays green. The editor then shows "Couldn't load zones".
+A file that is readable but not valid JSON is a different case. The add-on never parses `zones.json` when serving it, so it hands the bytes over and the health check stays green. The editor then shows "Couldn't load zones".
 
 **Recovery:**
-1. Open **Settings → Add-ons → Polygonal Zones → Log**. An unreadable file shows as `Failed to read /data/polygonal_zones/zones.json`. A corrupt one leaves no add-on log line; the "Couldn't load zones" message in the editor is the sign.
-2. Common causes: ownership drift on `/data` (usually resolved by a restart, since `cont-init.d/00-fix-perms` re-chowns on boot), disk full, or file corruption after an ungraceful host shutdown.
-3. If the file is corrupt, restore `/data/polygonal_zones/zones.json` from the latest Home Assistant backup that predates the failure (**Settings → System → Backups**), or restore your own `curl` copy. Until then the integration keeps its last-known-good zones.
+
+1. Open **Settings → Add-ons → Polygonal Zones → Log**. An unreadable file shows as `Failed to read /data/polygonal_zones/zones.json`. A corrupt file leaves no line in the add-on log; the editor's "Couldn't load zones" is the sign.
+2. Common causes: ownership drift on `/data`, usually fixed by a restart because `cont-init.d/00-fix-perms` re-chowns on boot; a full disk; or a damaged file after an unclean shutdown.
+3. If the file is corrupt, restore `/data/polygonal_zones/zones.json` from a Home Assistant backup taken before the failure (**Settings → System → Backups**), or from your own `curl` copy. Until then the integration keeps its last good zones.
 
 ### Pointing the integration at the add-on
 
-**Recommended: LAN URL with `allow_private_urls: true`.** From companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) the integration has an opt-in boolean option `allow_private_urls` in its advanced settings. Turn it on and point `zone_urls` at the add-on's LAN URL:
+#### Recommended: automatic setup (integration v1.16.0 or later)
 
-- In this add-on: map a host port and set `save_token: <value>`. The integration (v1.15.0 or later) must have the same value in its **Add-on save token** field; otherwise it gets `403`.
-- In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`. Use the IP address, not a hostname such as `homeassistant`: the integration does not send the token to it, so the add-on answers `403`.
+The add-on announces itself to Home Assistant at every start. Open **Settings → Devices & services** and **Polygonal Zones** appears as a discovered integration. Confirm it once and setup is done. There is no URL to type, no host port to map and no token to copy, because the add-on generates one that only Home Assistant sees.
 
-The integration refuses URLs that point at private network addresses (an SSRF defence). Loopback, link-local (cloud-metadata), multicast and reserved ranges stay blocked. `allow_private_urls` unlocks only RFC 1918 space (`192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`), which is all a typical home network needs. The request is plain HTTP, so the token crosses your LAN unencrypted (see **Network ports**).
+Then choose your devices: open the entry's **⋮ → Reconfigure**, pick the `device_tracker` entities and confirm the tracking notice.
 
-#### Alternative: a private reverse proxy with TLS on a non-RFC-1918 hostname
+From then on, every save asks Home Assistant to re-read the zones, so an edit is live without a manual reload. The line under **Save** says what happened. With an older integration it says the reload needs v1.16.0 or later, and the `reload_zones` action still works.
 
-If you'd rather not enable `allow_private_urls`, or you run integration v1.11.x or earlier, front the add-on with a reverse proxy you control (nginx, Caddy, Traefik, HA's NGINX Proxy Manager add-on) that terminates TLS under a public-resolving hostname such as `zones.yourdomain.tld`. Point the integration at `https://zones.yourdomain.tld/zones.json`. The DNS name resolves publicly, so the integration's SSRF guard lets it through, but the listener stays on your LAN and no zones data leaves your network. The integration never sends its token to a public hostname, so the proxy must add it. The token also unlocks saving zones and tracker positions, so forward only `GET /zones.json` (nginx: `location = /zones.json { limit_except GET { deny all; } proxy_set_header X-Save-Token <value>; proxy_pass http://<ha-host>:8000; }`) and nothing else. Keep the proxy off the public internet: anyone who reaches it can read your zones.
+#### Alternative: LAN URL with `allow_private_urls: true`
 
-#### Last resort: a public-CDN mirror (privacy warning)
+Use this for an integration older than v1.16.0, or when the add-on runs somewhere Home Assistant cannot discover.
 
-Hosting `zones.json` on a public-facing server (GitHub Pages, S3, Cloudflare Pages) is occasionally suggested. Do not do this without understanding the privacy cost. Your polygon geometry encodes the precise shape and location of your home, workplace, school runs, and any other place you have drawn a zone. Publishing it to a public CDN means:
+From integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) onward, the integration has an advanced option called `allow_private_urls`. Turn it on and point `zone_urls` at the add-on's LAN address.
 
-- The data is world-readable: any visitor, crawler, scraper or search engine can fetch it.
-- Public CDNs cache and replicate content across their global edge networks. Once it has been served, you cannot assume you can fully revoke it.
-- Major providers (GitHub, AWS, Cloudflare) are subject to the US CLOUD Act, so the data can be disclosed to US authorities regardless of where you live.
-- Search engines index content hosted on common providers. Your home coordinates become discoverable by name or URL.
-- Deleting the file later does not remove archived copies (Wayback Machine, third-party scrapers).
+- In this add-on: map a host port and set `save_token: <value>`.
+- In the integration: turn on `allow_private_urls` in the advanced section, and set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`. Use the IP address, not a name such as `homeassistant`, because the integration does not send the token to a name, so the add-on answers `403`.
+- Integration v1.15.0 or later must also hold the same value in **Add-on save token**, or it gets `403`.
 
-If you must go this route (no control over DNS, no reverse proxy, and an integration older than v1.12.0), use a private or unlisted bucket with a strong pre-signed URL, rotate the URL regularly, and treat any leak of the URL as a leak of the geometry.
+The integration refuses addresses on private networks as a guard against server-side request forgery: a zone address reaching services inside your network. Loopback, link-local (cloud metadata), multicast and reserved ranges stay blocked. `allow_private_urls` unlocks only the usual home ranges, `192.168.x.x`, `10.x.x.x` and `172.16.x.x` to `172.31.x.x`.
+
+The request is plain HTTP, so the token crosses your network unencrypted. See **Network ports**.
+
+#### Alternative: a private reverse proxy with TLS on a public name
+
+If you would rather not turn on `allow_private_urls`, or you run integration v1.11.x or earlier, put a reverse proxy you control in front of the add-on: nginx, Caddy, Traefik or Home Assistant's NGINX Proxy Manager add-on. Give it TLS under a name that resolves publicly, such as `zones.yourdomain.tld`, and point the integration at `https://zones.yourdomain.tld/zones.json`.
+
+The name resolves publicly, so the integration's guard lets it through, while the proxy listens only on your network and no zone data leaves it. The integration never sends its token to a public name, so the proxy must add it. That token also unlocks saving zones and reading tracker positions, so forward only `GET /zones.json`. For nginx:
+
+```
+location = /zones.json {
+    limit_except GET { deny all; }
+    proxy_set_header X-Save-Token <value>;
+    proxy_pass http://<ha-host>:8000;
+}
+```
+
+Keep the proxy off the public internet. Anyone who reaches it can read your zones.
+
+#### Last resort: a public CDN mirror (privacy warning)
+
+Hosting `zones.json` on a public server (GitHub Pages, S3, Cloudflare Pages) is sometimes suggested. Do not do it without understanding the cost. Your zone outlines give away the exact shape and position of your home, workplace, school run and every other place you drew.
+
+- The file is world-readable. Any visitor, crawler or search engine can fetch it.
+- Public CDNs cache and copy content across their networks. Once served, you cannot assume you can pull it back.
+- Major providers (GitHub, AWS, Cloudflare) fall under the US CLOUD Act, so the data can be disclosed to US authorities whatever country you live in.
+- Search engines index content on common hosts. Your home coordinates become findable by name or address.
+- Deleting the file later does not remove archived copies, such as the Wayback Machine and third-party scrapers.
+
+If you must do it (no control over DNS, no reverse proxy, and an integration older than v1.12.0), use a private or unlisted bucket with a strong signed URL, rotate the URL regularly, and treat a leaked URL as leaked geometry.
 
 ## Usage
 
-### Accessing the web interface
+### Opening the editor
 
-- **Info page**: press **Open Web UI** on the add-on's info page.
-- **Sidebar**: enable **Show in sidebar** in the add-on configuration for a permanent shortcut.
+- **Info page**: choose **Open Web UI** on the add-on's page.
+- **Sidebar**: turn on **Show in sidebar** in the add-on configuration for a permanent shortcut.
 
 ### Saving changes
 
-Changes are not written until you press **Save** at the bottom of the sidebar.
+Nothing is written until you press **Save** at the bottom of the sidebar.
 
-An amber dot appears on **Save** while there are changes not yet written to disk. It clears once the save succeeds.
+An amber dot appears on **Save** while there are changes not yet written. It clears when the save succeeds.
 
 A refused save shows the server's reason under the button.
 
 #### If a save conflicts or times out
 
-A conflict means another session saved first. Saving stays refused until you reload, so the other session's zones are not overwritten. After a conflict or a timeout, **Download unsaved zones** saves the zones on screen as a file. Then either:
+A conflict means another session saved first. Further saves stay refused until you reload, so the other session's zones are not overwritten.
 
-- reload the page and re-apply your changes; or
-- download, reload, and use **Replace zones from file** to put the downloaded zones back. This replaces every zone with the file's zones and discards the other session's changes.
+After a conflict or a timeout, **Download unsaved zones** saves what is on screen as a file. Then either:
 
+- reload the page and apply your changes again; or
+- download, reload, then use **Replace zones from file** to put the downloaded zones back. This replaces every zone with the file's zones and discards the other session's changes.
 
-### Zones file
+### The zones file
 
-The zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion integration reads this file. See **Backing up / restoring zones with curl** for backups, and **Privacy and data** for what Home Assistant backups keep.
+Zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion integration reads this file. See **Backing up and restoring zones with curl** for backups, and **Privacy and data** for what Home Assistant backups keep.
 
-Each zone has a stable `properties.id`, filled in by the add-on when missing. A position is `[longitude, latitude]`. A third number (altitude) is accepted and dropped on save. Four or more values in a position are refused with `422`. A save is refused unless every feature is a Polygon or MultiPolygon with closed rings and at most 1000 vertices, and names and ids are unique.
+Each zone has a stable `properties.id`, which the add-on fills in when it is missing. A position is `[longitude, latitude]`. A third number (altitude) is accepted and dropped on save. Four or more values are refused with `422`.
+
+A save is refused unless every feature is a `Polygon` or `MultiPolygon` with closed rings and at most 1000 vertices, and names and ids are unique.
 
 ### Features
 
 #### Viewing zones
 
-- All zones are listed in the sidebar and drawn on the map.
-- While the list is loading it shows "Loading zones…". On a new install with no zones it shows "No zones yet. Draw one on the map to get started."
+- Every zone is listed in the sidebar and drawn on the map.
+- While the list loads it shows "Loading zones…". On a new install with no zones it shows "No zones yet. Draw one on the map to get started."
 - If loading fails, the list shows "Couldn't load zones…" and the **Replace zones from file** button. Check the add-on log.
 
 #### Map style
 
-- Use the **Map style** dropdown at the top of the sidebar to change the background map: **Street map** (OpenStreetMap), **Dark** (CARTO), or **Satellite** (Esri World Imagery).
-- **Auto** follows the `theme` option when it is `light` or `dark`, and otherwise your OS or browser light/dark setting. It picks Street map in light and Dark in dark.
+- Use the **Map style** dropdown at the top of the sidebar: **Street map** (OpenStreetMap), **Dark** (CARTO) or **Satellite** (Esri World Imagery).
+- **Auto** follows the `theme` option when it is `light` or `dark`. Otherwise it follows your operating system or browser setting, picking Street map in light and Dark in dark.
 - Your choice is kept in the browser.
 
 #### Adding zones
 
 The draw controls are at the top left of the map.
 
-- Click the polygon button, then click the map to place points. Click the first point again to finish.
-- Or click the rectangle button, then click two opposite corners. It is saved as a plain polygon.
+- Choose the polygon button, then click the map to place points. Click the first point again to finish.
+- Or choose the rectangle button, then click two opposite corners. It is saved as a plain polygon.
 
 #### Editing zones
 
-- Click the edit button next to a zone's name in the sidebar.
-- Drag the points to change the shape. You can also rename the zone in the sidebar.
-- Press **Done** next to the zone's name when finished. That only confirms the change in the editor; press the sidebar **Save** to write it to disk.
+- Choose the edit button next to a zone's name in the sidebar.
+- Drag the points to change the shape. You can rename the zone in the sidebar too.
+- Press **Done** next to the zone's name. That only confirms the change in the editor; press the sidebar **Save** to write it to disk.
 
 #### Deleting zones
 
-- Click the trash button in the map toolbar to enter removal mode.
+- Choose the trash button in the map toolbar to enter removal mode.
 - Click a zone on the map to remove it.
 - Press the sidebar **Save** to write the change to disk.
 
 ## Privacy and data
 
-**Zones and settings are in every backup.** Your zones are stored at `/data/polygonal_zones/zones.json`. Everything in `/data` is included in every Home Assistant backup that includes this add-on, and so is the add-on's `options.json`, which holds your `save_token` and your `overlay_entities` list. Deleting a zone from the editor does not remove it from backups taken before the deletion. If you are removing zones for privacy reasons (after a move, after drawing over a sensitive area, or in response to a subject-access or deletion request), also remove old backups via **Settings → System → Backups → ⋮ → Remove**, and any copies you keep outside Home Assistant.
+**Zones and settings are in every backup.** Your zones are at `/data/polygonal_zones/zones.json`. Everything in `/data` is in every Home Assistant backup that includes this add-on, and so is the add-on's `options.json`, which holds `save_token` and your `overlay_entities` list.
 
-**The LAN port is not encrypted.** If you map a host port, the token, zones and tracker positions travel over plain HTTP. See **Network ports**.
+Deleting a zone in the editor does not remove it from earlier backups. If you are removing zones for privacy (after a move, after drawing over a sensitive area, or after a deletion request), remove old backups too, under **Settings → System → Backups → ⋮ → Remove**, and any copies you keep outside Home Assistant.
 
-**Map tiles come from a third party.** Your browser fetches the map background directly from the provider of the map style in use: OpenStreetMap, CARTO or Esri. Auto picks OpenStreetMap or CARTO by theme; Esri is used only if you choose Satellite. That provider sees your IP address, which area you are viewing (the tiles you request) and your Home Assistant address (for example a `*.ui.nabu.casa` hostname) as the referring site.
+**The LAN port is not encrypted.** If you map a host port, the token, your zones and tracker positions travel over plain HTTP. See **Network ports**.
 
-**Your browser remembers the last map view.** The editor stores where you last panned and zoomed in your browser's localStorage, under `pz:viewport`, so it reopens there. Your map style and sidebar choice are kept the same way (`pz:basemap`, `pz:sidebar`). Nothing of this is sent to the add-on. Clearing the site data for your Home Assistant address removes it.
+**Map tiles come from a third party.** Your browser fetches the map background from the provider of the style in use: OpenStreetMap, CARTO or Esri. Auto picks OpenStreetMap or CARTO by theme; Esri is used only if you choose Satellite. That provider sees your IP address, the area you are viewing (from the tiles you request) and your Home Assistant address as the referring site, such as a `*.ui.nabu.casa` hostname.
 
-**Tracker positions are passed through, not kept.** `GET /trackers.json` returns, for each entity in `overlay_entities`, only its entity id, friendly name, state, GPS accuracy, battery level, and coordinates rounded to four decimal places (about 11 m). `GET /trackers/here_since` returns only when one of them arrived where it is, worked out from up to 24 hours of its history. The add-on stores none of it: each request asks Home Assistant afresh.
-
-**Logs.** The add-on log records the address of each client whose request it refuses, and of each save that conflicts with another session's. At `debug` level it also records the entity id of any tracker lookup that fails. Values a client sends are shown escaped. The Supervisor controls how long logs are kept, not this add-on.
-
-The companion integration has its own [privacy notes](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/blob/main/docs/privacy.md).
+**Your browser remembers the last map view.** The editor stores where you last panned and zoomed in browser storage, under `pz:viewport`, so it opens there next time. Map style and sidebar choice are kept the same way (`pz:basemap`, `pz:sidebar`). None of it is sent to the add-on. Clearing site data for your Home Assistant address removes it.

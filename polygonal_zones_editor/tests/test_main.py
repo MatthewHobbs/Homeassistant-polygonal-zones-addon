@@ -351,30 +351,17 @@ def test_save_zones_preserves_client_supplied_id(ingress_client, tmp_zones_file)
     assert stored["features"][0]["properties"]["id"] == stable_id
 
 
-def test_save_zones_backfills_missing_id_and_non_dict_properties(
-    ingress_client,
-    tmp_zones_file,
-):
-    """Feature with properties=null (allowed on input) gets a fresh
-    properties dict carrying a backfilled id. Feature with an empty id
-    (treated as falsy) gets re-filled. Both coexist in one payload."""
+def test_save_zones_backfills_a_missing_id(ingress_client, tmp_zones_file):
+    """A feature with no id gets a fresh one, so automations can bind to it."""
     payload = {
         "type": "FeatureCollection",
         "features": [
             {
                 "type": "Feature",
-                "properties": None,
+                "properties": {"name": "First"},
                 "geometry": {
                     "type": "Polygon",
                     "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
-                },
-            },
-            {
-                "type": "Feature",
-                "properties": {"name": "Second"},
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 2.0]]],
                 },
             },
         ],
@@ -382,9 +369,7 @@ def test_save_zones_backfills_missing_id_and_non_dict_properties(
     r = ingress_client.post("/save_zones", json=payload)
     assert r.status_code == 200
     stored = json.loads(tmp_zones_file.read_text())
-    for feat in stored["features"]:
-        assert isinstance(feat["properties"], dict)
-        assert len(feat["properties"]["id"]) == 32
+    assert stored["features"][0]["properties"]["id"]
 
 
 def test_save_zones_rejects_non_int_schema_version(ingress_client, tmp_zones_file):
@@ -545,7 +530,7 @@ def _feature(geom):
     """Wrap a geometry in a valid Feature shell for parametrized reject tests."""
     return {
         "type": "FeatureCollection",
-        "features": [{"type": "Feature", "properties": {}, "geometry": geom}],
+        "features": [{"type": "Feature", "properties": {"name": "Zone"}, "geometry": geom}],
     }
 
 
@@ -634,7 +619,7 @@ def _polygon(coords):
                     }
                 ],
             },
-            "properties: must be a dict",
+            "properties: required, and must be an object",
         ),
     ],
 )
@@ -760,10 +745,9 @@ def test_save_zones_rejects_duplicate_zone_names(ingress_client, tmp_zones_file)
     assert "duplicate" in r.json()["detail"]
 
 
-def test_save_zones_accepts_unnamed_duplicates(ingress_client, tmp_zones_file):
-    """Uniqueness only applies to features that carry a string name.
-    Two unnamed features (or features with name=None) are fine — HA won't
-    surface them as zone.* entities anyway until a name is set."""
+def test_save_zones_refuses_a_zone_with_no_name(ingress_client, tmp_zones_file):
+    """Without a name the integration refuses the whole file, so a save that
+    would produce one is refused here instead."""
     geom = _polygon([[[0, 0], [1, 0], [1, 1], [0, 0]]])
     payload = {
         "type": "FeatureCollection",
@@ -773,7 +757,8 @@ def test_save_zones_accepts_unnamed_duplicates(ingress_client, tmp_zones_file):
         ],
     }
     r = ingress_client.post("/save_zones", json=payload)
-    assert r.status_code == 200
+    assert r.status_code == 422
+    assert "must not be blank" in r.json()["detail"]
 
 
 def test_save_zones_accepts_multipolygon(ingress_client, tmp_zones_file):
@@ -798,9 +783,8 @@ def test_save_zones_accepts_multipolygon(ingress_client, tmp_zones_file):
     assert r.status_code == 200
 
 
-def test_save_zones_accepts_null_properties(ingress_client, tmp_zones_file):
-    """`properties` may be absent or null per GeoJSON — the validator only
-    rejects non-None non-dict values."""
+def test_save_zones_refuses_null_properties(ingress_client, tmp_zones_file):
+    """A zone needs a name, and a name lives in `properties`."""
     payload = {
         "type": "FeatureCollection",
         "features": [
@@ -815,7 +799,8 @@ def test_save_zones_accepts_null_properties(ingress_client, tmp_zones_file):
         ],
     }
     r = ingress_client.post("/save_zones", json=payload)
-    assert r.status_code == 200
+    assert r.status_code == 422
+    assert "must be an object" in r.json()["detail"]
 
 
 def test_save_zones_rejects_body_over_cap_with_small_content_length(
@@ -1081,14 +1066,10 @@ def test_security_headers_applied(ingress_client):
     # The map libraries are vendored; guard against a CDN dep creeping back.
     assert "unpkg.com" not in csp
     assert "object-src 'none'" in csp
-    # OSM, CARTO, and Esri World Imagery tile hosts must remain in img-src
-    # or the corresponding basemap options (#31) break. The Esri origin
-    # assertion uses `any(t == url ...)` on tokens rather than a plain
-    # `url in str` / `url in list` check: CodeQL's
-    # py/incomplete-url-substring-sanitization rule fires on any URL-literal
-    # used in a `in` / containment check, regardless of what's on the right
-    # side (string, list, set). `==` on split tokens is exact-match and
-    # clears the rule without weakening the assertion.
+    # OSM, CARTO and Esri hosts must stay in img-src or those basemaps break
+    # (#31). The Esri check compares split tokens with `==` rather than `in`:
+    # CodeQL's py/incomplete-url-substring-sanitization fires on any URL literal
+    # in a containment check, and `==` is exact and still clears it.
     assert "https://*.tile.openstreetmap.org" in csp
     assert "https://*.basemaps.cartocdn.com" in csp
     img_src_sources = next(
@@ -1380,11 +1361,9 @@ def test_save_with_if_match_on_missing_file_omits_current_etag(
 
 # --- Tracker overlay (/trackers.json) --------------------------------------
 #
-# The overlay plots live tracker positions so a user can see *why* a zone
-# misclassifies a device. It reaches Home Assistant through the Supervisor
-# proxy, so the tests below care most about what it refuses to do: fetch
-# anything not explicitly opted in, trust an entity id from config, or hand
-# positions to a client the zones file itself wouldn't be handed to.
+# The overlay reaches HA through the Supervisor proxy, so these tests care most
+# about what it refuses: fetching an entity that was not opted in, trusting an
+# id from config, or handing positions to a client the zones would not go to.
 
 
 def _ha_state(entity_id, lat, lon, acc=8, name="Thing", state="home"):
@@ -1688,11 +1667,9 @@ def test_trackers_json_returns_only_opted_in_entities(app_factory, monkeypatch):
         "device_tracker.car",
         "sensor.not_a_tracker",
     ]
-    # Only the opted-in ids were ever asked for, exactly once each, with the
-    # add-on's own token. Fetches run concurrently on a shared thread pool
-    # (_OVERLAY_POOL), so the order fake_fetch is actually called in isn't
-    # guaranteed to match submission order — assert counts, not order (a
-    # plain set would also hide a duplicate-fetch regression).
+    # Only the opted-in ids, once each, with the add-on's token. Fetches run
+    # concurrently on a shared pool, so assert counts, not order — and not a
+    # set, which would hide a duplicate-fetch regression.
     assert Counter(a[0] for a in asked) == Counter(["device_tracker.car", "sensor.not_a_tracker"])
     assert {a[1] for a in asked} == {"stub-token"}
 
@@ -2402,3 +2379,142 @@ def test_authorise_returns_the_log_text(request_factory, options, headers, expec
     request = request_factory("10.0.0.9")
     request.headers = headers
     assert main.authorise(options, request) == expected
+
+
+def test_save_zones_refuses_a_blank_name(ingress_client, tmp_zones_file):
+    """Whitespace is not a name; the integration refuses a file that has one."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "   "},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    r = ingress_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "must not be blank" in r.json()["detail"]
+
+
+def test_save_zones_trims_a_padded_name(ingress_client, tmp_zones_file):
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "  Home  "},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    r = ingress_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+    stored = json.loads(tmp_zones_file.read_text())
+    assert stored["features"][0]["properties"]["name"] == "Home"
+
+
+def test_save_zones_refuses_a_non_integer_priority(ingress_client, tmp_zones_file):
+    """`priority` decides the winner between overlapping zones; the integration
+    refuses a file it cannot read it from."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Home", "priority": "high"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    r = ingress_client.post("/save_zones", json=payload)
+    assert r.status_code == 422
+    assert "priority" in r.json()["detail"]
+
+
+def test_save_zones_keeps_unknown_properties(ingress_client, tmp_zones_file):
+    """Properties this editor does not model belong to whoever wrote them."""
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Home", "priority": 3, "polygonal_zones_ext": {"x": 1}},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    r = ingress_client.post("/save_zones", json=payload)
+    assert r.status_code == 200
+    props = json.loads(tmp_zones_file.read_text())["features"][0]["properties"]
+    assert props["priority"] == 3
+    assert props["polygonal_zones_ext"] == {"x": 1}
+
+
+def test_save_zones_reports_the_reload_outcome(ingress_client, tmp_zones_file, monkeypatch):
+    """The save response carries what Home Assistant said, so the editor does
+    not need a second status endpoint (or a poll)."""
+    import main
+
+    monkeypatch.setattr(main, "notify_saved", lambda: ("older", "update the integration"))
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Home"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+                },
+            }
+        ],
+    }
+    body = ingress_client.post("/save_zones", json=payload).json()
+    assert body["reload"] == {"state": "older", "note": "update the integration"}
+
+
+def _named_ring(name: str, points: int = 4) -> dict:
+    ring = [[round(i / 1000, 3), 0.0] for i in range(points - 1)]
+    ring.append(ring[0])
+    return {
+        "type": "Feature",
+        "properties": {"name": name},
+        "geometry": {"type": "Polygon", "coordinates": [ring]},
+    }
+
+
+def test_save_zones_rejects_more_features_than_the_cap(ingress_client, tmp_zones_file):
+    from const import MAX_FEATURES_PER_COLLECTION
+
+    features = [_named_ring(f"z{i}") for i in range(MAX_FEATURES_PER_COLLECTION + 1)]
+    r = ingress_client.post("/save_zones", json={"type": "FeatureCollection", "features": features})
+    assert r.status_code == 422
+    assert "exceeds the cap" in r.json()["detail"]
+
+
+def test_save_zones_rejects_more_vertices_in_total_than_the_cap(ingress_client, tmp_zones_file):
+    """Each feature is under its own cap; the collection total is not."""
+    from const import MAX_FEATURES_PER_COLLECTION, MAX_TOTAL_VERTICES_PER_COLLECTION
+
+    features = [
+        _named_ring(f"z{i}", points=1000)
+        for i in range(MAX_TOTAL_VERTICES_PER_COLLECTION // 1000 + 1)
+    ]
+    assert len(features) <= MAX_FEATURES_PER_COLLECTION
+    r = ingress_client.post("/save_zones", json={"type": "FeatureCollection", "features": features})
+    assert r.status_code == 422
+    assert "vertices in total" in r.json()["detail"]

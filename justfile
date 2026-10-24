@@ -8,7 +8,11 @@
 # `just ha-floor` runs it on demand, `just ci` never does.
 
 # Local CI gate - the same commands remote CI runs, for the checks it covers.
-ci: venv lint test
+ci: venv lint test comments
+
+# One rule, measured: no code comment block over 50 words. Docstrings are docs.
+comments:
+    python3 scripts/check_comment_length.py polygonal_zones_editor scripts
 
 # The declared HA floor against the bound from current stable Core (network; not in `ci`).
 ha-floor:
@@ -41,4 +45,4 @@ test: venv
     scripts/test-check-lock-pins.sh
     scripts/check-lock-pins.sh polygonal_zones_editor/requirements-dev.txt polygonal_zones_editor/requirements-dev-lock.txt
     scripts/changelog-notes.sh "$(awk -F'"' '/^version:/{print $2}' polygonal_zones_editor/config.yaml)" >/dev/null
-    cd polygonal_zones_editor && node --test tests/test_trackers.js tests/test_map.js tests/test_push_status.js
+    cd polygonal_zones_editor && node --test tests/test_trackers.js tests/test_map.js

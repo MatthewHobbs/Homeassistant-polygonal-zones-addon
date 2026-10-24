@@ -2,6 +2,7 @@ import contextlib
 import json
 import logging
 import os
+import secrets
 import sys
 import tempfile
 
@@ -99,6 +100,16 @@ def atomic_write_json(path: str, data) -> bytes:
     finally:
         os.close(dir_fd)
     return body
+
+
+def save_token(options: dict) -> str:
+    """The token that gates non-ingress requests.
+
+    A configured ``save_token`` wins, so the manual zone-URL flow keeps
+    working. Otherwise one is generated per start and only handed to Home
+    Assistant through the discovery message, so nothing is stored or typed.
+    """
+    return (options.get("save_token") or "").strip() or secrets.token_urlsafe(32)
 
 
 def load_options() -> dict:

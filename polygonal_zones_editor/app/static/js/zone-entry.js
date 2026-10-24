@@ -78,13 +78,10 @@ const ZONE_ENTRY_CSS = `
     }
 `;
 
-// Prefer a single constructable stylesheet shared by every shadow root (parsed
-// once, not re-injected on every render). But that API is not universal —
-// Safari/iOS < 16.4 and some older HA Companion webviews lack it, and
-// `new CSSStyleSheet()` throws there. Building it at module scope would abort
-// the whole script before customElements.define() runs, leaving every
-// zone-entry inert. So detect support; render() falls back to an inline <style>
-// when the sheet is null.
+// A constructable stylesheet shared by every shadow root parses the CSS once,
+// but `new CSSStyleSheet()` throws on Safari/iOS < 16.4 and some HA Companion
+// webviews; at module scope that would abort before customElements.define,
+// leaving every zone-entry inert. Detect support; else inline <style>.
 let ZONE_ENTRY_SHEET = null;
 try {
     ZONE_ENTRY_SHEET = new CSSStyleSheet();
