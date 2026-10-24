@@ -17,7 +17,7 @@ Install both from their GitHub pages, and they find each other. You will not nee
 - This app, and the [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones).
 - Something that reports where it is: a phone running the Home Assistant app, a car with a data connection, or a GPS tracker.
 
-**On a 32-bit system** (a very old Raspberry Pi, or a 32-bit operating system), version 0.2.25 was the last one published. Move to 64-bit Home Assistant to keep receiving updates.
+**64-bit Home Assistant only.** This app runs on 64-bit installations (`aarch64` or `amd64`). A 32-bit installation — an old Raspberry Pi, or a 32-bit operating system — is **not supported**, and the app store will not offer this app on one.
 
 ## Install the app
 
