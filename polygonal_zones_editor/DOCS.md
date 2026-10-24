@@ -1,332 +1,210 @@
 # Polygonal Zones Editor
 
-Home Assistant now calls these **apps**. Some versions call them **add-ons**; it is the same thing, and the menus below use **app**.
+Home Assistant now calls these **apps**. Some versions of Home Assistant call them **add-ons**; it is the same thing, and the instructions below say **app**.
 
-Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
+Draw zones — areas on a map — for your home, a yard, a car park, and have Home Assistant know when a phone or a car is inside one. Then an automation can do something when it arrives: open the gate, turn on the lights, tell you the car is home.
 
-Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
+This is one of two pieces you need:
 
-> **32-bit hosts.** Home Assistant 2025.12 deprecated the `armhf`, `armv7` and `i386` architectures for apps. The last release for those is 0.2.25. From 0.2.26 only `aarch64` and `amd64` images are published. On a 32-bit host (Raspberry Pi 0 or 1, a 32-bit OS on a Pi 2 or 3, a 32-bit Intel Atom) 0.2.25 is the last version you can run. To keep receiving updates, move to a 64-bit Home Assistant OS installation. The Supervisor stops offering updates once it sees the architecture mismatch.
+- **this app**, which draws the zones and remembers them;
+- the **Polygonal Zones integration**, which watches your phones and cars and works out which zone each one is in.
 
-## What this app is good for, and what it isn't
+Install both from their GitHub pages, and they find each other. You will not need an address, a port or a password.
 
-Zones are compared against positions reported by phones, cars and trackers. The accuracy of the answer comes from those devices, not from how carefully you draw. A boundary placed to the centimetre is still only as good as the position being tested against it.
+## Before you start
 
-Real devices, as a sense of scale:
+- Home Assistant **2026.8.1** or newer.
+- This app, and the [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones).
+- Something that reports where it is: a phone running the Home Assistant app, a car with a data connection, or a GPS tracker.
 
-| Source                                | Typical reported accuracy              |
-| ------------------------------------- | -------------------------------------- |
-| Phone outdoors, good sky view         | 5–15 m                                 |
-| Phone indoors                         | 15–65 m                                |
-| Vehicle tracker with a proper antenna | 3–10 m                                 |
-| Some vehicle APIs                     | reports `0`, meaning _no figure given_ |
+**On a 32-bit system** (a very old Raspberry Pi, or a 32-bit operating system), version 0.2.25 was the last one published. Move to 64-bit Home Assistant to keep receiving updates.
 
-A position is a circle, not a point. A device standing still drifts several metres between reports. The integration also widens each zone by the reported accuracy before testing, so a device can match a zone it is several metres outside.
+## Install the app
 
-**Good for:**
+1. In Home Assistant, open **Settings → Apps**, choose **Install app**, then the **⋮** menu in the top right.
+2. Choose **Repositories**, paste
+   `https://github.com/MatthewHobbs/Homeassistant-polygonal-zones-addon` and add it.
+3. Find **Polygonal Zones** in the store, choose **Install**, then **Start**.
+4. Turn on **Watchdog** on the app's page. It restarts the app if it stops.
 
-- property boundaries, paddocks, yards and car parks
-- "is the car home or not", "is the van on site"
-- any zone comfortably larger than the accuracy of the devices you test with. As a rule of thumb, 20 m across or more.
+## Set it up
 
-**Bad for:**
+1. Install the [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones). If it does not appear in the list of integrations, restart Home Assistant.
+2. Open **Settings → Devices & services** and wait a minute. A **Polygonal Zones** card appears under **Discovered**.
+3. Choose **Configure** on it (some versions say **Confirm**).
+4. Tick the phones, cars or trackers you want watched, and accept the notice about tracking.
+5. Choose **Finish**.
 
-- rooms inside a building. A 4 m by 5 m room is smaller than the error circle of a phone standing in it. Neighbouring rooms will swap at random, and a device outside the building can match one: a car on the driveway has matched an indoor kitchen zone, because a 5 m ring reached it.
-- anything needing pinpoint accuracy, or "which side of this line"
-- telling apart places a few metres apart
+That is the whole setup. Nothing to copy, nothing to type.
 
-**For room-level presence, use another tool.** The limit is the positioning, not the polygon. Wi-Fi access-point association, Bluetooth room sensors such as ESPresense, or mmWave occupancy sensors solve that problem. This app is for outdoor zones at the scale of a property.
+## Check that it works
 
-The tracker overlay (described below) draws each device's accuracy ring over your zones, so you can judge whether a boundary means anything at the size you drew it.
+1. Open the app: choose **Open Web UI** on its page, or the **Polygonal Zones** entry in the sidebar if you turned that on.
+2. Choose the polygon button at the top left of the map, then click the map to place corners. Click the first corner again to close the shape.
+3. Give it a name you will recognise — `Home`, `Work`, `Nan's` — and choose **Save** at the bottom of the panel.
+4. Now find the device you ticked: **Settings → Devices & services → Devices**. Its position line should read `Home` while it is inside your shape, and `away` when it leaves.
 
-## Configuration
+If it already says `away` while it is standing inside the shape, look below.
 
-All options are under **Settings → Apps → Polygonal Zones → Configuration**. Most people only change `zone_colour`.
+## If it does not work
 
-| Option                    | Type               | Default  | What it does                                                                                                                                                                                                                                                                                                                           |
-| ------------------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zone_colour`             | string             | `purple` | Colour used for zones on the map. A CSS colour name in letters, or a hex value such as `#800080`. `rgb()` and `hsl()` are refused.                                                                                                                                                                                                     |
-| `theme`                   | list               | `auto`   | `auto` follows the operating system's `prefers-color-scheme`. Set `light` or `dark` to override it. It sets the editor colours and, with **Map style** on Auto, the map.                                                                                                                                                               |
-| `allow_all_ips`           | bool               | `false`  | Grants nothing any more. It is kept so old configurations still load. When `true`, the app logs an error at startup telling you to set `save_token` instead. See **LAN access**.                                                                                                                                                       |
-| `save_token`              | password           | empty    | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**), as `X-Save-Token: <value>`. Leave it empty for automatic setup: the app generates one for Home Assistant. Set it yourself only for the LAN URL flow. See **LAN access**.                                                        |
-| `trusted_proxies`         | string             | empty    | Comma-separated IP addresses of reverse proxies whose `X-Forwarded-For` header should be believed. List each proxy's own address, not a range: every address listed is trusted about which client it forwards for, and that is what the log and the failed-attempt limit record. Leave it empty unless you run your own reverse proxy. |
-| `overlay_entities`        | list of strings    | empty    | Entity ids to plot on the map, for example `device_tracker.my_car`. At most 25 are used. See **Plotting live positions on the map**.                                                                                                                                                                                                   |
-| `tracker_refresh_seconds` | integer, 0 to 3600 | `60`     | Seconds between position updates while the editor is open. `0` loads them once. Values from 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty.                                                                                                                                                                   |
-| `log_level`               | list               | `info`   | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting.                                                                                                                                                                                                                                              |
+| What you see                                          | What to do                                                                                                                                                                        |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No **Polygonal Zones** card to set up                 | Check the app is installed **and started**, and the integration is installed. Restart Home Assistant. If it still does not appear, see [setting up by hand](#setting-up-by-hand). |
+| Set up, but the device always says `away`             | Check you ticked that device in the setup. Check the shape was saved: it should be in the list in the app. A device that has not moved or reported for hours may take a while.    |
+| A device says `away` although it is clearly inside    | The shape may be too small to be reliable, or the phone may be reporting a rough position. See [is this the right tool](#is-this-the-right-tool).                                 |
+| Saving says something went wrong                      | The app and the integration disagree about the app's password. That only happens after setting up by hand; repeat step 2 of [setting up by hand](#setting-up-by-hand).            |
+| The editor says it could not load your zones          | The file holding your zones is damaged. Restore it from a Home Assistant backup — see [if the zones file is damaged](#if-the-zones-file-is-damaged).                              |
+| Many extra devices called Polygonal Zones 1, 2, 3, 4… | An old version of the integration left them behind. Update the integration, then delete the leftovers once by hand.                                                               |
+| The editor does not appear in the sidebar             | Turn on **Show in sidebar** in the app's configuration, or use **Open Web UI** on the app's page.                                                                                 |
 
-### Network ports
+The integration's own [troubleshooting page](https://matthewhobbs.github.io/Homeassistant-polygonal-zones/troubleshooting/) covers the tracking side in more detail.
 
-The web interface listens on port 8000 inside the container. Use the editor through Home Assistant: the **Open Web UI** button or the sidebar entry. That route (ingress) needs no setup.
+## Drawing and editing zones
 
-Direct access on `http://<app-LAN-IP>:8000/` is off by default (`8000/tcp: null` in the app manifest). To turn it on, open **Settings → Apps → Polygonal Zones → Network**, assign a host port and restart the app. You need this for `curl` backups, for a reverse proxy, and for an integration older than 1.16.0 that fetches the zones over your network.
+- **Draw**: the polygon button at the top left, then click each corner; click the first corner again to finish. The rectangle button takes two opposite corners instead.
+- **Rename**: click the name in the list on the left and type a new one.
+- **Reshape**: choose the edit button next to the name, drag the corners, then choose **Done**.
+- **Delete**: choose the bin button in the map toolbar, then click the shape.
+- **Save**: nothing is kept until you choose **Save** at the bottom of the panel. An amber dot shows there are changes waiting.
+- **Start again**: if you make a mess, **Replace zones from file** loads zones you saved earlier.
 
-Home Assistant does not need the host port. Core reaches port 8000 in the container over the app network, which is the address discovery hands over. Every request that does not come through ingress needs `save_token`: see **LAN access**.
+Changes take effect as soon as you save: the integration is told to re-read them, so an automation can use the new shape immediately.
 
-**The LAN port is plain HTTP.** The app does not terminate TLS, so the token, your zones and tracker positions cross your network unencrypted. Use it only on a network you trust, or put a TLS-terminating reverse proxy in front of it (see **Pointing the integration at the app**).
+## Changing how it looks
 
-### LAN access (`save_token`)
+Two settings, both on the app's **Configuration** page. Everything else there can be left alone.
 
-Only requests that arrive through Home Assistant's ingress (TCP peer `172.30.32.2`) are served without a token. Every other request needs `X-Save-Token: <value>` matching `save_token`, whatever it asks for: `GET /zones.json`, `GET /trackers.json`, `GET /trackers/here_since`, `POST /save_zones`, `/config.json`, and the editor's own page and scripts. When `save_token` is empty, the app generates one for Home Assistant's discovery message, and nothing outside Home Assistant can reach it. `/healthz` is the one exception: it stays open so health checks work.
+| Setting       | What it does                                                                                       |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| `zone_colour` | The colour of the shapes on the map. A colour name such as `purple`, or a value such as `#800080`. |
+| `theme`       | `auto` follows your device's light or dark setting. Choose `light` or `dark` to fix it either way. |
 
-**`allow_all_ips` no longer grants anything.** Up to 0.5.7 it let any client on your network read and overwrite zones without a token. When it is on, the app logs an error at startup telling you to set `save_token` instead.
+## Showing where your devices are (optional)
 
-**Use the editor through Home Assistant, not the LAN port.** A browser cannot add a header to a page it navigates to, so opening `http://<ha-host>:8000/` directly gets `403`. Use the sidebar or **Open Web UI**.
+The map can show your phones and cars live, with a circle showing how precise each position is. It is off until you say which devices to show.
 
-**Ingress is for the editor, not for the integration.** Ingress is Home Assistant's browser-session proxy and needs a logged-in user, so a background job like the integration cannot use it. The integration fetches the zones over HTTP, so it needs the token like any other client. That holds on the same machine: Core reaches the app's internal address, but the request does not come from the ingress address and is refused without a token.
+1. On the app's **Configuration** page, add device names to `overlay_entities`, for example `device_tracker.my_car`.
+2. Choose **Save**, then reopen the app. Each device appears with a dashed circle. Click one to see how far it is from the nearest edge, and how long it has been there.
 
-Every refusal looks the same from outside: `403` with `{"error": "not authorised"}`, so the reply never reveals whether a token is set. The real reason is in the app's own log. Ten failed attempts from one client within a minute earn `429` for the rest of that minute.
+`tracker_refresh_seconds` sets how often those positions update while the app is open: `60` by default, `0` to load them once.
 
-The companion integration sends the header itself from [v1.15.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.15.0), in one of two ways.
+Reading positions needs permission to read Home Assistant's device states. The app asks for that permission for these positions and the arrival time, and uses it for nothing else. Only list devices whose position you are comfortable having on this map: anyone who can open the app can see them.
 
-- **Automatic setup** (integration 1.16.0 or later): the token travels in the discovery message, so there is nothing to type.
-- **Manual setup**: put the app's `save_token` in the integration's **App save token** field (`zone_source_token`).
+## Your data
 
-In both cases the token goes only to a local app address, never to a public source. An older integration, or an empty field on a manual setup, gets `403` and loads no zones.
+- **Where your zones live.** Inside Home Assistant, on the same device, kept with the app's own data. They are in every Home Assistant backup that includes this app.
+- **Deleting a zone does not delete it from old backups.** If you are removing zones for privacy, remove the old backups too: **Settings → System → Backups**.
+- **The map background** comes from OpenStreetMap, CARTO or Esri, whichever you pick. Those providers see which part of the map you are looking at, and your Home Assistant address as the page you came from.
+- **Your browser remembers the last map view** for each device you use, so it opens where you left it. Clearing your browser's data for Home Assistant forgets it.
+- **No one else is told anything.** The app does not send your zones anywhere.
 
-Pick a long random string. The field is masked in the UI. To rotate it, change the value and restart the app.
+## Is this the right tool?
 
-The token is never logged. The `Loaded options:` line at startup shows `save_token: ***` when the option is set, and `save_token: not set` when it is empty — but an empty option still gets a generated token for Home Assistant's discovery message, so `not set` does not mean no token is in force.
+How accurate a zone is depends on the device being watched, not on how carefully you draw. A position is a circle, not a point: a phone standing still drifts several metres between reports, and the integration widens each zone by that error before deciding.
 
-### Backing up and restoring zones with `curl`
+| Where the device is          | Usual accuracy |
+| ---------------------------- | -------------- |
+| Phone outdoors, clear sky    | 5–15 m         |
+| Phone indoors                | 15–65 m        |
+| Vehicle tracker with antenna | 3–10 m         |
 
-Your zones live in `/data/polygonal_zones/zones.json` inside the container, but you do not need a shell to read them. Map a host port, set `save_token`, then:
+**A good fit:** a garden, a paddock, a yard, a car park — any zone about 20 m across or more, where the question is simply "is it here or not".
+
+**A poor fit:** rooms inside a building. A 4 m by 5 m room is smaller than the error of a phone standing in it, so neighbouring rooms swap at random and a car on the drive can count as being in the kitchen. For room-level presence you want Wi-Fi access points, Bluetooth room sensors or mmWave sensors instead. Careful drawing cannot fix an imprecise position.
+
+## Setting up by hand
+
+Only needed when the automatic setup cannot work: an app older than 0.7.0, an integration older than 1.16.0, or an app running somewhere Home Assistant cannot discover — another machine, for example.
+
+You are joining the two pieces yourself this time, and three things have to agree: a port, a password and an address.
+
+1. **Give the app a network port.** **Settings → Apps → Polygonal Zones → Network**, set host port `8000`, and restart the app.
+2. **Choose the app's password.** On the **Configuration** page, set `save_token` to a long random value — treat it as a password. Restart the app.
+3. **Add the integration.** **Settings → Devices & services → Add integration → Polygonal Zones**.
+4. **Tell it where the app is.** Address: `http://<home-assistant-address>:8000/zones.json`, where the address is the number that looks like `192.168.1.20`. Use the number, not a name such as `homeassistant`: the integration only sends the password to a number.
+5. **Allow your own network, and paste the password.** Turn on **Advanced mode** in your user profile if you cannot see these options. Turn on **Allow private-network URLs (LAN)**, and put the app's `save_token` in **App save token**.
+6. **Tick your devices** and finish.
+
+An integration older than 1.15.0 cannot send a password at all. It needs the app to be open to the network, which this app stopped allowing in 0.5.8, so put a web server in front of the app instead: see [advanced connections](#advanced-connections).
+
+The password travels over your home network without encryption in this setup, so use it only on a network you trust.
+
+## If the zones file is damaged
+
+The app keeps your zones in one file. If that file becomes unreadable — a full disk, a damaged disk, a bad shutdown — the app says so in its log, the editor says it could not load your zones, and Home Assistant's watchdog restarts the app.
+
+1. Open **Settings → Apps → Polygonal Zones → Log**. Look for a line about the zones file.
+2. Restarting often fixes it, because the app repairs file ownership on start.
+3. If it persists, restore the file from a Home Assistant backup taken before the problem, or from a copy you saved with the backup method below.
+
+If the file is readable but not valid, the app will serve it and the editor will refuse to open it. In that case the log stays quiet; restore from a backup.
+
+## Advanced connections
+
+These are for people who want a fixed web address, a backup they can run from a terminal, or a connection without the automatic discovery. Skip this section unless you need it.
+
+### Backing up and restoring with curl
 
 ```sh
-# Backup
-curl -H 'X-Save-Token: <yourtoken>' \
-  http://<ha-host>:8000/zones.json > zones-backup.json
+# Save your zones to a file
+curl -H 'X-Save-Token: <your password>' \
+  http://<home-assistant-address>:8000/zones.json > zones-backup.json
 
-# Restore
+# Put them back
 curl -X POST -H 'Content-Type: application/json' \
-  -H 'X-Save-Token: <yourtoken>' \
+  -H 'X-Save-Token: <your password>' \
   --data-binary @zones-backup.json \
-  http://<ha-host>:8000/save_zones
+  http://<home-assistant-address>:8000/save_zones
 ```
 
-A restore must use `Content-Type: application/json`, as above. Any other type is refused with `415`.
+A restore must be sent as `application/json`, as above. Add `If-Match` with the value of the `ETag` header if you want the restore refused when someone saved in the meantime; the editor does this for you.
 
-`GET /zones.json` returns an `ETag` header, which is a fingerprint of the file. Send it back as `If-Match` on `POST /save_zones` to refuse the write if the file changed in between. The editor does this by default. A plain `curl` post without `If-Match` wins, whatever came before.
+### Watching it behind a web address of your own
 
-`GET /zones.json` also honours `If-None-Match` and returns `Last-Modified`. The integration reads the file at startup and when you call `reload_zones` or `reload_all_zones`; it does not poll. A `304 Not Modified` reply means your cached copy is current. That helps those on-demand reads, and any script that asks for the file repeatedly:
+If the app must be reachable at a name rather than a number, put a web server of your own in front of it — nginx, Caddy, Traefik, or the NGINX Proxy Manager app — with a certificate, on a name that resolves publicly. Point the integration at `https://your-name/zones.json`.
 
-```sh
-# First request
-curl -D headers1.txt -H 'X-Save-Token: <yourtoken>' \
-  http://<ha-host>:8000/zones.json > zones.json
-etag=$(awk -F': ' 'tolower($1)=="etag"{print $2}' headers1.txt | tr -d '\r')
-
-# Later requests: 304 means no change, use the cached copy
-curl -I -H 'X-Save-Token: <yourtoken>' -H "If-None-Match: $etag" \
-  http://<ha-host>:8000/zones.json
-```
-
-## Plotting live positions on the map (`overlay_entities`)
-
-`overlay_entities` plots live tracker positions over the map, so you can see whether a device falls inside a boundary, and by how much.
-
-The list is empty by default. While it is empty, the app asks Home Assistant for nothing.
-
-```yaml
-overlay_entities:
-  - device_tracker.my_car
-  - device_tracker.the_van
-```
-
-Each device appears as a marker with a dashed ring showing its reported accuracy. The sidebar lists the zones it is inside and how far it sits from their edges.
-
-Click a marker for its popup:
-
-- the position error and battery level, when the tracker reports them;
-- **Here since**, which is when it arrived where it is now. Movement within twice its position error, or 20 m if that is more, is ignored.
-
-Working out **Here since** reads up to 24 hours of that tracker's history from Home Assistant when you open the popup, and again if it moves while open. Nothing is stored.
-
-| Shows                      | Meaning                                                                                          |
-| -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `Here since checking…`     | The lookup is running.                                                                           |
-| a time, or a date and time | When it arrived. A date appears when that was not today.                                         |
-| `Here since over 24 h`     | It has not moved for the whole 24 hours, so the real time is earlier.                            |
-| `Here since unknown`       | No usable history, the lookup failed or timed out (10 seconds), or the app was busy with others. |
-
-The readout measures. It does not predict. It tells you a device is "3.8 m outside Annex (within its accuracy)". It does not say which zone the integration will report, because the integration makes that call with rules that are deliberately not copied here.
-
-Each entity is fetched from Home Assistant and cut down to six fields: entity id, friendly name, state, coordinates, accuracy and battery level. Every other attribute is thrown away, so it never reaches the browser. Coordinates are rounded to four decimal places, about 11 m.
-
-### How often positions refresh (`tracker_refresh_seconds`)
-
-While the editor is open it re-reads the listed entities every `tracker_refresh_seconds` seconds (default 60) and moves the markers. Set it to `0` to load positions once, when the page opens.
-
-Values from 1 to 9 are raised to 10, because each poll is one Supervisor call per listed entity for every open tab. The largest accepted value is 3600.
-
-```yaml
-overlay_entities:
-  - device_tracker.my_car
-tracker_refresh_seconds: 30
-```
-
-Polling pauses while the tab is hidden and catches up when you return. If Home Assistant cannot answer for an entity, its last position stays on the map. An entity that comes back without coordinates is removed. The option does nothing while `overlay_entities` is empty.
-
-### Before you add people
-
-Positions and arrival times are served by `GET /trackers.json` and `GET /trackers/here_since`, under the same rules as `/zones.json`: ingress, or `save_token` from anywhere else. Anyone holding the token can read them over your network. List only what you are content to expose on those terms.
-
-Vehicles are the intended case. A household member's phone is a decision to make deliberately, and ideally with them.
-
-At most 25 entities are fetched. Anything that is not a valid entity id is ignored, with a warning in the log.
-
-### The `homeassistant_api` grant
-
-Reading those states needs Home Assistant's state API, so the manifest (`config.yaml`) sets `homeassistant_api: true`. The grant applies when the app is installed, whatever you configure. Leaving `overlay_entities` empty does not withhold it; it only means the app uses none of it.
-
-The grant is not read-only. It gives the app general access to the Home Assistant API. What the app does with it is narrow: `GET /states/<entity_id>` for each entity you list, and one history read when you open that entity's popup, again if it moves while open. With the list empty it does nothing.
-
-## Integration with the Polygonal Zones HA integration
-
-The companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) reads `/zones.json` from this app. It fetches the zones at startup, and again when you save here or call `reload_zones` or `reload_all_zones`. It never reaches the app through ingress, even on the same machine.
-
-With automatic setup the integration uses the app's internal address and the token from discovery. With manual setup you map a host port and share `save_token`, as described in **LAN access**.
-
-### Availability and failure modes
-
-The app serves `/zones.json` from local disk. What happens when that file becomes unreadable at runtime (disk full, ownership drift after a Supervisor remount, filesystem damage) depends on who notices first.
-
-- **The app** returns `503 Service Unavailable` with `{"error":"zones file unreadable"}` and logs the error with a traceback. The Docker `HEALTHCHECK` also fails, because `/healthz` checks that the file is readable, not merely that the process runs, so Docker marks the container unhealthy.
-- **The Supervisor** restarts the app when the health check (`/healthz`, every 30 seconds) fails three times in a row, or when the web service stops. It only does this while **Watchdog** is on in the app's **Info** tab, so turn it on.
-- **The integration** sees the `503` the next time it reads zones, at startup or on a reload. By default it keeps its last good zones, so automations carry on with the definitions it last fetched. If the app is gone entirely (process dead, port unreachable), the integration reports the entities as unavailable, and automations that guard on `zone.* != 'unavailable'` stop until the app returns.
-
-A file that is readable but not valid JSON is a different case. The app never parses `zones.json` when serving it, so it hands the bytes over and the health check stays green. The editor then shows "Couldn't load zones".
-
-**Recovery:**
-
-1. Open **Settings → Apps → Polygonal Zones → Log**. An unreadable file shows as `Failed to read /data/polygonal_zones/zones.json`. A corrupt file leaves no line in the app log; the editor's "Couldn't load zones" is the sign.
-2. Common causes: ownership drift on `/data`, usually fixed by a restart because `cont-init.d/00-fix-perms` re-chowns on boot; a full disk; or a damaged file after an unclean shutdown.
-3. If the file is corrupt, restore `/data/polygonal_zones/zones.json` from a Home Assistant backup taken before the failure (**Settings → System → Backups**), or from your own `curl` copy. Until then the integration keeps its last good zones.
-
-### Pointing the integration at the app
-
-#### Recommended: automatic setup (integration v1.16.0 or later)
-
-The app announces itself to Home Assistant at every start. Open **Settings → Devices & services** and **Polygonal Zones** appears as a discovered integration. Confirm it once and setup is done. There is no URL to type, no host port to map and no token to copy, because the app generates one that only Home Assistant sees.
-
-Then choose your devices: open the entry's **⋮ → Reconfigure**, pick the `device_tracker` entities and confirm the tracking notice.
-
-From then on, every save asks Home Assistant to re-read the zones, so an edit is live without a manual reload. The line under **Save** says what happened. With an older integration it says the reload needs v1.16.0 or later, and the `reload_zones` action still works.
-
-#### Alternative: LAN URL with `allow_private_urls: true`
-
-Use this for an integration older than v1.16.0, or when the app runs somewhere Home Assistant cannot discover.
-
-From integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) onward, the integration has an advanced option called `allow_private_urls`. Turn it on and point `zone_urls` at the app's LAN address.
-
-- In this app: map a host port and set `save_token: <value>`.
-- In the integration: turn on `allow_private_urls` in the advanced section, and set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`. Use the IP address, not a name such as `homeassistant`, because the integration does not send the token to a name, so the app answers `403`.
-- Integration v1.15.0 or later must also hold the same value in **App save token**, or it gets `403`.
-
-The integration refuses addresses on private networks as a guard against server-side request forgery: a zone address reaching services inside your network. Loopback, link-local (cloud metadata), multicast and reserved ranges stay blocked. `allow_private_urls` unlocks only the usual home ranges, `192.168.x.x`, `10.x.x.x` and `172.16.x.x` to `172.31.x.x`.
-
-The request is plain HTTP, so the token crosses your network unencrypted. See **Network ports**.
-
-#### Alternative: a private reverse proxy with TLS on a public name
-
-If you would rather not turn on `allow_private_urls`, or you run integration v1.11.x or earlier, put a reverse proxy you control in front of the app: nginx, Caddy, Traefik or Home Assistant's NGINX Proxy Manager app. Give it TLS under a name that resolves publicly, such as `zones.yourdomain.tld`, and point the integration at `https://zones.yourdomain.tld/zones.json`.
-
-The name resolves publicly, so the integration's guard lets it through, while the proxy listens only on your network and no zone data leaves it. The integration never sends its token to a public name, so the proxy must add it. That token also unlocks saving zones and reading tracker positions, so forward only `GET /zones.json`. For nginx:
+The integration never sends the password to a public name, so the web server has to add it. That password also allows saving zones and reading device positions, so allow only `GET /zones.json`:
 
 ```
 location = /zones.json {
     limit_except GET { deny all; }
-    proxy_set_header X-Save-Token <value>;
-    proxy_pass http://<ha-host>:8000;
+    proxy_set_header X-Save-Token <your password>;
+    proxy_pass http://<home-assistant-address>:8000;
 }
 ```
 
-Keep the proxy off the public internet. Anyone who reaches it can read your zones.
+Keep that address off the public internet. Anyone who reaches it can read your zones.
 
-#### Last resort: a public CDN mirror (privacy warning)
+### Putting the zones on a public web address
 
-Hosting `zones.json` on a public server (GitHub Pages, S3, Cloudflare Pages) is sometimes suggested. Do not do it without understanding the cost. Your zone outlines give away the exact shape and position of your home, workplace, school run and every other place you drew.
+Do not, without understanding the cost. Your zones trace the exact shape and position of your home, workplace and everywhere else you drew:
 
-- The file is world-readable. Any visitor, crawler or search engine can fetch it.
-- Public CDNs cache and copy content across their networks. Once served, you cannot assume you can pull it back.
-- Major providers (GitHub, AWS, Cloudflare) fall under the US CLOUD Act, so the data can be disclosed to US authorities whatever country you live in.
-- Search engines index content on common hosts. Your home coordinates become findable by name or address.
-- Deleting the file later does not remove archived copies, such as the Wayback Machine and third-party scrapers.
+- the file is readable by anyone who has the address, including search engines and archives;
+- large providers copy and cache what they serve, and copies cannot be withdrawn;
+- deleting the file later does not remove archived copies.
 
-If you must do it (no control over DNS, no reverse proxy, and an integration older than v1.12.0), use a private or unlisted bucket with a strong signed URL, rotate the URL regularly, and treat a leaked URL as leaked geometry.
+If you have no other option, use a private store with an unguessable, rotating address, and treat a leaked address as leaked information about your home.
 
-## Usage
+### Settings reference
 
-### Opening the editor
+Every setting, for completeness. The four groups are the only ones most people touch.
 
-- **Info page**: choose **Open Web UI** on the app's page.
-- **Sidebar**: turn on **Show in sidebar** in the app configuration for a permanent shortcut.
+| Setting                   | Values                                          | Default  | What it does                                                                                                                     |
+| ------------------------- | ----------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `zone_colour`             | colour name, or `#800080`                       | `purple` | Colour of the shapes. Shortened colours such as `#12345` are not valid.                                                          |
+| `theme`                   | `auto`, `light`, `dark`                         | `auto`   | Light or dark editor, and the map style when the map is set to Auto.                                                             |
+| `log_level`               | `debug`, `info`, `warning`, `error`, `critical` | `info`   | How much the app writes to its log. `debug` when asking for help.                                                                |
+| `save_token`              | any text                                        | empty    | The app's password, needed by anything that is not Home Assistant itself. Empty with automatic setup.                            |
+| `overlay_entities`        | device names                                    | empty    | Devices to draw on the map. Up to 25.                                                                                            |
+| `tracker_refresh_seconds` | `0` to `3600`                                   | `60`     | How often those positions update. `0` loads them once. Values 1–9 are raised to 10.                                              |
+| `trusted_proxies`         | numbers, comma separated                        | empty    | Only with your own web server in front: which proxy's forwarded address to believe. List the proxy's own address, never a range. |
+| `allow_all_ips`           | true / false                                    | `false`  | Does nothing now. Kept so older configurations still load; use `save_token` instead.                                             |
 
-### Saving changes
+### Limits
 
-Nothing is written until you press **Save** at the bottom of the sidebar.
-
-An amber dot appears on **Save** while there are changes not yet written. It clears when the save succeeds.
-
-A refused save shows the server's reason under the button.
-
-#### If a save conflicts or times out
-
-A conflict means another session saved first. Further saves stay refused until you reload, so the other session's zones are not overwritten.
-
-After a conflict or a timeout, **Download unsaved zones** saves what is on screen as a file. Then either:
-
-- reload the page and apply your changes again; or
-- download, reload, then use **Replace zones from file** to put the downloaded zones back. This replaces every zone with the file's zones and discards the other session's changes.
-
-### The zones file
-
-Zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zones.json` (port 8000 inside the container), and on disk at `/data/polygonal_zones/zones.json`. The companion integration reads this file. See **Backing up and restoring zones with curl** for backups, and **Privacy and data** for what Home Assistant backups keep.
-
-Each zone has a stable `properties.id`, which the app fills in when it is missing. A position is `[longitude, latitude]`. A third number (altitude) is accepted and dropped on save. Four or more values are refused with `422`.
-
-A save is refused unless every feature is a `Polygon` or `MultiPolygon` with closed rings and at most 1000 vertices, and names and ids are unique.
-
-### Features
-
-#### Viewing zones
-
-- Every zone is listed in the sidebar and drawn on the map.
-- While the list loads it shows "Loading zones…". On a new install with no zones it shows "No zones yet. Draw one on the map to get started."
-- If loading fails, the list shows "Couldn't load zones…" and the **Replace zones from file** button. Check the app log.
-
-#### Map style
-
-- Use the **Map style** dropdown at the top of the sidebar: **Street map** (OpenStreetMap), **Dark** (CARTO) or **Satellite** (Esri World Imagery).
-- **Auto** follows the `theme` option when it is `light` or `dark`. Otherwise it follows your operating system or browser setting, picking Street map in light and Dark in dark.
-- Your choice is kept in the browser.
-
-#### Adding zones
-
-The draw controls are at the top left of the map.
-
-- Choose the polygon button, then click the map to place points. Click the first point again to finish.
-- Or choose the rectangle button, then click two opposite corners. It is saved as a plain polygon.
-
-#### Editing zones
-
-- Choose the edit button next to a zone's name in the sidebar.
-- Drag the points to change the shape. You can rename the zone in the sidebar too.
-- Press **Done** next to the zone's name. That only confirms the change in the editor; press the sidebar **Save** to write it to disk.
-
-#### Deleting zones
-
-- Choose the trash button in the map toolbar to enter removal mode.
-- Click a zone on the map to remove it.
-- Press the sidebar **Save** to write the change to disk.
+A save is refused unless each zone is a simple shape with closed edges and at most 1000 corners, and names and identifiers are unique. The whole set is capped at 500 zones and 10,000 corners — the same numbers the integration applies — and one save at 512 KB.
 
 ## Privacy and data
 
-**Zones and settings are in every backup.** Your zones are at `/data/polygonal_zones/zones.json`. Everything in `/data` is in every Home Assistant backup that includes this app, and so is the app's `options.json`, which holds `save_token` and your `overlay_entities` list.
-
-Deleting a zone in the editor does not remove it from earlier backups. If you are removing zones for privacy (after a move, after drawing over a sensitive area, or after a deletion request), remove old backups too, under **Settings → System → Backups → ⋮ → Remove**, and any copies you keep outside Home Assistant.
-
-**The LAN port is not encrypted.** If you map a host port, the token, your zones and tracker positions travel over plain HTTP. See **Network ports**.
-
-**Map tiles come from a third party.** Your browser fetches the map background from the provider of the style in use: OpenStreetMap, CARTO or Esri. Auto picks OpenStreetMap or CARTO by theme; Esri is used only if you choose Satellite. That provider sees your IP address, the area you are viewing (from the tiles you request) and your Home Assistant address as the referring site, such as a `*.ui.nabu.casa` hostname.
-
-**Your browser remembers the last map view.** The editor stores where you last panned and zoomed in browser storage, under `pz:viewport`, so it opens there next time. Map style and sidebar choice are kept the same way (`pz:basemap`, `pz:sidebar`). None of it is sent to the app. Clearing site data for your Home Assistant address removes it.
+Your zones are stored on your Home Assistant device and are included in Home Assistant backups that include this app. They are never sent anywhere else. The map background comes from a third party, as described under [your data](#your-data). Positions of the devices you choose to show are read from Home Assistant and are not stored by this app.
