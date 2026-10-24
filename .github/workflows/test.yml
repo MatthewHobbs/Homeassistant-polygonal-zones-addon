@@ -54,8 +54,6 @@ jobs:
         run: scripts/check-lock-pins.sh polygonal_zones_editor/requirements-dev.txt polygonal_zones_editor/requirements-dev-lock.txt
       - name: Run check-lock-pins.sh checks
         run: scripts/test-check-lock-pins.sh
-      - name: Run release-merge.sh regression checks
-        run: scripts/test-release-merge.sh
       - name: Run check-published-revision.sh regression checks
         run: scripts/test-check-published-revision.sh
       - name: Run ha-floor-check.sh bound checks

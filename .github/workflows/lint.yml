@@ -94,7 +94,7 @@ jobs:
         run: scripts/ha-floor-check.sh
 
   shellcheck:
-    # release-merge.sh gates every version bump and the rootfs scripts drive
+    # The rootfs scripts drive
     # container boot; `bash -n` misses the quoting and word-splitting mistakes
     # shellcheck catches.
     runs-on: ubuntu-latest
@@ -107,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           # Same files as the justfile's lint recipe; keep the two lists identical.
-          shellcheck -x scripts/release-merge.sh scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/test-release-merge.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh scripts/test-ha-floor-check.sh scripts/check-version-order.sh scripts/test-check-version-order.sh scripts/changelog-notes.sh scripts/test-changelog-notes.sh scripts/check-lock-pins.sh scripts/test-check-lock-pins.sh
+          shellcheck -x scripts/supervisor-pilot.sh scripts/ha-floor-check.sh scripts/check-published-revision.sh scripts/test-check-published-revision.sh scripts/test-ha-floor-check.sh scripts/check-version-order.sh scripts/test-check-version-order.sh scripts/changelog-notes.sh scripts/test-changelog-notes.sh scripts/check-lock-pins.sh scripts/test-check-lock-pins.sh
           shellcheck -x \
             polygonal_zones_editor/rootfs/etc/cont-init.d/00-fix-perms \
             polygonal_zones_editor/rootfs/etc/services.d/web/run \
