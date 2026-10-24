@@ -83,7 +83,7 @@ In both cases the token goes only to a local app address, never to a public sour
 
 Pick a long random string. The field is masked in the UI. To rotate it, change the value and restart the app.
 
-The token is never logged. The `Loaded options:` line at startup shows `save_token: ***` when one is set, and `save_token: not set` when it is empty.
+The token is never logged. The `Loaded options:` line at startup shows `save_token: ***` when the option is set, and `save_token: not set` when it is empty — but an empty option still gets a generated token for Home Assistant's discovery message, so `not set` does not mean no token is in force.
 
 ### Backing up and restoring zones with `curl`
 

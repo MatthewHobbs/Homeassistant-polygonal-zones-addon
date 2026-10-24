@@ -49,12 +49,14 @@ The Supervisor pilot covers install, setting a _valid_ option through the Superv
 
 Test a branch as a **local app**, not through the repository. With `image:` in `config.yaml` the Supervisor pulls the published image for that `version`, so a branch whose version is unchanged silently runs the released code.
 
+Do these in this order. The integration has to be loaded before the app announces itself, and only one editor may be running.
+
 - [ ] Copy the branch's `polygonal_zones_editor/` folder to `/addons/polygonal_zones_editor/` on the HA host: the Samba `addons` share, or SSH.
 - [ ] In that copy only, delete the `image:` line and set `version:` to something you will recognise, such as `0.7.0-dev1`. Never commit either change: without `image` a release would never be pulled, because the Supervisor would build on every device instead.
 - [ ] Keep `build.yaml`. The `Dockerfile` takes its base image from `BUILD_FROM`, which `build.yaml` supplies.
-- [ ] Open **Settings → Apps**, choose **Install app**, then pick the **local** version of Polygonal Zones in the store and choose **Install**. If it does not appear, use the store's top-right ⋮ menu → **Check for updates**. After a code change, copy again and raise `version`: the Supervisor keys the build on it, so an unchanged version offers nothing to install.
-- [ ] Run the integration from the branch too, or discovery will not appear: copy `custom_components/polygonal_zones/` from the integration branch to `/config/custom_components/`, replacing the HACS copy, and restart Home Assistant. Discovery needs integration 1.16.0 or later, which has not been released.
-- [ ] Disable or uninstall the store version of the app. The local copy has slug `local_polygonal_zones`, so both would claim port 8000.
+- [ ] Run the integration from the branch, or discovery will not appear: copy `custom_components/polygonal_zones/` from the integration branch to `/config/custom_components/`, replacing the HACS copy, and restart Home Assistant. Discovery needs integration 1.16.0 or later, which has not been released.
+- [ ] **Stop the store version of the app first.** Open **Settings → Apps → Polygonal Zones**, choose **Stop**, and turn off **Start on boot** so it does not return at the next restart. Leave both running and two editors announce themselves, and the integration may be pointed at the one you are not testing. Uninstalling the store version is just as good.
+- [ ] Open **Settings → Apps**, choose **Install app**, pick the **local** version of Polygonal Zones, and choose **Install**, then **Start**. If it is not listed, use the store's top-right ⋮ menu → **Check for updates**. After a code change, copy again and raise `version`: the Supervisor keys the build on it, so an unchanged version offers nothing to install.
 - [ ] The app log shows `Announced zones to Home Assistant` at startup. Without it, discovery did not reach Core: check `SUPERVISOR_TOKEN` is set and that `discovery: [polygonal_zones]` is still in the copied `config.yaml`.
 - [ ] Confirm the app starts cleanly: **Settings → Apps → Polygonal Zones → Log**, no tracebacks.
 - [ ] The startup `Loaded options:` line shows `save_token: ***` if a token is set and `save_token: not set` if not. `overlay_entities` and `trusted_proxies` show a count of entries, not the entries.
