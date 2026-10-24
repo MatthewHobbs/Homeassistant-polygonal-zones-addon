@@ -4,8 +4,6 @@ Home Assistant now calls these **apps**. Some versions call them **add-ons**; it
 
 Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
 
-Draw polygonal zones inside Home Assistant and let the companion [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones) use them in location automations.
-
 > **32-bit hosts.** Home Assistant 2025.12 deprecated the `armhf`, `armv7` and `i386` architectures for apps. The last release for those is 0.2.25. From 0.2.26 only `aarch64` and `amd64` images are published. On a 32-bit host (Raspberry Pi 0 or 1, a 32-bit OS on a Pi 2 or 3, a 32-bit Intel Atom) 0.2.25 is the last version you can run. To keep receiving updates, move to a 64-bit Home Assistant OS installation. The Supervisor stops offering updates once it sees the architecture mismatch.
 
 ## What this app is good for, and what it isn't
@@ -141,12 +139,16 @@ Click a marker for its popup:
 
 Working out **Here since** reads up to 24 hours of that tracker's history from Home Assistant when you open the popup, and again if it moves while open. Nothing is stored.
 
-| Shows                      | Meaning                                                                                          |
-| -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `Here since checking…`     | The lookup is running.                                                                           |
-| a time, or a date and time | When it arrived. A date appears when that was not today.                                         |
-| `Here since over 24 h`     | It has not moved for the whole 24 hours, so the real time is earlier.                            |
-| `Here since unknown`       | No usable history, the lookup failed or timed out (10 seconds), or the app was busy with others. |
+| Shows                                    | Meaning                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| `Here since checking…`                   | The lookup is running.                                                                 |
+| a time, or a date and time               | When it arrived. A date appears when that was not today.                               |
+| `Here since over 24 h`                   | It has not moved for the whole 24 hours, so the real time is earlier.                  |
+| `Here since no history`                  | Home Assistant holds no history for the entity in that window.                         |
+| `Here since no positions recorded`       | History exists, but no point in it carried coordinates.                                |
+| `Here since history unavailable`         | The history read failed, or Home Assistant answered with something unusable.           |
+| `Here since too many lookups, try again` | Too many popups were open at once. Closing some and reopening the popup retries it.    |
+| `Here since unknown`                     | None of the above: the request timed out after 10 seconds, or the reply was malformed. |
 
 The readout measures. It does not predict. It tells you a device is "3.8 m outside Annex (within its accuracy)". It does not say which zone the integration will report, because the integration makes that call with rules that are deliberately not copied here.
 
@@ -284,7 +286,7 @@ Zones are stored as a GeoJSON `FeatureCollection` at `http(s)://[HOST]:[PORT]/zo
 
 Each zone has a stable `properties.id`, which the app fills in when it is missing. A position is `[longitude, latitude]`. A third number (altitude) is accepted and dropped on save. Four or more values are refused with `422`.
 
-A save is refused unless every feature is a `Polygon` or `MultiPolygon` with closed rings and at most 1000 vertices, and names and ids are unique.
+A save is refused unless every feature is a `Polygon` or `MultiPolygon` with closed rings and at most 1000 vertices, and names and ids are unique. The whole collection is capped at 500 zones and 10,000 vertices — the same numbers the integration enforces, so a file this app accepts is one the integration can load — and the request body at 512 KB.
 
 ### Features
 
