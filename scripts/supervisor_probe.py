@@ -349,20 +349,23 @@ async def open_editor(context, origin, ingress, errors, expect_secure):
     count = await page.locator("zone-entry").count()
     if count < 2:
         fail(f"{origin}: expected the 2 smoke zones to render, got {count}", errors)
-    # No integration is installed here, so the add-on's push finds no endpoint
-    # and waits for one. Seeing that on the page shows the pusher, /push_status
-    # and the editor's line agree under a real Supervisor and Core.
+    # Save once. With no integration installed the reload call gets a 404, so
+    # the status line must say the zones saved and that Home Assistant needs a
+    # newer integration. That exercises the save, the write and the reply the
+    # editor renders, under a real Supervisor and Core.
+    await page.locator(".save-btn").click()
     try:
         await page.wait_for_function(
-            "() => (document.getElementById('push-status')?.textContent || '')"
-            ".startsWith('Not sent automatically')",
+            "() => (document.getElementById('save-status')?.textContent || '')"
+            ".startsWith('Zones saved.')",
             timeout=30000,
         )
     except PlaywrightTimeout:
-        shown = await page.locator("#push-status").text_content()
-        fail(
-            f"{origin}: the delivery line never said the integration is missing: {shown!r}", errors
-        )
+        shown = await page.locator("#save-status").text_content()
+        fail(f"{origin}: a save never reported success: {shown!r}", errors)
+    shown = (await page.locator("#save-status").text_content()) or ""
+    if "1.16.0" not in shown:
+        fail(f"{origin}: the save did not report the missing reload support: {shown!r}", errors)
     return page
 
 

@@ -61,12 +61,11 @@ All options live under **Settings → Add-ons → Polygonal Zones → Configurat
 | `zone_colour` | string | `purple` | Colour used to render zones on the map. A CSS colour name (letters only) or a hex value such as `#800080`. `rgb()` and `hsl()` are refused. |
 | `theme` | list | `auto` | `auto` follows the OS `prefers-color-scheme`. Set `light` or `dark` to override. It sets the editor palette and, with **Map style** on Auto, the map. |
 | `allow_all_ips` | bool | `false` | No longer grants anything. Kept so existing configurations still load; when `true`, the add-on logs an error at startup telling you to set `save_token` instead. See **LAN access**. |
-| `save_token` | password | empty | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**): it must carry `X-Save-Token: <value>`. Empty means nothing outside Home Assistant can reach the add-on. See **LAN access**. |
+| `save_token` | password | empty | Required for every request that does not come through Home Assistant (the sidebar or **Open Web UI**): it must carry `X-Save-Token: <value>`. Leave it empty for automatic setup: the add-on generates one for Home Assistant. Set it yourself only for the LAN URL flow. See **LAN access**. |
 | `trusted_proxies` | string | empty | Comma-separated list of the IP address of each reverse proxy whose `X-Forwarded-For` header should be honoured. List each proxy's own IP rather than a range: every address listed is believed about which client it forwards for, and that is what the add-on's log and failed-attempt limit record. Leave empty unless you front the add-on with your own reverse proxy. |
 | `overlay_entities` | list of strings | empty | Entity ids (for example `device_tracker.my_car`) to plot on the map. At most 25 are used. See **Plotting live positions on the map**. |
 | `tracker_refresh_seconds` | integer, 0 to 3600 | `60` | Seconds between position updates while the editor is open. `0` loads them once. 1 to 9 are raised to 10. Does nothing while `overlay_entities` is empty. |
 | `log_level` | list | `info` | One of `debug`, `info`, `warning`, `error`, `critical`. Use `debug` when troubleshooting. |
-| `push_to_core` | bool | `true` | After every save, send the zones to the Polygonal Zones integration through Home Assistant, with no token to set. It needs an integration version that supports it; until then the editor shows "Not sent automatically" under Save, which is fine if you use a zone URL. Turn off to stop sending. |
 
 ### Network ports
 
@@ -204,7 +203,21 @@ A file that is readable but not valid JSON is a different case. The add-on never
 
 ### Pointing the integration at the add-on
 
-**Recommended: LAN URL with `allow_private_urls: true`.** From companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) the integration has an opt-in boolean option `allow_private_urls` in its advanced settings. Turn it on and point `zone_urls` at the add-on's LAN URL:
+#### Recommended: automatic setup (integration v1.16.0 or later)
+
+The add-on announces itself to Home Assistant at every start. Open **Settings → Devices &
+services**, and **Polygonal Zones** appears as a discovered integration: confirm it once and setup
+is done. There is no URL to type, no host port to map and no token to copy — the add-on generates
+one that only Home Assistant ever sees.
+
+From then on, every save asks Home Assistant to re-read the zones, so an edit appears without a
+manual reload. The line under **Save** says what happened. With an older integration it says the
+reload needs v1.16.0 or later, and calling the `reload_zones` action still works.
+
+#### Alternative: LAN URL with `allow_private_urls: true`
+
+Use this for an integration older than v1.16.0, or when the add-on runs somewhere Home Assistant
+cannot discover. From companion integration [v1.12.0](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones/releases/tag/v1.12.0) the integration has an opt-in boolean option `allow_private_urls` in its advanced settings. Turn it on and point `zone_urls` at the add-on's LAN URL:
 
 - In this add-on: map a host port and set `save_token: <value>`. The integration (v1.15.0 or later) must have the same value in its **Add-on save token** field; otherwise it gets `403`.
 - In the integration: enable `allow_private_urls` in the advanced section, set `zone_urls: http://<ha-host-lan-ip>:8000/zones.json`. Use the IP address, not a hostname such as `homeassistant`: the integration does not send the token to it, so the add-on answers `403`.

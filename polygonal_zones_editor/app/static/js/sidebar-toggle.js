@@ -1,13 +1,6 @@
-// Collapsible sidebar toggle. Thin wiring only — the state
-// contract (attribute write + persistence + map.invalidateSize) lives
-// in ui-state.js. This file owns the button: click handler, keyboard
-// accessibility, aria-state mirroring.
-//
-// The button is always visible: in "open" state it sits on the left
-// edge of the sidebar pointing right-into-left (collapse icon); in
-// "collapsed" state it moves to the right edge of the map pointing
-// left-into-right (expand icon). Both positions are set by CSS off
-// the .body[data-sidebar] attribute.
+// Collapsible sidebar toggle. Thin wiring only: the state contract (attribute
+// write, persistence, map.invalidateSize) lives in ui-state.js. This file owns
+// the button — click handler, keyboard access, and mirroring aria-expanded.
 (function () {
     const button = document.querySelector('.sidebar-toggle');
     if (!button || !window.PZUiState) return;

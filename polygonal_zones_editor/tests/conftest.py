@@ -26,6 +26,17 @@ def reset_failure_records():
     main._last_sweep = 0.0
 
 
+@pytest.fixture(autouse=True)
+def no_core_calls(monkeypatch):
+    """A save records the reload outcome but must not reach the Supervisor here.
+
+    ``tests/test_core_link.py`` covers the real call.
+    """
+    import main
+
+    monkeypatch.setattr(main, "notify_saved", lambda: ("ok", ""))
+
+
 @pytest.fixture
 def tmp_zones_file(tmp_path, monkeypatch):
     import const

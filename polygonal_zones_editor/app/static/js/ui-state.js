@@ -1,9 +1,6 @@
-// Sidebar UI-state contract. The .body element carries a
-// data-sidebar="open|collapsed" attribute; CSS keys its layout off the
-// value. This module is the single write-point for that attribute and owns
-// the plumbing every caller needs to get right: persist the choice to
-// localStorage (pz:sidebar) and tell Leaflet its container resized
-// (invalidateSize). sidebar-toggle.js calls setSidebarState.
+// Sidebar UI state. `.body` carries data-sidebar="open|collapsed" and CSS keys
+// layout off it; this module is its only writer, and owns persisting the choice
+// (pz:sidebar) and telling Leaflet its container resized.
 (function () {
     const ROOT = document.querySelector('.body');
     let boundMap = null;

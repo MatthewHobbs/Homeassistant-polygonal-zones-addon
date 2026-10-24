@@ -1,11 +1,9 @@
-// Node tests for map.js's zone loading. Run with `node --test tests/test_map.js`
-// from polygonal_zones_editor/.
+// Node tests for map.js's zone loading: `node --test tests/test_map.js` from
+// polygonal_zones_editor/.
 //
-// map.js is a browser script with no exports, so it runs here in a vm context,
-// as a <script> tag would, against stand-ins for the DOM, Leaflet and
-// FileReader. The Leaflet stand-in throws where Leaflet does: L.geoJSON on
-// input that is not GeoJSON, and fitBounds on empty bounds. What it cannot
-// show is real Leaflet rendering; the browser smoke covers that.
+// map.js has no exports, so it runs in a vm context as a <script> would,
+// against stand-ins for the DOM, Leaflet and FileReader. The Leaflet stand-in
+// throws where Leaflet does; real rendering is the browser smoke's job.
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
@@ -340,14 +338,22 @@ const unnamed = (properties) => ({
     geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
 });
 
-test('bulk load accepts polygons without a name, as the server does', () => {
+test('bulk load refuses a zone with no name, before clearing', () => {
+    // The server refuses the whole file over one unnamed zone, so the import
+    // fails here and the editor keeps what it had.
     const m = withExistingZone();
     m.bulkLoad(collection(unnamed(null), unnamed({ id: 'abc' })));
+    assert.equal(m.errors.length, 1);
+    assert.ok(!m.calls.includes('clearLayers'));
+    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), ['Home']);
+});
+
+test('bulk load keeps a saved id and gives a missing one a fresh id', () => {
+    const m = loadMap();
+    m.bulkLoad(collection(unnamed({ name: 'A', id: 'abc' }), unnamed({ name: 'B' })));
     assert.deepEqual(m.errors, []);
-    assert.equal(m.layers.length, 2);
-    assert.deepEqual(m.layers.map((l) => l.feature.properties.name), [undefined, undefined]);
-    assert.equal(m.layers[1].feature.properties.id, 'abc', 'a saved id is kept');
-    assert.ok(m.layers[0].feature.properties.id, 'a zone without one gets an id');
+    assert.equal(m.layers[0].feature.properties.id, 'abc', 'a saved id is kept');
+    assert.match(m.layers[1].feature.properties.id, /^[0-9a-f]{32}$/);
 });
 
 test('first load keeps unnamed zones, so a save cannot drop them', () => {
@@ -391,11 +397,11 @@ test('an unnamed zone is listed with an empty name, not "undefined"', () => {
     assert.equal(entries[0].attributes.name, '');
 });
 
-test('bulk load accepts a null name, as the server does', () => {
+test('bulk load refuses a null name', () => {
     const m = withExistingZone();
     m.bulkLoad(collection(unnamed({ name: null })));
-    assert.deepEqual(m.errors, []);
-    assert.equal(m.layers.length, 1);
+    assert.equal(m.errors.length, 1);
+    assert.ok(!m.calls.includes('clearLayers'));
 });
 
 test('finishing an edit of an unnamed zone with an empty box leaves it unnamed', () => {
@@ -765,7 +771,7 @@ for (const [what, ids] of [['a number', [5]], ['an empty string', ['']], ['a rep
 
 test('bulk load gives a null id a fresh one, as the server does', () => {
     const m = withExistingZone();
-    m.bulkLoad(collection(unnamed({ id: null })));
+    m.bulkLoad(collection(unnamed({ name: 'A', id: null })));
     assert.deepEqual(m.errors, []);
     assert.match(m.layers[0].feature.properties.id, /^[0-9a-f]{32}$/);
 });
@@ -969,4 +975,53 @@ test('the empty zone list invites drawing without an em dash', () => {
     const m = loadMap();
     m.loadSaved(JSON.parse(collection()));
     assert.equal(m.zoneList.children[0].textContent, 'No zones yet. Draw one on the map to get started.');
+});
+
+test('a save sends every feature property back, not just name and id', async () => {
+    // Priority decides overlapping zones and polygonal_zones_ext belongs to
+    // whoever wrote it; dropping either silently changes behaviour on save.
+    const m = loadMap();
+    const feature = polygon('Home');
+    feature.properties = {
+        name: 'Home',
+        id: 'abc',
+        priority: 3,
+        polygonal_zones_ext: { source: 'imported' },
+    };
+    m.loadSaved({ type: 'FeatureCollection', features: [feature] });
+    m.reply(200, '"new"');
+    await m.save();
+
+    const sent = JSON.parse(m.posts[0].body);
+    assert.deepEqual(sent.features[0].properties, {
+        name: 'Home',
+        id: 'abc',
+        priority: 3,
+        polygonal_zones_ext: { source: 'imported' },
+    });
+});
+
+test('a save says when Home Assistant did not pick the file up', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"x"', {
+        status: 'ok',
+        etag: '"x"',
+        reload: { state: 'older', note: 'Home Assistant needs integration 1.16.0 or later' },
+    });
+    await m.save();
+
+    assert.equal(
+        m.status.textContent,
+        'Zones saved. Home Assistant needs integration 1.16.0 or later'
+    );
+});
+
+test('a save with no note still says it saved', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"x"', { status: 'ok', etag: '"x"', reload: { state: 'ok', note: '' } });
+    await m.save();
+
+    assert.equal(m.status.textContent, 'Zones saved.');
 });

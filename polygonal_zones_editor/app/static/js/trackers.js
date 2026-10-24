@@ -1,27 +1,15 @@
 /*
- * Live tracker overlay.
+ * Live tracker overlay: plots /trackers.json and measures positions against the
+ * drawn zones, so a misclassification is answerable by looking.
  *
- * Plots the positions the add-on serves from /trackers.json over the map, and
- * measures each one against the zones currently drawn — so "why is this device
- * not in that zone?" is answerable by looking rather than by reading the
- * integration's debug log.
- *
- * Two deliberate limits:
- *
- *  - It MEASURES, it does not PREDICT. The readout says "inside" or "3.8 m
- *    outside"; it never says which zone the integration would report. Those
- *    rules live in the integration and reimplementing them here would create a
- *    second source of truth that drifts (see js/geometry.js).
- *  - It is silent unless the user opts in. With `overlay_entities` unset the
- *    endpoint reports `configured: false` and this module renders nothing at
- *    all — no panel, no error, no marker.
+ * It MEASURES, never PREDICTS: "inside" or "3.8 m outside", never which zone
+ * the integration would report; a copy would drift. Silent without
+ * `overlay_entities`.
  */
 
-// In the browser, index.html loads geometry.js and helpers.js before this
-// file, so pz_ring_area_m2, text_element & co. are already globals. Under
-// Node (tests) there is no such tag, so pull them onto globalThis here —
-// never with `let`/`const`, which would shadow the browser's own globals for
-// every reference below instead of only adding a fallback for Node.
+// index.html loads geometry.js and helpers.js before this file, so their
+// globals exist in the browser. Under Node there is no such tag: attach them to
+// globalThis — never `let`/`const`, which would shadow the browser's globals.
 if (typeof module !== 'undefined' && module.exports) {
     Object.assign(globalThis, require('./geometry.js'), require('./helpers.js'));
 }
@@ -49,17 +37,10 @@ function pz_is_latlng(node) {
     return !!node && typeof node.lat === 'number' && typeof node.lng === 'number';
 }
 
-/* Every polygon of a layer, grouped as {outer, holes} — read from the LIVE
- * Leaflet geometry rather than layer.feature, so measurements track the
- * shape under the user's cursor, not the shape as last saved.
- *
- * layer.getLatLngs() nests one level deeper per GeoJSON level: a Polygon is
- * [ring, ring, ...] (first ring outer, the rest holes); a MultiPolygon is
- * [[ring, ...], [ring, ...], ...], one such group per part. Either way, the
- * first ring in a group is that group's outer boundary and every ring after
- * it is a hole *of that same group* — never of any other. Flattening the
- * rings into one list would add a hole to a zone's area instead of
- * subtracting it, and read a point inside a hole as inside the zone. */
+/* Polygons of a layer as {outer, holes}, from live geometry. getLatLngs()
+ * nests per GeoJSON level: Polygon is [ring, ...] (first outer, rest holes),
+ * MultiPolygon is [[ring, ...], ...]. Rings after the first are holes of that
+ * group; flattening would add area instead of subtracting it. */
 function pz_layer_polygons(layer) {
     if (typeof layer.getLatLngs !== 'function') return [];
     const latlngs = layer.getLatLngs();
@@ -85,11 +66,9 @@ function pz_layer_polygons(layer) {
     return polygons;
 }
 
-/* Total area of a zone in square metres: each polygon's outer ring, minus
- * its own holes, summed across every polygon (a MultiPolygon has more than
- * one). Lives here rather than in geometry.js because it reads Leaflet
- * layers; geometry.js is kept free of any dependency so it can be
- * exercised without a browser. */
+/* Area of a zone in m²: each polygon's outer ring minus its own holes, summed
+ * across a MultiPolygon. Here rather than geometry.js because it reads Leaflet
+ * layers; geometry.js stays dependency-free so Node can run it. */
 function pz_layer_area_m2(layer) {
     return pz_layer_polygons(layer).reduce((sum, { outer, holes }) => {
         const holesArea = holes.reduce((s, h) => s + pz_ring_area_m2(h), 0);
