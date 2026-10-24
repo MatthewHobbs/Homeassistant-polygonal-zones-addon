@@ -77,13 +77,10 @@ jobs:
       - run: python scripts/check_comment_length.py polygonal_zones_editor scripts
 
   ha-floor:
-    # config.yaml's `homeassistant:` floor must satisfy the
-    # bound (at most the .1 of the month before current stable Core,
-    # read live from stable.json). Deliberately NOT a required check, like the
-    # companion integration's, so an outage at version.home-assistant.io
-    # cannot block every merge. Skipped when release.yml
-    # calls this workflow on a tag for the same reason: the tagged SHA already
-    # ran it on its PR and on main.
+    # The `homeassistant:` floor must be at most the .1 of the month before current
+    # stable Core, read live from stable.json. Deliberately not required, so an outage
+    # at version.home-assistant.io cannot block every merge. Skipped on a tag: that SHA
+    # already ran it.
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     steps:

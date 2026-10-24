@@ -157,13 +157,10 @@ jobs:
           # No Supervisor token in this container, so the save must report that
           # it could not ask Home Assistant to reload — and must still succeed.
 
-          # /save_zones round-trip with a mix of Polygon and MultiPolygon
-          # features. The MultiPolygon exercises the frontend's shape-count
-          # indicator and the save path's toGeoJSON-based export (the
-          # previous hand-rolled export destroyed MultiPolygon rings). The
-          # payload is SMOKE_ZONES, shared with the Supervisor pilot. Each
-          # command stands alone so `set -e` sees its status: in `a | b && c`
-          # a failing pipeline is ignored and the step goes on green.
+          # /save_zones round-trip with Polygon and MultiPolygon features: the
+          # MultiPolygon exercises the shape-count indicator and the toGeoJSON export.
+          # The payload is SMOKE_ZONES, shared with the pilot. Each command stands alone
+          # so `set -e` sees its status.
           PAYLOAD=$(python3 -c 'import json, sys; sys.path.insert(0, "scripts"); from draw_and_save import SMOKE_ZONES; print(json.dumps(SMOKE_ZONES))')
           SAVED=$(curl -fsS -X POST -H 'Content-Type: application/json' -H "$AUTH" \
             --data "$PAYLOAD" http://127.0.0.1:8000/save_zones)

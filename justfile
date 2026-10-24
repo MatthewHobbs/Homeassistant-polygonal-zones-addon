@@ -12,7 +12,7 @@ ci: venv lint test comments
 
 # One rule, measured: no code comment block over 50 words. Docstrings are docs.
 comments:
-    python3 scripts/check_comment_length.py polygonal_zones_editor scripts
+    python3 scripts/check_comment_length.py polygonal_zones_editor scripts .github
 
 # The declared HA floor against the bound from current stable Core (network; not in `ci`).
 ha-floor:
