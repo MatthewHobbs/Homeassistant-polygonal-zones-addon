@@ -1166,7 +1166,7 @@ def loggable_options(options: dict) -> dict:
     identify devices and hosts, so only their counts are logged.
     """
     out = {key: options[key] for key in _LOGGED_OPTION_KEYS if key in options}
-    # "***" is the form DOCS.md and TESTING.md tell users to look for.
+    # "***" is the form DOCS.md tells users to look for.
     out["save_token"] = "***" if (options.get("save_token") or "").strip() else "not set"
     out["overlay_entities"] = _entry_count(options.get("overlay_entities"))
     out["trusted_proxies"] = _entry_count(options.get("trusted_proxies"))

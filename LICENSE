@@ -1,6 +1,12 @@
 MIT License
 
 Copyright (c) 2024 Michel Gerding
+Copyright (c) 2026 Matthew Hobbs
+
+This project began as MichelGerding/Homeassistant-polygonal-zones and its
+companion app, which their author no longer maintains. Matthew Hobbs took over
+maintenance in 2026. The original copyright notice above is kept, as this
+licence requires.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
