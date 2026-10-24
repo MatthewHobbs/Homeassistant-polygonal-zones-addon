@@ -147,3 +147,29 @@ def test_post_sends_the_bearer_token_and_returns_the_status(monkeypatch):
     assert request.get_header("Authorization") == "Bearer sv"
     assert json.loads(request.data) == {"a": 1}
     assert captured["timeout"] == core_link.TIMEOUT_SECONDS
+
+
+def test_get_json_sends_the_bearer_token_and_parses(monkeypatch):
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"data": {"ip_address": "172.30.33.1"}}'
+
+    class _Opener:
+        def open(self, request, timeout):
+            captured["request"] = request
+            return _Response()
+
+    monkeypatch.setattr(core_link.urllib.request, "build_opener", lambda *handlers: _Opener())
+
+    assert core_link._get_json("http://supervisor/addons/self/info", "sv") == {
+        "data": {"ip_address": "172.30.33.1"}
+    }
+    assert captured["request"].get_header("Authorization") == "Bearer sv"
