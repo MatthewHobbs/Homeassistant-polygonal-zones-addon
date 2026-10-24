@@ -240,7 +240,7 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 ## 0.5.3 — 2026-09-27
 
 - **Changed: every authorisation failure on `GET /zones.json`, `GET
-  /trackers.json` and `POST /save_zones` now looks identical:** `403` and
+/trackers.json` and `POST /save_zones` now looks identical:** `403` and
   `{"error": "not authorised"}`, whatever the reason. Refusals no longer
   reveal whether a token is set. The precise reason is recorded only in the
   add-on's own log. If you scripted against the old `401`/`403` split, check
@@ -392,7 +392,6 @@ Update promptly if you set `trusted_proxies` or `allow_all_ips`.
 - **Internal:** ruff now runs in CI, matching the companion integration's rule
   set, and the findings it surfaced are fixed.
 
-
 ## 0.3.1 — 2026-07-04
 
 Security-only release. No functional or contract changes.
@@ -423,12 +422,12 @@ Editor UX overhaul, a base-image platform bump (Python 3.11 → 3.12), and the n
   ```json
   {
     "type": "FeatureCollection",
-    "polygonal_zones": {"schema_version": 1},
+    "polygonal_zones": { "schema_version": 1 },
     "features": [
       {
         "type": "Feature",
-        "properties": {"name": "Home", "id": "a1b2c3d4…"},
-        "geometry": {"…": "…"}
+        "properties": { "name": "Home", "id": "a1b2c3d4…" },
+        "geometry": { "…": "…" }
       }
     ]
   }
@@ -460,7 +459,7 @@ Contract-marker slice. Adds a top-level `schema_version` and a per-zone stable `
   "features": [
     {
       "type": "Feature",
-      "properties": {"name": "Home", "id": "a1b2c3d4…"},
+      "properties": { "name": "Home", "id": "a1b2c3d4…" },
       "geometry": { "…": "…" }
     }
   ]
@@ -534,7 +533,10 @@ Durability slice (part 2): tighten save-time GeoJSON validation so geometrically
 Structural / type rejections now return a descriptive error body with an index-bearing detail pointer so a client that logs the response can pinpoint the offending feature or ring without the server echoing coordinate values back (avoiding any PII bounce):
 
 ```json
-{"error": "invalid GeoJSON", "detail": "features[3].geometry.coordinates[0]: ring is not closed (first position must equal last)"}
+{
+  "error": "invalid GeoJSON",
+  "detail": "features[3].geometry.coordinates[0]: ring is not closed (first position must equal last)"
+}
 ```
 
 Self-intersection and winding-order are **not** enforced: RFC 7946 mandates CCW exteriors but most downstream consumers (Shapely, Turf.js, HA's own zone engine) are tolerant. Adding those checks would require a geometry dependency for marginal benefit at this scale.
@@ -569,8 +571,8 @@ First user-visible UX slice after the 0.2.27 correctness batch: a tile-layer pic
   - `Street map`: OpenStreetMap light tiles.
   - `Dark`: CARTO Dark tiles.
   - `Satellite`: Esri World Imagery. Free, permissive-ToS satellite tiles; no API key required. Attribution auto-displayed in the Leaflet control.
-  The choice persists to `localStorage` under `pz:basemap` and survives reload. Picking `Auto` removes the stored key and re-engages the theme-follow behaviour. CSP was widened to permit `https://server.arcgisonline.com` as a new `img-src` origin for the satellite option.
-- **Tile-error banner** on the map. If the active basemap fails to serve five consecutive tiles (threshold chosen to ignore a single flaky tile or momentary DNS blip while catching a dead provider within a couple of seconds of panning), a small non-blocking banner appears at the bottom-centre of the map reading *"Map tiles failed to load. Try a different map style."* The banner clears on the next successful tile and resets whenever the user switches basemaps. Styled with existing design tokens (`--popup-bg`, `--border-color`, `--text-color`) so light/dark parity is free.
+    The choice persists to `localStorage` under `pz:basemap` and survives reload. Picking `Auto` removes the stored key and re-engages the theme-follow behaviour. CSP was widened to permit `https://server.arcgisonline.com` as a new `img-src` origin for the satellite option.
+- **Tile-error banner** on the map. If the active basemap fails to serve five consecutive tiles (threshold chosen to ignore a single flaky tile or momentary DNS blip while catching a dead provider within a couple of seconds of panning), a small non-blocking banner appears at the bottom-centre of the map reading _"Map tiles failed to load. Try a different map style."_ The banner clears on the next successful tile and resets whenever the user switches basemaps. Styled with existing design tokens (`--popup-bg`, `--border-color`, `--text-color`) so light/dark parity is free.
 
 ### Release gate
 
@@ -725,6 +727,7 @@ Installation and correctness: a batch of owned P0 fixes from this week's review.
 - Token comparison is constant-time via `secrets.compare_digest`.
 
 ### Curl with save_token
+
 ```sh
 curl -X POST -H 'Content-Type: application/json' \
   -H 'X-Save-Token: yourvalue' \
@@ -777,6 +780,7 @@ curl -X POST -H 'Content-Type: application/json' \
 ## 0.2.0 — 2026-04-18
 
 ### Security
+
 - `POST /save_zones` now validates the body shape (must be a GeoJSON `FeatureCollection`), enforces a 512 KiB size cap, and returns explicit 4xx/500 status codes instead of writing arbitrary JSON to disk.
 - `GET /zones.json` now requires the IP allowlist; the wildcard `Access-Control-Allow-Origin: *` header is gone, so browsers on other origins can no longer read your zone coordinates.
 - `zone_colour` option is now JSON-escaped before being substituted into the page, so a malformed value cannot break out of the JS string literal.
@@ -784,16 +788,19 @@ curl -X POST -H 'Content-Type: application/json' \
 - Bumped `starlette` past CVE-2025-62727 (FileResponse Range DoS, fixed in 0.49.1), CVE-2024-47874 and CVE-2025-54121 (multipart DoS).
 
 ### Reliability
+
 - Dockerfile now uses the Home Assistant `BUILD_FROM` base, runs as a non-root user, and declares a `HEALTHCHECK`.
 - Removed the build-time `COPY zones.json /data/...` line that wiped user zone data on every addon upgrade.
 - Restored uvicorn's default error/access log handlers so HTTP-level errors are visible to operators.
 - Added a `/healthz` endpoint for the container probe (exempt from the IP allowlist).
 
 ### Internals
+
 - Replaced the handcrafted static-file router with `StaticFiles`. New static assets appear without a restart; path normalisation/traversal protection comes from the framework.
 - Centralised the IP allowlist check in a single middleware.
 - New `trusted_proxies` option: when set, uvicorn is started with `proxy_headers=True` and `forwarded_allow_ips=<list>`, so `request.client.host` is rewritten from `X-Forwarded-For` only when the immediate peer is one you explicitly trust. Default is empty (current behaviour preserved).
 - Switched the OSM tile URL to HTTPS; restored pinch-zoom; added `try/catch` around `JSON.parse` of the initial fetch and bulk-load file.
 
 ### Tests
+
 - Coverage added for the size cap, schema rejection, authz on `/zones.json`, `/healthz`, colour escaping, write-failure path, static-file delivery, path-traversal rejection, and the `trusted_proxies` parser. 42 tests passing.
