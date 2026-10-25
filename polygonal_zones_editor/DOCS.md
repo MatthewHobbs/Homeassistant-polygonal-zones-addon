@@ -57,6 +57,7 @@ If it already says `away` while it is standing inside the shape, look below.
 | The editor says it could not load your zones          | The file holding your zones is damaged. Restore it from a Home Assistant backup — see [if the zones file is damaged](#if-the-zones-file-is-damaged).                              |
 | Many extra devices called Polygonal Zones 1, 2, 3, 4… | An old version of the integration left them behind. Update the integration, then delete the leftovers once by hand.                                                               |
 | The editor does not appear in the sidebar             | Turn on **Show in sidebar** in the app's configuration, or use **Open Web UI** on the app's page.                                                                                 |
+| The map shows zones but no device                     | The device must report a position of its own. A phone you only see through your router's app knows which zone it is in but not where it is, so there is nothing to draw. The app's log names the device and says the same. |
 
 The integration's own [troubleshooting page](https://matthewhobbs.github.io/Homeassistant-polygonal-zones/troubleshooting/) covers the tracking side in more detail.
 
@@ -88,6 +89,8 @@ The map can show your phones and cars live, with a circle showing how precise ea
 2. Choose **Save**, then reopen the app. Each device appears with a dashed circle. Click one to see how far it is from the nearest edge, and how long it has been there.
 
 `tracker_refresh_seconds` sets how often those positions update while the app is open: `60` by default, `0` to load them once.
+
+The device has to report a position itself. A phone shown through the Home Assistant Companion app does; one you only see through your router's or hub's app does not.
 
 Reading positions needs permission to read Home Assistant's device states. The app asks for that permission for these positions and the arrival time, and uses it for nothing else. Only list devices whose position you are comfortable having on this map: anyone who can open the app can see them.
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.4 — 2026-10-25
+
+Says why a device is missing from the map.
+
+- A device listed under `overlay_entities` that answers but reports no position is
+  now named once in the log, with what to point at instead. It used to be dropped
+  in silence, which looked exactly like a misspelt name.
+- The documentation's troubleshooting table has the same answer, for a device you
+  only see through a router or hub: it knows the zone, not the position.
+
 ## 0.7.3 — 2026-10-25
 
 Documentation update, with the build fixes 0.7.1 and 0.7.2 needed to be released.
