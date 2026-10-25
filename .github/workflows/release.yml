@@ -207,13 +207,11 @@ jobs:
           no-cache: true
 
       - name: Scan the pushed image for known vulnerabilities
-        # Provenance says who built these bytes, not what is in them. OS
-        # packages on the base are unmeasured. Runs before the attestation,
-        # so a failing scan is never signed as shipped. Trivy by digest,
-        # pulling with this job's token: no docker socket needed.
-        # --ignore-unfixed: fail only where a fix exists. --platform: each
-        # per-arch image is a one-child index, and without it the remote source
-        # looks for linux/amd64 and fails without scanning anything.
+        # Provenance says who built these bytes, not what is in them. Trivy by
+        # digest with this job's token, before the attestation, so a failing
+        # scan is never signed as shipped. --platform names the leg's arch:
+        # a per-arch image is a one-child index. --ignore-unfixed: fail only
+        # where a fix exists.
         env:
           IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
           TRIVY_USERNAME: ${{ github.actor }}
