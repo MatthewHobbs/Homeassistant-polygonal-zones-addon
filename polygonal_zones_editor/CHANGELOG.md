@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.3 — 2026-10-25
+
+Documentation update, with the build fixes 0.7.1 and 0.7.2 needed to be released.
+
+- The documentation page leads with setup, and says plainly that only 64-bit
+  installations are supported.
+- Mapped devices that cannot be read say which kind of unknown "here since" is,
+  and warn once in the log.
+- The image no longer ships a package manager at runtime, its bundled helper is
+  rebuilt on a current toolchain, and it takes the base image's current operating
+  system patches: the release scan is clean and the image is about 10 MB smaller.
+
+0.7.1 and 0.7.2 were tagged but not released: the first was refused by the new
+scan, the second by a fault in that scan. This version carries the same changes
+with both fixed.
+
 ## 0.7.2 — 2026-10-25
 
 Documentation update, plus a build fix 0.7.1 needed.
