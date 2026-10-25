@@ -1696,6 +1696,72 @@ def test_trackers_json_warns_once_about_an_unreadable_entity(app_factory, monkey
     assert len([r for r in warnings if "device_tracker.gone" in r.getMessage()]) == 1
 
 
+def test_trackers_json_warns_once_about_a_tracker_with_no_position(
+    app_factory, monkeypatch, caplog
+):
+    """A zone-only tracker is the common fresh install: `device_tracker.phone` from a
+    router knows which zone it is in, not where it is. It was dropped in silence, which
+    looked exactly like a mistyped id, so say which entity and what to point at."""
+    import logging
+
+    import main
+
+    monkeypatch.setattr(main, "_overlay_no_fix", set())
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
+    # Readable, and no latitude/longitude: the shape a router integration returns.
+    monkeypatch.setattr(
+        main,
+        "_fetch_state",
+        lambda eid, _t: {
+            "entity_id": eid,
+            "state": "home",
+            "attributes": {"source_type": "router"},
+        },
+    )
+    client = _ingress(app_factory({"overlay_entities": ["device_tracker.phone"]}))
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            body = client.get("/trackers.json").json()
+            assert body["trackers"] == [] and body["unavailable"] == []
+
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len([m for m in warned if "device_tracker.phone" in m]) == 1
+    assert any("latitude/longitude" in m for m in warned)
+
+
+def test_a_tracker_that_gains_a_position_is_warned_about_again_if_it_loses_it(
+    app_factory, monkeypatch, caplog
+):
+    import logging
+
+    import main
+
+    monkeypatch.setattr(main, "_overlay_no_fix", set())
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
+    fix = {"value": None}
+
+    def fake_fetch(eid, _t):
+        if fix["value"] is None:
+            return {"entity_id": eid, "state": "home", "attributes": {}}
+        return _ha_state(eid, *fix["value"])
+
+    monkeypatch.setattr(main, "_fetch_state", fake_fetch)
+    client = _ingress(app_factory({"overlay_entities": ["device_tracker.car"]}))
+
+    with caplog.at_level(logging.WARNING):
+        client.get("/trackers.json")
+        fix["value"] = (51.5007654, -0.1246765)
+        assert (
+            client.get("/trackers.json").json()["trackers"][0]["entity_id"] == "device_tracker.car"
+        )
+        fix["value"] = None
+        client.get("/trackers.json")
+
+    warned = [m for m in (r.getMessage() for r in caplog.records) if "latitude/longitude" in m]
+    assert len(warned) == 2
+
+
 def test_trackers_json_skips_entities_that_fail_to_resolve(app_factory, monkeypatch):
     """One unreachable entity must not empty the whole overlay."""
     import main

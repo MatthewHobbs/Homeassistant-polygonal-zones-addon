@@ -767,6 +767,28 @@ def _report_unreadable_overlay(entity_id: str) -> None:
     )
 
 
+_overlay_no_fix: set[str] = set()
+
+
+def _report_no_fix_overlay(entity_id: str) -> None:
+    """Name a configured overlay entity that answers but carries no position, once.
+
+    A tracker from a router or hub knows which zone it is in, not where it is.
+    Dropped in silence, it looked like a mistyped id: the map drew zones, the
+    sidebar stayed empty, and the log said nothing at all.
+    """
+    if entity_id in _overlay_no_fix:
+        return
+    _overlay_no_fix.add(entity_id)
+    _LOGGER.warning(
+        "Overlay entity %s answers but has no latitude/longitude attributes, so it "
+        "cannot be plotted. Point overlay_entities at a GPS source, such as the "
+        "Companion app's device_tracker. It keeps being polled and appears once it "
+        "reports a position.",
+        entity_id,
+    )
+
+
 def _fetch_state(entity_id: str, token: str) -> dict | None:
     return _get_json(f"states/{entity_id}", token)
 
@@ -984,23 +1006,30 @@ def trackers_json_generator(options: dict, entities: list[str]):
             done, pending = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
             for future in pending:
                 future.cancel()  # still queued: do not spend the pool on a poll that has given up
-            found, unavailable = [], []
+            found, unavailable, no_fix = [], [], []
             for future, entity_id in futures.items():
                 payload = future.result() if future in done else None
                 if payload is None:
                     unavailable.append(entity_id)
                     continue
                 point = _overlay_point(entity_id, payload)
-                if point is not None:
+                if point is None:
+                    no_fix.append(entity_id)
+                else:
                     found.append(point)
-            return found, unavailable
+            return found, unavailable, no_fix
 
-        trackers, unavailable = await run_in_threadpool(_gather)
-        # On the event loop, not in the worker: the warned-about set is shared.
+        trackers, unavailable, no_fix = await run_in_threadpool(_gather)
+        # On the event loop, not in the worker: the warned-about sets are shared.
         for entity_id in unavailable:
             _report_unreadable_overlay(entity_id)
-        for entity_id in set(entities) - set(unavailable):
+        for entity_id in no_fix:
+            _report_no_fix_overlay(entity_id)
+        answered = set(entities) - set(unavailable)
+        for entity_id in answered:
             _overlay_unreadable.discard(entity_id)
+        for entity_id in answered - set(no_fix):
+            _overlay_no_fix.discard(entity_id)
         return _uncached(
             {
                 "configured": True,
