@@ -211,7 +211,9 @@ jobs:
         # packages on the base are unmeasured. Runs before the attestation,
         # so a failing scan is never signed as shipped. Trivy by digest,
         # pulling with this job's token: no docker socket needed.
-        # --ignore-unfixed: fail only where a fix exists.
+        # --ignore-unfixed: fail only where a fix exists. --platform: each
+        # per-arch image is a one-child index, and without it the remote source
+        # looks for linux/amd64 and fails without scanning anything.
         env:
           IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
           TRIVY_USERNAME: ${{ github.actor }}
@@ -230,6 +232,7 @@ jobs:
             --ignore-unfixed \
             --ignorefile /trivyignore \
             --exit-code 1 \
+            --platform "linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}" \
             "$IMAGE"
 
       # Sign the pushed image with a Sigstore build-provenance attestation
