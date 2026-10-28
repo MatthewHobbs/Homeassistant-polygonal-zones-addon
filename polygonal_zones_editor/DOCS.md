@@ -32,10 +32,10 @@ Install both from their GitHub pages, and they find each other. You will not nee
 1. Install the [Polygonal Zones integration](https://github.com/MatthewHobbs/Homeassistant-polygonal-zones). If it does not appear in the list of integrations, restart Home Assistant.
 2. Open **Settings → Devices & services** and wait a minute. A **Polygonal Zones** card appears under **Discovered**.
 3. Choose **Configure** on it (some versions say **Confirm**).
-4. Tick the phones, cars or trackers you want watched, and accept the notice about tracking.
-5. Choose **Finish**.
+4. The card sets things up at once. It does not ask which devices to watch yet.
+5. On the new **Polygonal Zones** entry, open the **⋮** menu and choose **Reconfigure**. Tick the phones, cars or trackers you want watched. The first time you tick a device, accept the notice about tracking.
 
-That is the whole setup. Nothing to copy, nothing to type.
+That is the whole connection. Nothing to copy, nothing to type.
 
 ## Check that it works
 
@@ -48,16 +48,17 @@ If it already says `away` while it is standing inside the shape, look below.
 
 ## If it does not work
 
-| What you see                                          | What to do                                                                                                                                                                        |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No **Polygonal Zones** card to set up                 | Check the app is installed **and started**, and the integration is installed. Restart Home Assistant. If it still does not appear, see [setting up by hand](#setting-up-by-hand). |
-| Set up, but the device always says `away`             | Check you ticked that device in the setup. Check the shape was saved: it should be in the list in the app. A device that has not moved or reported for hours may take a while.    |
-| A device says `away` although it is clearly inside    | The shape may be too small to be reliable, or the phone may be reporting a rough position. See [is this the right tool](#is-this-the-right-tool).                                 |
-| Saving says something went wrong                      | The app and the integration disagree about the app's password. That only happens after setting up by hand; repeat step 2 of [setting up by hand](#setting-up-by-hand).            |
-| The editor says it could not load your zones          | The file holding your zones is damaged. Restore it from a Home Assistant backup — see [if the zones file is damaged](#if-the-zones-file-is-damaged).                              |
-| Many extra devices called Polygonal Zones 1, 2, 3, 4… | An old version of the integration left them behind. Update the integration, then delete the leftovers once by hand.                                                               |
-| The editor does not appear in the sidebar             | Turn on **Show in sidebar** in the app's configuration, or use **Open Web UI** on the app's page.                                                                                 |
-| The map shows zones but no device                     | The device must report a position of its own. A phone you only see through your router's app knows which zone it is in but not where it is, so there is nothing to draw. The app's log names the device and says the same. |
+| What you see                                          | What to do                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| No **Polygonal Zones** card to set up                 | Check the app is installed **and started**, and the integration is installed. Restart Home Assistant. If it still does not appear, see [setting up by hand](#setting-up-by-hand).                                                                                                                                                                                                                            |
+| A **Discovered** card appears, but you already set up | If you set up an older version by hand using your Home Assistant address, the app's own internal address looks new to Home Assistant. Ignore the card if you want to keep your hand-made entry; confirming it creates a second entry (delete whichever one you do not want).                                                                                                                                |
+| Set up, but the device always says `away`             | Check you ticked that device: **⋮ → Reconfigure** on the entry. Check the shape was saved: it should be in the list in the app. A device that has not moved or reported for hours may take a while. If neither helps, restart the app: the two may disagree about its password (see the row for saving, below).                                                                                              |
+| A device says `away` although it is clearly inside    | The shape may be too small to be reliable, or the phone may be reporting a rough position. See [is this the right tool](#is-this-the-right-tool).                                                                                                                                                                                                                                                            |
+| Saving says something went wrong                      | The app and the integration may disagree about the app's password. With automatic setup this can happen if the app could not reach Home Assistant's Supervisor when it started, or if an older version restarted while the **Discovered** card was still waiting. Restart the app: it tells Home Assistant the current password. If you set the password yourself, repeat step 2 of [setting up by hand](#setting-up-by-hand). |
+| The editor says it could not load your zones          | The file holding your zones is damaged. Restore it from a Home Assistant backup — see [if the zones file is damaged](#if-the-zones-file-is-damaged).                                                                                                                                                                                                                                                         |
+| Many extra devices called Polygonal Zones 1, 2, 3, 4… | An old version of the integration left them behind. Update the integration, then delete the leftovers once by hand.                                                                                                                                                                                                                                                                                          |
+| The editor does not appear in the sidebar             | Turn on **Show in sidebar** in the app's configuration, or use **Open Web UI** on the app's page.                                                                                                                                                                                                                                                                                                            |
+| The map shows zones but no device                     | The device must report a position of its own. A phone you only see through your router's app knows which zone it is in but not where it is, so there is nothing to draw. The app's log names the device and says the same.                                                                                                                                                                                   |
 
 The integration's own [troubleshooting page](https://matthewhobbs.github.io/Homeassistant-polygonal-zones/troubleshooting/) covers the tracking side in more detail.
 
@@ -70,7 +71,7 @@ The integration's own [troubleshooting page](https://matthewhobbs.github.io/Home
 - **Save**: nothing is kept until you choose **Save** at the bottom of the panel. An amber dot shows there are changes waiting.
 - **Start again**: if you make a mess, **Replace zones from file** loads zones you saved earlier.
 
-Changes take effect as soon as you save: the integration is told to re-read them, so an automation can use the new shape immediately.
+Changes take effect as soon as you save: the integration is asked to re-read them right away, and the status line under **Save** warns if Home Assistant could not re-read them yet.
 
 ## Changing how it looks
 
@@ -92,7 +93,9 @@ The map can show your phones and cars live, with a circle showing how precise ea
 
 The device has to report a position itself. A phone shown through the Home Assistant Companion app does; one you only see through your router's or hub's app does not.
 
-Reading positions needs permission to read Home Assistant's device states. The app asks for that permission for these positions and the arrival time, and uses it for nothing else. Only list devices whose position you are comfortable having on this map: anyone who can open the app can see them.
+The app is given access to Home Assistant when you install it. It uses that access to read the positions and arrival times of the devices you list, to ask Home Assistant to re-read your zones after every save, and to tell Home Assistant where the app is each time it starts.
+
+Only list a device whose owner is comfortable having it on this map. A household member's phone is a decision to make with them. Anyone who can open the app can see these positions, and so can anyone on your network who holds the app's password.
 
 ## Your data
 
@@ -100,6 +103,8 @@ Reading positions needs permission to read Home Assistant's device states. The a
 - **Deleting a zone does not delete it from old backups.** If you are removing zones for privacy, remove the old backups too: **Settings → System → Backups**.
 - **The map background** comes from OpenStreetMap, CARTO or Esri, whichever you pick. Those providers see which part of the map you are looking at, and your Home Assistant address as the page you came from.
 - **Your browser remembers the last map view** for each device you use, so it opens where you left it. Clearing your browser's data for Home Assistant forgets it.
+- **The app's log** records the address of anything the app refuses, and names a listed device it cannot read or that reports no position. Any Home Assistant user who can open the app's log can read it.
+- **The app's password.** With automatic setup you never see it: unless you set `save_token` yourself, the app makes one once, keeps it in its own data, and hands it to Home Assistant (which keeps it in its own storage and discovery records), so it is in backups of both.
 - **No one else is told anything.** The app does not send your zones anywhere.
 
 ## Is this the right tool?

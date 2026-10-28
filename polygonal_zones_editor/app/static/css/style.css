@@ -259,6 +259,10 @@ body {
     background-color: #1a7f37 !important;
 }
 
+.save-btn.warning {
+    background-color: #9a6700 !important;
+}
+
 .save-btn.error {
     background-color: #c0392b !important;
 }

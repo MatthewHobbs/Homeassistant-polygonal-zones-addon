@@ -40,12 +40,16 @@ def no_core_calls(monkeypatch):
 @pytest.fixture
 def tmp_zones_file(tmp_path, monkeypatch):
     import const
+    import helpers
     import main
 
     zones = tmp_path / "zones.json"
+    token_file = tmp_path / "save_token"
     zones.write_text(json.dumps({"type": "FeatureCollection", "features": []}))
     monkeypatch.setattr(const, "ZONES_FILE", str(zones))
     monkeypatch.setattr(main, "ZONES_FILE", str(zones))
+    monkeypatch.setattr(const, "SAVE_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(helpers, "SAVE_TOKEN_FILE", str(token_file))
     return zones
 
 

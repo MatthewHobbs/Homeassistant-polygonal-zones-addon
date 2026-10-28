@@ -1,5 +1,6 @@
 """Tests for app/core_link.py — discovery and the reload call."""
 
+import http.client
 import json
 from unittest.mock import MagicMock
 import urllib.error
@@ -71,6 +72,69 @@ class TestAnnounce:
 
         assert "Could not announce" in caplog.text
 
+    def test_a_garbled_reply_to_announce_is_logged_not_raised(self, monkeypatch, caplog):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(
+            core_link, "_post", MagicMock(side_effect=http.client.LineTooLong("header line"))
+        )
+        monkeypatch.setattr(core_link, "_get_json", MagicMock(return_value={"data": {}}))
+        monkeypatch.setattr(core_link.socket, "gethostname", lambda: "h")
+
+        core_link.announce("save-me")
+
+        assert "Could not announce" in caplog.text
+
+    def test_a_failing_hostname_lookup_is_logged_not_raised(self, monkeypatch, caplog):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(core_link, "_get_json", MagicMock(return_value={"data": {}}))
+        monkeypatch.setattr(
+            core_link.socket, "gethostname", MagicMock(side_effect=OSError("no hostname"))
+        )
+
+        core_link.announce("save-me")
+
+        assert "Could not announce" in caplog.text
+
+    def test_a_garbled_info_reply_falls_back_to_the_hostname(self, monkeypatch):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(core_link.socket, "gethostname", lambda: "h")
+        monkeypatch.setattr(
+            core_link, "_get_json", MagicMock(side_effect=http.client.LineTooLong("header line"))
+        )
+        post = MagicMock(return_value=200)
+        monkeypatch.setattr(core_link, "_post", post)
+
+        core_link.announce("save-me")
+
+        assert post.call_args.args[1]["config"]["host"] == "h"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [[], ["data"], "text", None, {"data": []}, {"data": "x"}, {"data": {"ip_address": 5}}],
+    )
+    def test_an_unexpected_info_shape_falls_back_to_the_hostname(self, monkeypatch, reply):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(core_link.socket, "gethostname", lambda: "h")
+        monkeypatch.setattr(core_link, "_get_json", MagicMock(return_value=reply))
+        post = MagicMock(return_value=200)
+        monkeypatch.setattr(core_link, "_post", post)
+
+        core_link.announce("save-me")
+
+        assert post.call_args.args[1]["config"]["host"] == "h"
+
+    def test_the_hostname_field_is_used_when_there_is_no_ip(self, monkeypatch):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(
+            core_link, "_get_json", MagicMock(return_value={"data": {"hostname": "abc-zones"}})
+        )
+        post = MagicMock(return_value=200)
+        monkeypatch.setattr(core_link, "_post", post)
+
+        core_link.announce("save-me")
+
+        assert post.call_args.args[1]["config"]["host"] == "abc-zones"
+
 
 class TestNotifySaved:
     def test_success(self, monkeypatch):
@@ -112,6 +176,44 @@ class TestNotifySaved:
 
         assert core_link.notify_saved()[0] == "unreachable"
         assert "Zone reload request failed" in caplog.text
+
+    def test_a_connect_timeout_wrapped_in_urlerror_is_unreachable(self, monkeypatch, caplog):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(
+            core_link,
+            "_post",
+            MagicMock(side_effect=urllib.error.URLError(TimeoutError("connect timed out"))),
+        )
+
+        assert core_link.notify_saved() == ("unreachable", "could not reach Home Assistant")
+        assert "Zone reload request failed" in caplog.text
+
+    def test_a_garbled_reply_is_unreachable_not_raised(self, monkeypatch):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(
+            core_link, "_post", MagicMock(side_effect=http.client.LineTooLong("header line"))
+        )
+
+        assert core_link.notify_saved() == ("unreachable", "could not reach Home Assistant")
+
+    def test_a_bare_read_timeout_is_pending_not_unreachable(self, monkeypatch):
+        """A read timeout after sending the request means the reload may still finish."""
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(core_link, "_post", MagicMock(side_effect=TimeoutError("timed out")))
+
+        assert core_link.notify_saved() == (
+            "pending",
+            "Home Assistant has not answered yet; the reload may still be running",
+        )
+
+    def test_the_400_note_covers_a_new_install_and_an_old_one(self, monkeypatch):
+        monkeypatch.setenv("SUPERVISOR_TOKEN", "sv")
+        monkeypatch.setattr(core_link, "_post", MagicMock(side_effect=_http_error(400)))
+
+        note = core_link.notify_saved()[1]
+
+        assert "not finished setting up" in note
+        assert "older than 1.16.0" in note
 
 
 def test_redirects_are_refused(monkeypatch):

@@ -308,15 +308,86 @@ def test_every_option_has_a_name_and_description_in_the_ui():
 class TestSaveToken:
     """The token that gates non-ingress requests."""
 
-    def test_a_configured_token_wins(self):
+    def test_a_configured_token_wins_without_writing_to_disk(self, tmp_path, monkeypatch):
         import helpers
 
+        token_file = tmp_path / "save_token"
+        monkeypatch.setattr(helpers, "SAVE_TOKEN_FILE", str(token_file))
         assert helpers.save_token({"save_token": "  typed-in  "}) == "typed-in"
+        assert not token_file.exists()
 
-    def test_an_empty_or_missing_option_generates_one(self):
+    def test_an_empty_or_missing_option_generates_and_persists_one(self, tmp_path, monkeypatch):
+        import os
+
         import helpers
 
+        fsynced_fds = []
+        original_fsync = os.fsync
+
+        def track_fsync(fd):
+            fsynced_fds.append(fd)
+            return original_fsync(fd)
+
+        monkeypatch.setattr(os, "fsync", track_fsync)
+        token_file = tmp_path / "save_token"
+        monkeypatch.setattr(helpers, "SAVE_TOKEN_FILE", str(token_file))
+        first = helpers.save_token({})
+        assert len(first) >= 32
+        assert json.loads(token_file.read_text(encoding="utf-8")) == first
+        assert (token_file.stat().st_mode & 0o777) == 0o600
+        # Two fsyncs: one for the temp file, one for the parent directory.
+        assert len(fsynced_fds) == 2
         for options in ({}, {"save_token": ""}, {"save_token": "   "}):
-            token = helpers.save_token(options)
-            assert len(token) >= 32
-            assert token != helpers.save_token(options)
+            assert helpers.save_token(options) == first
+
+    @pytest.mark.parametrize("contents", ["   \n", '""', '"   "', "123", "{not-json"])
+    def test_a_blank_or_invalid_persisted_file_is_regenerated(
+        self, tmp_path, monkeypatch, contents
+    ):
+        import helpers
+
+        token_file = tmp_path / "save_token"
+        token_file.write_text(contents, encoding="utf-8")
+        monkeypatch.setattr(helpers, "SAVE_TOKEN_FILE", str(token_file))
+        token = helpers.save_token({})
+        assert len(token) >= 32
+        assert json.loads(token_file.read_text(encoding="utf-8")) == token
+
+    def test_an_unreadable_persisted_file_is_not_overwritten(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        import helpers
+
+        token_file = tmp_path / "save_token"
+        token_file.write_text('"existing-token"', encoding="utf-8")
+        monkeypatch.setattr(helpers, "SAVE_TOKEN_FILE", str(token_file))
+        real_open = open
+
+        def fail_read(path, *a, **k):
+            if str(path) == str(token_file):
+                raise PermissionError("unreadable")
+            return real_open(path, *a, **k)
+
+        monkeypatch.setattr("builtins.open", fail_read)
+        with caplog.at_level(logging.WARNING):
+            token = helpers.save_token({})
+        assert len(token) >= 32
+        assert token != "existing-token"
+        assert "ephemeral save token" in caplog.text
+        monkeypatch.undo()
+        assert json.loads(token_file.read_text(encoding="utf-8")) == "existing-token"
+
+    def test_a_write_failure_logs_and_still_returns_a_token(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        import helpers
+
+        token_file = tmp_path / "save_token"
+        monkeypatch.setattr(helpers, "SAVE_TOKEN_FILE", str(token_file))
+        monkeypatch.setattr(helpers.os, "replace", lambda *_a: (_ for _ in ()).throw(OSError("ro")))
+        with caplog.at_level(logging.WARNING):
+            token = helpers.save_token({})
+        assert len(token) >= 32
+        assert "Could not persist save token" in caplog.text
+        assert not token_file.exists()
+        assert list(tmp_path.iterdir()) == []

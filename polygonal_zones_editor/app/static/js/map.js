@@ -19,17 +19,19 @@ let save_in_flight = false;
 // Safari/iOS before 16 lack.
 const REQUEST_TIMEOUT_MS = 30000;
 let save_status_timer = null;
+// True while the status line holds a save's note; a later edit makes it stale.
+let save_note_shown = false;
 const NOT_LOADED_TEXT = {
     pending: 'The saved zones are still loading. Try again in a moment.',
     failed: "The saved zones couldn't be loaded, so saving now could overwrite them. Reload the page and try again.",
 };
 
-/* Colour the Save button (cls: 'success', 'error' or null) and say why. */
+/* Colour the Save button (cls: 'success', 'warning', 'error' or null) and say why. */
 function show_save_state(cls, text) {
     const btn = document.querySelector('.save-btn');
     const status = document.getElementById('save-status');
     if (btn) {
-        btn.classList.remove('success', 'error');
+        btn.classList.remove('success', 'warning', 'error');
         if (cls) btn.classList.add(cls);
     }
     if (status) status.textContent = text;
@@ -47,7 +49,16 @@ function clear_not_loaded_refusal() {
 let isDirty = false;
 // Bumped on every edit, so a save only marks clean what it actually sent.
 let edit_seq = 0;
-function mark_dirty() { isDirty = true; edit_seq++; update_dirty_indicator(); }
+function mark_dirty() {
+    isDirty = true;
+    edit_seq++;
+    update_dirty_indicator();
+    // "Zones saved. …" must not outlive the edit that made it untrue.
+    if (save_note_shown) {
+        save_note_shown = false;
+        show_save_state(null, '');
+    }
+}
 function mark_clean() { isDirty = false; update_dirty_indicator(); }
 function update_dirty_indicator() {
     // The beforeunload prompt only fires on navigation, which the ingress
@@ -556,6 +567,7 @@ function save_zones() {
     clearTimeout(save_status_timer);
     // Errors stay on screen until this, the next click: one that vanished
     // after a moment left users unsure whether their zones saved.
+    save_note_shown = false;
     show_save_state(null, 'Saving…');
     const controller = new AbortController();
     let timed_out = false;
@@ -585,17 +597,26 @@ function save_zones() {
             // The save response says whether Home Assistant re-read the file.
             const reload = body?.reload;
             const note = typeof reload?.note === 'string' && reload.note ? ` ${reload.note}` : '';
-            show_save_state('success', `Zones saved.${note}`);
-// Only a save that landed moves the editor to the new version: a 412 carries
-// the other session's ETag, and adopting it would let the next click overwrite
-// their edits. The body's value is checked too — it becomes a request header.
+            const not_reread = Boolean(reload) && reload.state !== 'ok';
+            if (not_reread) {
+                // Saved, but Home Assistant is still on the old zones. The
+                // prefix keeps this readable without the button colour.
+                const verb = reload.state === 'pending' ? 'has not yet re-read' : 'did not re-read';
+                show_save_state('warning', `Warning: zones saved, but Home Assistant ${verb} them.${note}`);
+            } else {
+                show_save_state('success', `Zones saved.${note}`);
+            }
+            save_note_shown = Boolean(note) || not_reread;
+            // Only a save that landed moves the editor to the new version: a 412 carries
+            // the other session's ETag, and adopting it would let the next click overwrite
+            // their edits. The body's value is checked too — it becomes a request header.
             const body_etag = /^"[0-9a-f]+"$/.test(body?.etag) ? body.etag : null;
             const new_etag = response.headers.get('ETag') || body_etag;
             if (new_etag) zones_etag = new_etag;
             // An edit made while the request was in flight is still unsaved.
             if (edit_seq === sent_seq) mark_clean();
-            // A note about Home Assistant stays up; a bare "saved" fades.
-            if (!note) save_status_timer = setTimeout(() => show_save_state(null, ''), 2000);
+            // A note about Home Assistant stays up until the next edit; a bare "saved" fades.
+            if (!save_note_shown) save_status_timer = setTimeout(() => show_save_state(null, ''), 2000);
         });
     }).catch(err => {
         show_save_state('error', timed_out

@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from core_link import announce, notify_saved
+from core_link import announce, build_opener, notify_saved
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
@@ -724,6 +724,10 @@ def tracker_refresh_seconds(options: dict) -> int:
 _OVERLAY_POOL = ThreadPoolExecutor(max_workers=OVERLAY_FETCH_WORKERS, thread_name_prefix="overlay")
 
 
+def _urlopen(req: urllib.request.Request, timeout: float):
+    return build_opener().open(req, timeout=timeout)
+
+
 def _get_json(path: str, token: str):
     """GET a Core API path through the Supervisor proxy; None on any failure. Blocking."""
     req = urllib.request.Request(
@@ -731,7 +735,7 @@ def _get_json(path: str, token: str):
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
+        with _urlopen(req, timeout=OVERLAY_TIMEOUT_SECONDS) as resp:
             raw = resp.read(MAX_HA_REPLY_BYTES + 1)
         if len(raw) > MAX_HA_REPLY_BYTES:
             raise ValueError("reply over the size cap")
@@ -837,8 +841,10 @@ def _overlay_point(entity_id: str, payload: dict | None) -> dict | None:
 
 
 _HERE_SINCE_WINDOW = timedelta(hours=24)
-# A fix a few metres from the last is GPS noise, not a move.
+# A fix a few metres from the last is GPS noise, not a move; a coarse cell or
+# IP fix must not widen the "still here" radius across a whole town.
 _STILL_MIN_METRES = 20
+_STILL_MAX_ACCURACY_METRES = 200
 
 
 def _metres_between(lat1, lon1, lat2, lon2) -> float:
@@ -862,7 +868,7 @@ def _here_since(reply, window_start: datetime) -> tuple[str | None, bool]:
     if not fixed:
         return None, False
     lat, lon, acc = fixed[-1][1]
-    limit = max(2 * (acc or 0), _STILL_MIN_METRES)
+    limit = max(2 * min(acc or 0, _STILL_MAX_ACCURACY_METRES), _STILL_MIN_METRES)
     i = len(fixed) - 1
     while i > 0 and _metres_between(lat, lon, *fixed[i - 1][1][:2]) <= limit:
         i -= 1
@@ -997,7 +1003,7 @@ def trackers_json_generator(options: dict, entities: list[str]):
             )
             return _uncached({"configured": True, "trackers": [], "error": "no_supervisor_token"})
 
-        def _gather() -> tuple[list[dict], list[str]]:
+        def _gather() -> tuple[list[dict], list[str], list[str], list[str]]:
             # One deadline for the whole overlay, with concurrent fetches: sequential
             # per-entity timeouts would let 25 unreachable entities hold this worker for 25
             # timeouts. An entity that missed the deadline is listed as unavailable, not
@@ -1006,9 +1012,13 @@ def trackers_json_generator(options: dict, entities: list[str]):
             done, pending = wait(futures, timeout=OVERLAY_TIMEOUT_SECONDS)
             for future in pending:
                 future.cancel()  # still queued: do not spend the pool on a poll that has given up
-            found, unavailable, no_fix = [], [], []
+            found, unavailable, timed_out, no_fix = [], [], [], []
             for future, entity_id in futures.items():
-                payload = future.result() if future in done else None
+                if future not in done:
+                    unavailable.append(entity_id)
+                    timed_out.append(entity_id)
+                    continue
+                payload = future.result()
                 if payload is None:
                     unavailable.append(entity_id)
                     continue
@@ -1017,11 +1027,12 @@ def trackers_json_generator(options: dict, entities: list[str]):
                     no_fix.append(entity_id)
                 else:
                     found.append(point)
-            return found, unavailable, no_fix
+            return found, unavailable, timed_out, no_fix
 
-        trackers, unavailable, no_fix = await run_in_threadpool(_gather)
+        trackers, unavailable, timed_out, no_fix = await run_in_threadpool(_gather)
         # On the event loop, not in the worker: the warned-about sets are shared.
-        for entity_id in unavailable:
+        # A future that missed the gather deadline is a slow poll, not a broken id.
+        for entity_id in set(unavailable) - set(timed_out):
             _report_unreadable_overlay(entity_id)
         for entity_id in no_fix:
             _report_no_fix_overlay(entity_id)
@@ -1245,10 +1256,11 @@ def _entry_count(value) -> int:
 
 
 def loggable_options(options: dict) -> dict:
-    """The options as they may appear in the add-on log.
+    """The options as they may appear in the startup add-on log.
 
     The token is reduced to whether it is set; entity ids and proxy addresses
-    identify devices and hosts, so only their counts are logged.
+    identify devices and hosts, so only their counts are logged here (an
+    unreadable or positionless overlay entity is named once in a warning).
     """
     out = {key: options[key] for key in _LOGGED_OPTION_KEYS if key in options}
     # "***" is the form DOCS.md tells users to look for.

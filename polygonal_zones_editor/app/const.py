@@ -3,6 +3,7 @@ import os
 OPTIONS_FILE = "/data/options.json"
 DATA_FOLDER = "/data/polygonal_zones"
 ZONES_FILE = os.path.join(DATA_FOLDER, "zones.json")
+SAVE_TOKEN_FILE = os.path.join(DATA_FOLDER, "save_token")
 
 ALLOWED_IPS = ["172.30.32.2"]
 

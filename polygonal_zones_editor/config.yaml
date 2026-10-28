@@ -40,9 +40,8 @@ ports:
   8000/tcp: null
 
 # Home Assistant API access, granted at install and not read-only. The add-on
-# uses it only for /trackers.json, issuing GET /states/<entity_id> for each
-# entity named in `overlay_entities`; that list is empty by default, and with
-# it empty the add-on asks Home Assistant for nothing at all.
+# reads /states/<entity_id> for each entity in `overlay_entities` (empty by
+# default), asks Core to re-read zones after each save, and announces itself at start.
 homeassistant_api: true
 discovery:
   - polygonal_zones

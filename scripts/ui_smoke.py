@@ -137,6 +137,11 @@ async def main():
             await page.click(".save-btn")
         if (await saved.value).status != 200:
             fail(f"save after rename returned {(await saved.value).status}", errors)
+        await page.wait_for_function(
+            "() => /^(?:Zones saved\\.|Warning: zones saved,)/.test("
+            "document.getElementById('save-status')?.textContent || '')",
+            timeout=5000,
+        )
         persisted = await page.evaluate(
             "async () => (await fetch('./zones.json').then(r => r.json()))"
         )

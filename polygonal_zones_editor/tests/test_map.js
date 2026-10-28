@@ -1013,8 +1013,70 @@ test('a save says when Home Assistant did not pick the file up', async () => {
 
     assert.equal(
         m.status.textContent,
-        'Zones saved. Home Assistant needs integration 1.16.0 or later'
+        'Warning: zones saved, but Home Assistant did not re-read them. Home Assistant needs integration 1.16.0 or later'
     );
+});
+
+async function saveWithReload(reload) {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(200, '"x"', { status: 'ok', etag: '"x"', reload });
+    await m.save();
+    return m;
+}
+
+for (const state of ['older', 'refused', 'unreachable']) {
+    test(`reload state ${state} warns, with the note, and is not a success`, async () => {
+        const m = await saveWithReload({ state, note: 'Fixed note.' });
+        assert.equal(m.status.textContent,
+            'Warning: zones saved, but Home Assistant did not re-read them. Fixed note.');
+        assert.ok(m.saveBtn.classList.contains('warning'));
+        assert.ok(!m.saveBtn.classList.contains('success'));
+    });
+}
+
+test('reload state pending says Home Assistant has not yet re-read the file', async () => {
+    const m = await saveWithReload({ state: 'pending', note: 'Wait.' });
+    assert.equal(m.status.textContent,
+        'Warning: zones saved, but Home Assistant has not yet re-read them. Wait.');
+    assert.ok(m.saveBtn.classList.contains('warning'));
+    assert.ok(!m.saveBtn.classList.contains('success'));
+});
+
+test('a non-string note is ignored but a non-ok state still warns', async () => {
+    const m = await saveWithReload({ state: 'refused', note: {} });
+    assert.equal(m.status.textContent,
+        'Warning: zones saved, but Home Assistant did not re-read them.');
+    assert.ok(m.saveBtn.classList.contains('warning'));
+});
+
+test('a save with no reload object is a plain success', async () => {
+    const m = await saveWithReload(undefined);
+    assert.equal(m.status.textContent, 'Zones saved.');
+    assert.ok(m.saveBtn.classList.contains('success'));
+    assert.ok(!m.saveBtn.classList.contains('warning'));
+});
+
+test('an ok reload is a success', async () => {
+    const m = await saveWithReload({ state: 'ok', note: '' });
+    assert.ok(m.saveBtn.classList.contains('success'));
+});
+
+test('an edit after a warned save clears the note', async () => {
+    const m = await saveWithReload({ state: 'refused', note: 'Fixed note.' });
+    assert.notEqual(m.status.textContent, '');
+    m.markDirty();
+    assert.equal(m.status.textContent, '');
+    assert.ok(!m.saveBtn.classList.contains('warning'));
+});
+
+test('an edit leaves an error on screen', async () => {
+    const m = loadMap();
+    m.loadSaved(JSON.parse(collection(polygon('A'))));
+    m.reply(500, null, { detail: 'boom' });
+    await m.save();
+    m.markDirty();
+    assert.match(m.status.textContent, /Save failed/);
 });
 
 test('a save with no note still says it saved', async () => {

@@ -402,6 +402,9 @@ test('here since shows the time today, and the date too before today', async () 
     assert.equal(pz_here_since_text({ reason: 'lookup_failed' }, now), 'history unavailable');
     assert.equal(pz_here_since_text({ reason: 'busy' }, now), 'too many lookups, try again');
     assert.equal(pz_here_since_text({ reason: 'over_window' }, now), 'unknown');
+    for (const reason of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+        assert.equal(pz_here_since_text({ reason }, now), 'unknown', reason);
+    }
 
     const { settled } = await openPopup(CAR, reply({ since: new Date().toISOString(), over_window: false }));
     assert.match(settled.at(-1), /^Here since \S/);
@@ -548,6 +551,61 @@ test('a reopen reuses an unknown answer for a minute, then asks again', async ()
         assert.equal(lookups, 2, 'and asked again after it');
     } finally {
         Date.now = realNow;
+        Object.assign(globalThis, saved);
+    }
+});
+
+test('a tracker poll that never answers is aborted, and a later poll is made', async () => {
+    const trackers = require(path.join(__dirname, '..', 'app', 'static', 'js', 'trackers.js'));
+    const saved = {
+        fetch: globalThis.fetch, L: globalThis.L, document: globalThis.document,
+        setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+    };
+    const timers = [];
+    let polls = 0;
+    const signals = [];
+    const layer = () => ({ addTo() { return this; }, clearLayers() {}, eachLayer() {}, bindTooltip() { return this; }, bindPopup() { return this; } });
+    globalThis.document = {
+        createElement: fakeNode, querySelector: () => null, hidden: false, addEventListener() {},
+    };
+    globalThis.L = { layerGroup: layer, circle: layer, circleMarker: layer };
+    globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+    globalThis.clearTimeout = () => {};
+    globalThis.fetch = (url, opts) => {
+        polls += 1;
+        signals.push(opts && opts.signal);
+        if (polls === 1) {
+            return Promise.resolve({
+                ok: true,
+                json: async () => ({ configured: true, trackers: [], unavailable: [], refresh_seconds: 5 }),
+            });
+        }
+        return new Promise((resolve, reject) => {
+            if (opts && opts.signal) {
+                opts.signal.addEventListener('abort', () => reject(new Error('aborted')));
+            }
+        });
+    };
+    try {
+        await trackers.setup_tracker_overlay({ on() {} });
+        const flush = () => new Promise((r) => setImmediate(r));
+        // The scheduled poll hangs until the abort timer fires.
+        const poll = timers.find((t) => t.ms === 5000);
+        assert.ok(poll, 'a poll is scheduled');
+        poll.fn();
+        await flush();
+        assert.equal(polls, 2);
+        const abort = timers.filter((t) => t.ms === 15000).pop();
+        assert.ok(abort, 'the poll has a timeout');
+        abort.fn();
+        await flush();
+        assert.ok(signals[1].aborted, 'the stalled request was aborted');
+        const next = timers.filter((t) => t.ms === 5000);
+        assert.equal(next.length, 2, 'the next poll is scheduled');
+        next[1].fn();
+        await flush();
+        assert.equal(polls, 3, 'and made');
+    } finally {
         Object.assign(globalThis, saved);
     }
 });

@@ -17,6 +17,7 @@ if (typeof module !== 'undefined' && module.exports) {
 const PZ_TRACKER_ENDPOINT = './trackers.json';
 const PZ_HERE_SINCE_ENDPOINT = './trackers/here_since';
 const PZ_HERE_SINCE_TIMEOUT_MS = 10000;
+const PZ_TRACKER_TIMEOUT_MS = 15000;
 const PZ_UNKNOWN_RETRY_MS = 60000;
 
 /* Re-measure at most this often while the user drags a vertex. The maths is
@@ -199,7 +200,7 @@ function pz_here_since_text(body, now = new Date()) {
             no_history: 'no history',
             no_coordinates: 'no positions recorded',
         };
-        return (body && reasons[body.reason]) || 'unknown';
+        return (body && Object.prototype.hasOwnProperty.call(reasons, body.reason) && reasons[body.reason]) || 'unknown';
     }
     const time = since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     return since.toDateString() === now.toDateString() ? time : `${since.toLocaleDateString()} ${time}`;
@@ -306,9 +307,14 @@ function pz_schedule_measure() {
     }, PZ_MEASURE_THROTTLE_MS);
 }
 
+/* Bounded like the here-since lookup: the next poll waits on this one, so a
+ * request that never settles would freeze the overlay. */
 function pz_fetch_trackers() {
-    return fetch(PZ_TRACKER_ENDPOINT, { headers: { Accept: 'application/json' } })
-        .then((r) => (r.ok ? r.json() : null));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PZ_TRACKER_TIMEOUT_MS);
+    return fetch(PZ_TRACKER_ENDPOINT, { headers: { Accept: 'application/json' }, signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .finally(() => clearTimeout(timer));
 }
 
 /* A tracker the add-on could not read this poll keeps its last position; one
