@@ -27,17 +27,17 @@ case "$STUB_MODE" in
   no-credentials)
     echo "error getting credentials - err: exit status 1, out: credentials not found in native keychain" >&2; exit 1 ;;
   same)
-    echo "{\"architecture\":\"amd64\",\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}}" ;;
+    echo "{\"Manifest\":{\"digest\":\"sha256:aaaa\"},\"Image\":{\"architecture\":\"amd64\",\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}}}" ;;
   same-index)
-    echo "{\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}}}" ;;
+    echo "{\"Manifest\":{\"digest\":\"sha256:bbbb\"},\"Image\":{\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}}}}" ;;
   other)
-    echo "{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}" ;;
+    echo "{\"Manifest\":{\"digest\":\"sha256:cccc\"},\"Image\":{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}}" ;;
   mixed)
-    echo "{\"linux/amd64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}}" ;;
+    echo "{\"Manifest\":{\"digest\":\"sha256:dddd\"},\"Image\":{\"linux/amd64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}}}" ;;
   unlabelled)
-    echo '{"config":{"Labels":{"io.hass.type":"addon"}}}' ;;
+    echo '{"Manifest":{"digest":"sha256:eeee"},"Image":{"config":{"Labels":{"io.hass.type":"addon"}}}}' ;;
   no-labels)
-    echo '{"config":{}}' ;;
+    echo '{"Manifest":{"digest":"sha256:ffff"},"Image":{"config":{}}}' ;;
   *)
     echo "stub: unknown STUB_MODE '$STUB_MODE'" >&2; exit 99 ;;
 esac
@@ -71,6 +71,17 @@ check "a 'not found' that is not the image: refuse" no-credentials 1
 got_exit=0
 DOCKER="$STUB_DIR/no-such-docker" "$TARGET" "ghcr.io/example/amd64-addon-polygonal_zones:1.2.3" "$SHA" >/dev/null 2>&1 || got_exit=$?
 if [ "$got_exit" = 1 ]; then echo "ok - docker missing: refuse"; else echo "not ok - docker missing: refuse (exit $got_exit, wanted 1)"; fails=$((fails + 1)); fi
+
+# When already published from the same revision, GITHUB_OUTPUT receives existing_digest.
+out_file="$STUB_DIR/gh_out"
+DOCKER="$STUB_DIR/docker" STUB_MODE=same STUB_SHA="$SHA" STUB_OTHER="$OTHER" GITHUB_OUTPUT="$out_file" \
+  "$TARGET" "ghcr.io/example/amd64-addon-polygonal_zones:1.2.3" "$SHA" >/dev/null 2>&1
+if grep -qxF "existing_digest=sha256:aaaa" "$out_file"; then
+  echo "ok - same revision writes existing_digest to GITHUB_OUTPUT"
+else
+  echo "not ok - expected existing_digest=sha256:aaaa in GITHUB_OUTPUT"
+  fails=$((fails + 1))
+fi
 
 if [ "$fails" -gt 0 ]; then
   echo "FAILED: $fails check(s)" >&2
