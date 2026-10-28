@@ -356,8 +356,8 @@ async def open_editor(context, origin, ingress, errors, expect_secure):
     await page.locator(".save-btn").click()
     try:
         await page.wait_for_function(
-            "() => (document.getElementById('save-status')?.textContent || '')"
-            ".startsWith('Zones saved.')",
+            "() => /^(?:Zones saved\\.|Warning: zones saved,)/.test("
+            "document.getElementById('save-status')?.textContent || '')",
             timeout=30000,
         )
     except PlaywrightTimeout:

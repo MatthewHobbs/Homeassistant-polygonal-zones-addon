@@ -299,6 +299,7 @@ def test_loggable_options_shape():
 
 
 def test_first_boot_seeds_the_zones_file_atomically(boot, tmp_zones_file, monkeypatch):
+    import const
     import helpers
 
     real_write = helpers.atomic_write_json
@@ -308,8 +309,34 @@ def test_first_boot_seeds_the_zones_file_atomically(boot, tmp_zones_file, monkey
     )
     tmp_zones_file.unlink()
     boot({})
-    assert seen == [str(tmp_zones_file)]
+    assert seen == [str(tmp_zones_file), const.SAVE_TOKEN_FILE]
     assert json.loads(tmp_zones_file.read_text()) == {"type": "FeatureCollection", "features": []}
+
+
+def test_boot_announces_the_exact_token_that_gates_requests(boot, monkeypatch):
+    import core_link
+
+    announced = []
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "sv-token")
+    monkeypatch.setattr(core_link, "_announced_host", lambda _tok: "172.30.32.9")
+    monkeypatch.setattr(
+        core_link, "_post", lambda _url, payload, _tok: announced.append(payload) or 200
+    )
+
+    served = boot({})
+    assert len(announced) == 1
+    token = announced[0]["config"]["token"]
+    assert len(token) >= 32
+    client = TestClient(served, client=HOST_IN_PROXY_RANGE)
+    assert client.get("/zones.json").status_code == 403
+    assert client.get("/zones.json", headers={"X-Save-Token": token}).status_code == 200
+
+    # A second boot with no configured token re-announces the persisted token.
+    served_again = boot({})
+    assert len(announced) == 2
+    assert announced[1]["config"]["token"] == token
+    client_again = TestClient(served_again, client=HOST_IN_PROXY_RANGE)
+    assert client_again.get("/zones.json", headers={"X-Save-Token": token}).status_code == 200
 
 
 # --- Startup log for the retired allow_all_ips --------------------------------

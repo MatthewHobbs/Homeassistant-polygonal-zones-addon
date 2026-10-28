@@ -5,6 +5,7 @@ permission (every add-on may post to ``/discovery``), and the reload goes
 through the Core API proxy granted by ``homeassistant_api``.
 """
 
+import http.client
 import json
 import logging
 import os
@@ -22,6 +23,9 @@ TIMEOUT_SECONDS = 5.0
 # Supervisor must not make the editor feel hung.
 NOTIFY_TIMEOUT_SECONDS = 2.0
 PORT = 8000
+# URLError and TimeoutError are OSErrors; HTTPException (LineTooLong, BadStatusLine)
+# is not, and neither caller may let one escape.
+_TRANSPORT_ERRORS = (OSError, ValueError, http.client.HTTPException)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -31,11 +35,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(newurl, code, "redirect refused", headers, fp)
 
 
+def build_opener() -> urllib.request.OpenerDirector:
+    """The only opener that may carry the Supervisor token: no proxy, no redirect."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
 def _get_json(url: str, token: str) -> dict:
     request = urllib.request.Request(
         url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    opener = build_opener()
     with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -50,11 +59,18 @@ def _announced_host(token: str) -> str:
     (i.e. it was reaching the app).
     """
     try:
-        info = _get_json(SELF_INFO_URL, token).get("data") or {}
-    except (urllib.error.URLError, OSError, ValueError):
+        reply = _get_json(SELF_INFO_URL, token)
+    except _TRANSPORT_ERRORS:
         _LOGGER.warning("Could not read this app's address from the Supervisor", exc_info=True)
         return socket.gethostname()
-    return info.get("ip_address") or info.get("hostname") or socket.gethostname()
+    info = reply.get("data") if isinstance(reply, dict) else None
+    if not isinstance(info, dict):
+        info = {}
+    for key in ("ip_address", "hostname"):
+        value = info.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return socket.gethostname()
 
 
 def _post(url: str, payload: dict, token: str, timeout: float = TIMEOUT_SECONDS) -> int:
@@ -64,7 +80,7 @@ def _post(url: str, payload: dict, token: str, timeout: float = TIMEOUT_SECONDS)
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    opener = build_opener()
     with opener.open(request, timeout=timeout) as response:
         return response.status
 
@@ -79,16 +95,16 @@ def announce(save_token: str) -> None:
     if not token:
         _LOGGER.warning("No SUPERVISOR_TOKEN: cannot announce zones to Home Assistant")
         return
-    config = {
-        "host": _announced_host(token),
-        "port": PORT,
-        "path": "/zones.json",
-        "token": save_token,
-    }
     try:
+        config = {
+            "host": _announced_host(token),
+            "port": PORT,
+            "path": "/zones.json",
+            "token": save_token,
+        }
         _post(DISCOVERY_URL, {"service": "polygonal_zones", "config": config}, token)
         _LOGGER.info("Announced zones to Home Assistant")
-    except (urllib.error.URLError, OSError, ValueError):
+    except Exception:
         _LOGGER.warning("Could not announce zones to Home Assistant", exc_info=True)
 
 
@@ -96,7 +112,8 @@ def notify_saved() -> tuple[str, str]:
     """Ask Home Assistant to re-read the zones after a save.
 
     Returns ``(state, note)`` for the editor's status line: ``ok``, ``older``
-    (the integration predates the reload service), ``refused`` or
+    (the integration predates the reload service or has not loaded yet),
+    ``refused``, ``pending`` (request sent, no answer in time) or
     ``unreachable``. Fixed text only — nothing from the response is echoed.
     """
     token = _supervisor_token()
@@ -107,16 +124,26 @@ def notify_saved() -> tuple[str, str]:
         return "ok", ""
     except urllib.error.HTTPError as err:
         # Home Assistant answers 400 for a service it does not know
-        # (`APIDomainServicesView.post`), which is what an integration older
-        # than 1.16.0 looks like. 404 is the same case on any other route.
+        # (`APIDomainServicesView.post`), which happens when no entry has
+        # loaded yet or the integration is older than 1.16.0. 404 is the same
+        # case on any other route.
         if err.code in (400, 404):
             return (
                 "older",
-                "Home Assistant needs integration 1.16.0 or later to load saves automatically",
+                "Home Assistant has not finished setting up the integration, or it is older "
+                "than 1.16.0; saves are not loaded automatically yet",
             )
         if err.code == 429:
             return "refused", "Home Assistant is busy; it will pick up the next save"
         return "refused", "Home Assistant refused the reload"
-    except (urllib.error.URLError, OSError) as err:
+    except urllib.error.URLError as err:
+        _LOGGER.warning("Zone reload request failed: %s", err)
+        return "unreachable", "could not reach Home Assistant"
+    except TimeoutError:
+        # In urllib.request, a connect/send timeout is wrapped in URLError
+        # above; a bare TimeoutError means the request was sent and reading
+        # the response timed out while Home Assistant runs the reload shielded.
+        return "pending", "Home Assistant has not answered yet; the reload may still be running"
+    except _TRANSPORT_ERRORS as err:
         _LOGGER.warning("Zone reload request failed: %s", err)
         return "unreachable", "could not reach Home Assistant"

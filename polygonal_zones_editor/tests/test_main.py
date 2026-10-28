@@ -1683,9 +1683,7 @@ def test_trackers_json_warns_once_about_an_unreadable_entity(app_factory, monkey
     monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
     # A 404: the entity does not exist, or the app may not read it. At DEBUG
     # this was invisible and looked like a tracker with no fix.
-    monkeypatch.setattr(
-        main.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("404"))
-    )
+    monkeypatch.setattr(main, "_urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("404")))
     client = _ingress(app_factory({"overlay_entities": ["device_tracker.gone"]}))
 
     with caplog.at_level(logging.WARNING):
@@ -1812,11 +1810,15 @@ def test_trackers_json_drops_entities_that_report_no_position(app_factory, monke
     assert body["unavailable"] == []
 
 
-def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monkeypatch):
+def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monkeypatch, caplog):
     """A stalled entity costs one timeout for the whole poll, not one per entity,
-    and is reported unavailable rather than making the fast ones wait."""
+    and is reported unavailable rather than making the fast ones wait or logging
+    a false 'check the id in overlay_entities' warning."""
+    import logging
+
     import main
 
+    monkeypatch.setattr(main, "_overlay_unreadable", set())
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
     monkeypatch.setattr(main, "OVERLAY_TIMEOUT_SECONDS", 0.2)
     release = threading.Event()
@@ -1839,12 +1841,14 @@ def test_trackers_json_holds_the_whole_overlay_to_one_deadline(app_factory, monk
         )
     )
     try:
-        body = client.get("/trackers.json").json()
+        with caplog.at_level(logging.WARNING):
+            body = client.get("/trackers.json").json()
         assert not stalled_returned.is_set(), "the response waited for the stalled fetch"
     finally:
         release.set()
     assert [t["entity_id"] for t in body["trackers"]] == ["device_tracker.ok"]
     assert body["unavailable"] == ["device_tracker.stalled"]
+    assert not [r for r in caplog.records if "device_tracker.stalled" in r.getMessage()]
 
 
 def test_trackers_json_fetches_entities_concurrently(app_factory, monkeypatch):
@@ -1907,7 +1911,7 @@ def test_fetch_state_returns_none_on_transport_error(monkeypatch):
     def boom(*_a, **_k):
         raise urllib.error.URLError("no route to host")
 
-    monkeypatch.setattr(main.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(main, "_urlopen", boom)
     assert main._fetch_state("device_tracker.a", "tok") is None
 
 
@@ -1932,7 +1936,7 @@ def test_fetch_state_parses_a_good_response(monkeypatch):
         captured["timeout"] = timeout
         return _Resp()
 
-    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(main, "_urlopen", fake_urlopen)
     assert main._fetch_state("device_tracker.a", "tok") == {"state": "home", "attributes": {}}
     assert captured["url"] == f"{main.SUPERVISOR_API}/states/device_tracker.a"
     assert captured["auth"] == "Bearer tok"
@@ -1972,7 +1976,7 @@ def _fake_urlopen(req, timeout=None):
 def test_fetch_state_returns_none_on_each_failure(monkeypatch, name):
     import main
 
-    monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(main, "_urlopen", _fake_urlopen)
     assert main._fetch_state(f"device_tracker.{name}", "tok") is None
 
 
@@ -1980,7 +1984,7 @@ def test_trackers_json_survives_every_fetch_failure(app_factory, monkeypatch):
     import main
 
     monkeypatch.setenv("SUPERVISOR_TOKEN", "stub-token")
-    monkeypatch.setattr(main.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(main, "_urlopen", _fake_urlopen)
     failing = [f"device_tracker.{name}" for name in _FETCH_FAILURES]
     client = _ingress(app_factory({"overlay_entities": [*failing, "device_tracker.ok"]}))
     r = client.get("/trackers.json")
@@ -2068,13 +2072,23 @@ def test_here_since_threshold_grows_with_the_anchor_accuracy():
     assert main._here_since(reply, WS) == (_ts(reply, 1), False)
 
 
+def test_here_since_caps_the_accuracy_radius_on_a_coarse_fix():
+    """A 5 km cell-tower accuracy must not count a ~1.1 km move as stationary."""
+    import main
+
+    # 0.01° latitude is ~1.11 km, well past 2 * _STILL_MAX_ACCURACY_METRES (400 m).
+    town_away = (51.51, -0.12)
+    reply = _hist((*town_away, 5000), (*HERE, 5000), start=WS)
+    assert main._here_since(reply, WS) == (_ts(reply, 1), False)
+
+
 def test_a_reply_over_the_size_cap_is_refused(monkeypatch):
     import main
 
     monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 10)
     monkeypatch.setenv("SUPERVISOR_TOKEN", "t")
     # A long number: its truncated prefix still parses, so only the cap refuses it.
-    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **k: _Body(b"1" * 20))
+    monkeypatch.setattr(main, "_urlopen", lambda *a, **k: _Body(b"1" * 20))
     assert main._get_json("states/x", "t") is None
     monkeypatch.setattr(main, "MAX_HA_REPLY_BYTES", 100)
     assert main._get_json("states/x", "t") == int("1" * 20)
@@ -2181,7 +2195,7 @@ def _history_client(app_factory, monkeypatch, outcome, options=None):
             raise outcome
         return _Body(outcome if isinstance(outcome, bytes) else json.dumps(outcome).encode())
 
-    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(main, "_urlopen", fake_urlopen)
     if options is None:
         options = {"overlay_entities": ["device_tracker.car"]}
     app = app_factory(options)
@@ -2246,10 +2260,10 @@ def test_here_since_answers_unknown_at_once_when_lookups_are_backed_up(app_facto
     max_ = main._HISTORY_MAX_PENDING
     ingress, calls = _history_client(app_factory, monkeypatch, _hist((*HERE, 10)))
     seen = []
-    fake = main.urllib.request.urlopen
+    fake = main._urlopen
     monkeypatch.setattr(
-        main.urllib.request,
-        "urlopen",
+        main,
+        "_urlopen",
         lambda *a, **k: (seen.append(main._history_pending), fake(*a, **k))[1],
     )
     lan = TestClient(
@@ -2300,7 +2314,7 @@ def test_here_since_without_the_token_is_refused_before_any_fetch(
     import main
 
     calls = []
-    monkeypatch.setattr(main.urllib.request, "urlopen", lambda *a, **_k: calls.append(a))
+    monkeypatch.setattr(main, "_urlopen", lambda *a, **_k: calls.append(a))
     client = TestClient(
         app_factory({"save_token": "sekrit", "overlay_entities": ["device_tracker.car"]})
     )
@@ -2639,3 +2653,66 @@ def test_here_since_reason_names_which_unknown(reply, since, over_window, reason
     import main
 
     assert main._here_since_reason(reply, since, over_window) == reason
+
+
+class _Recorder:
+    """A local HTTP server that records every request path and answers with `reply`."""
+
+    def __init__(self, reply):
+        import http.server
+        import threading
+
+        seen = self.seen = []
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                reply(self)
+
+            def log_message(self, *_a):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_overlay_fetch_does_not_follow_a_redirect_with_the_token(monkeypatch):
+    import main
+
+    target = _Recorder(lambda h: (h.send_response(200), h.end_headers(), h.wfile.write(b"{}")))
+    source = _Recorder(
+        lambda h: (
+            h.send_response(302),
+            h.send_header("Location", f"{target.url}/stolen"),
+            h.end_headers(),
+        )
+    )
+    try:
+        monkeypatch.setattr(main, "SUPERVISOR_API", source.url)
+        assert main._get_json("states/x", "secret") is None
+        assert [p for p, _ in source.seen] == ["/states/x"]
+        assert target.seen == []
+    finally:
+        source.close()
+        target.close()
+
+
+def test_overlay_fetch_ignores_proxy_environment(monkeypatch):
+    import main
+
+    proxy = _Recorder(lambda h: (h.send_response(200), h.end_headers(), h.wfile.write(b"{}")))
+    try:
+        for var in ("HTTP_PROXY", "http_proxy"):
+            monkeypatch.setenv(var, proxy.url)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.setattr(main, "SUPERVISOR_API", "http://supervisor.invalid/core/api")
+        assert main._get_json("states/x", "secret") is None
+        assert proxy.seen == []
+    finally:
+        proxy.close()

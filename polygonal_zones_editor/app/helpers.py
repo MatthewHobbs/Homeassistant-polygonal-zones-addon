@@ -8,7 +8,7 @@ import tempfile
 
 from starlette.requests import Request
 
-from const import ALLOWED_IPS, OPTIONS_FILE, TRANSPORT_PEER_SCOPE_KEY
+from const import ALLOWED_IPS, OPTIONS_FILE, SAVE_TOKEN_FILE, TRANSPORT_PEER_SCOPE_KEY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,10 +106,33 @@ def save_token(options: dict) -> str:
     """The token that gates non-ingress requests.
 
     A configured ``save_token`` wins, so the manual zone-URL flow keeps
-    working. Otherwise one is generated per start and only handed to Home
-    Assistant through the discovery message, so nothing is stored or typed.
+    working. Otherwise one is generated once, kept under ``/data`` across
+    restarts so a pending discovery card or a missed announce never goes
+    stale, and handed to Home Assistant through the discovery message.
     """
-    return (options.get("save_token") or "").strip() or secrets.token_urlsafe(32)
+    configured = (options.get("save_token") or "").strip()
+    if configured:
+        return configured
+    try:
+        with open(SAVE_TOKEN_FILE, encoding="utf-8") as f:
+            persisted = json.load(f)
+        if isinstance(persisted, str) and (persisted := persisted.strip()):
+            return persisted
+    except FileNotFoundError:
+        pass
+    except (ValueError, RecursionError):
+        pass
+    except OSError:
+        _LOGGER.warning("Could not read %s; using an ephemeral save token.", SAVE_TOKEN_FILE)
+        return secrets.token_urlsafe(32)
+    token = secrets.token_urlsafe(32)
+    directory = os.path.dirname(SAVE_TOKEN_FILE) or "."
+    try:
+        os.makedirs(directory, exist_ok=True)
+        atomic_write_json(SAVE_TOKEN_FILE, token)
+    except OSError:
+        _LOGGER.warning("Could not persist save token to %s.", SAVE_TOKEN_FILE)
+    return token
 
 
 def load_options() -> dict:
