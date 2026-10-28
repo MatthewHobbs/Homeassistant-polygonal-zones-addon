@@ -90,6 +90,15 @@
       "autoReplaceStringTemplate": "image={{{depName}}}:{{{newValue}}}@{{{newDigest}}} # {{{newValue}}}",
       "datasourceTemplate": "docker",
     },
+    {
+      "customType": "regex",
+      "description": "Track the digest-pinned Trivy image release.yml scans with",
+      "managerFilePatterns": ["/^\\.github/workflows/release\\.yml$/"],
+      "matchStrings": [
+        "(?<depName>aquasec/trivy):(?<currentValue>[\\d.]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+      ],
+      "datasourceTemplate": "docker",
+    },
   ],
   "packageRules": [
     {

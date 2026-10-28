@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # check-published-revision.sh <image:tag> <git-sha>
 #
-# Run by release.yml's publish job before it pushes. A version tag on GHCR
+# Run by release.yml's publish job before it builds. A version tag on GHCR
 # must only ever hold one build of one commit:
-#   - <image:tag> not published yet               -> exit 0, push it
-#   - published, revision label == <git-sha>      -> exit 0, a re-run of a
-#     partial publish may re-push the same commit
+#   - <image:tag> not published yet               -> exit 0, build and tag it
+#   - published, revision label == <git-sha>      -> exit 0, and if GITHUB_OUTPUT
+#     is set, emit existing_digest=<sha256:...> so a re-run reuses that build
 #   - published from another commit, or unlabelled -> exit 1, refuse
 # Any registry error other than "not found" also refuses: a transient error
 # must not be read as "nothing there yet" and turn into an overwrite.
@@ -25,7 +25,7 @@ label="org.opencontainers.image.revision"
 err_file="$(mktemp)"
 trap 'rm -f "$err_file"' EXIT
 
-if ! inspected="$("$docker_bin" buildx imagetools inspect "$image" --format '{{json .Image}}' 2>"$err_file")"; then
+if ! inspected="$("$docker_bin" buildx imagetools inspect "$image" --format '{{json .}}' 2>"$err_file")"; then
   # Only buildx's own "<image>: not found" line means unpublished; any other
   # "not found" (a missing docker binary, missing credentials) must refuse.
   if grep -qxF "ERROR: $image: not found" "$err_file"; then
@@ -36,10 +36,10 @@ if ! inspected="$("$docker_bin" buildx imagetools inspect "$image" --format '{{j
   exit 1
 fi
 
-# .Image is one image config, or a platform-keyed map of them for an index;
-# collect the label from every config either way.
+# .Image is one image config (or a platform-keyed map for an index); older
+# stubs may return the Image object at the top level.
 revisions="$(jq -r --arg l "$label" \
-  '[.. | objects | select(has("Labels")) | (.Labels // {})[$l] // ""] | unique | .[]' \
+  '(.Image // .) | [.. | objects | select(has("Labels")) | (.Labels // {})[$l] // ""] | unique | .[]' \
   <<<"$inspected")"
 
 if [ -z "$revisions" ] || grep -qx '' <<<"$revisions"; then
@@ -50,4 +50,8 @@ if [ "$revisions" != "$revision" ]; then
   echo "::error::$image is already published from commit(s) $(tr '\n' ' ' <<<"$revisions")but this run is $revision. Refusing to overwrite it; release a new patch version instead."
   exit 1
 fi
-echo "OK $image is already published from $revision; re-pushing the same commit"
+existing_digest="$(jq -r '.Manifest.digest // empty' <<<"$inspected")"
+if [ -n "${GITHUB_OUTPUT:-}" ] && [ -n "$existing_digest" ]; then
+  echo "existing_digest=$existing_digest" >> "$GITHUB_OUTPUT"
+fi
+echo "OK $image is already published from $revision; reusing existing tag"

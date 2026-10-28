@@ -178,15 +178,17 @@ jobs:
           echo "repo=ghcr.io/$owner/$ARCH-addon-polygonal_zones" >> "$GITHUB_OUTPUT"
 
       - name: Refuse to overwrite a different build of this version
-        # A re-run of a partial publish re-pushes the same commit and passes;
-        # anything else already under this tag stops the leg before the push.
+        id: existing
+        # A re-run of a partial publish reuses the already-tagged digest for
+        # this commit; anything else under this tag stops the leg before build.
         env:
           IMAGE: ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
           REVISION: ${{ github.sha }}
         run: scripts/check-published-revision.sh "$IMAGE" "$REVISION"
 
-      - name: Build and push polygonal_zones image
+      - name: Build and push polygonal_zones image by digest
         id: build
+        if: steps.existing.outputs.existing_digest == ''
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ./polygonal_zones_editor
@@ -196,12 +198,9 @@ jobs:
           # Read back by check-published-revision.sh on any later run.
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
-          push: true
-          # The version tag only: Supervisor resolves the image from
-          # config.yaml's `version:`, and a :latest would point at mixed
-          # versions across arches after a mid-matrix failure.
-          tags: |
-            ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
+          # No tag yet: Supervisor pulls by tag, so an untagged digest is
+          # unreachable until the scan and attestation below have passed.
+          outputs: type=image,name=${{ steps.image.outputs.repo }},push-by-digest=true,name-canonical=true,push=true
           # Built from scratch: the gate jobs write the shared build cache and
           # run unverified downloads, so publish must not read it.
           no-cache: true
@@ -213,7 +212,7 @@ jobs:
         # a per-arch image is a one-child index. --ignore-unfixed: fail only
         # where a fix exists.
         env:
-          IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.existing.outputs.existing_digest || steps.build.outputs.digest }}
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -242,8 +241,30 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.image.outputs.repo }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.existing.outputs.existing_digest || steps.build.outputs.digest }}
           push-to-registry: true
+
+      - name: Tag the scanned, attested digest with the version
+        # The version tag only: Supervisor resolves the image from config.yaml's
+        # `version:`, and a :latest would mix versions across arches after a
+        # mid-matrix failure. --prefer-index=false copies the digest rather than
+        # wrapping it, so the tag names exactly what was attested.
+        env:
+          REPO: ${{ steps.image.outputs.repo }}
+          TAG: ${{ steps.image.outputs.repo }}:${{ needs.version.outputs.version }}
+          DIGEST: ${{ steps.existing.outputs.existing_digest || steps.build.outputs.digest }}
+          EXISTING: ${{ steps.existing.outputs.existing_digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "$EXISTING" ]; then
+            docker buildx imagetools create --prefer-index=false -t "$TAG" "$REPO@$DIGEST"
+          fi
+          tagged=$(docker buildx imagetools inspect "$TAG" --format '{{json .Manifest}}' | jq -r .digest)
+          if [ "$tagged" != "$DIGEST" ]; then
+            echo "::error::$TAG resolves to $tagged, not the attested $DIGEST"
+            exit 1
+          fi
+          echo "OK $TAG is $DIGEST"
 
   release:
     name: Create GitHub Release
@@ -297,4 +318,4 @@ jobs:
           # the ref name rather than failing the notify step too.
           TAG="v${VERSION:-${GITHUB_REF#refs/tags/v}}"
           gh issue create --title "Release $TAG failed" --label bug \
-            --body "The release workflow failed for $TAG. See the run: ${RUN_URL}. Check which jobs failed; a partial publish may have pushed some arches but not others. Recover by re-running the failed jobs after fixing the cause."
+            --body "The release workflow failed for $TAG. See the run: ${RUN_URL}. Check which jobs and steps failed. If a publish leg failed at its vulnerability scan, nothing was tagged for that arch: fix the cause on main and release a new patch version, since a re-run of the leg rebuilds the same commit. If a leg failed on a transient registry or OIDC error, or another arch's leg did not run, re-run the failed jobs (already-tagged arches reuse their existing digest)."
