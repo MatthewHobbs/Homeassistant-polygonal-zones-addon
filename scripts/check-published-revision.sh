@@ -36,10 +36,9 @@ if ! inspected="$("$docker_bin" buildx imagetools inspect "$image" --format '{{j
   exit 1
 fi
 
-# .Image is one image config (or a platform-keyed map for an index); older
-# stubs may return the Image object at the top level.
+# .Image is one image config (or a platform-keyed map for an index).
 revisions="$(jq -r --arg l "$label" \
-  '(.Image // .) | [.. | objects | select(has("Labels")) | (.Labels // {})[$l] // ""] | unique | .[]' \
+  '.Image | [.. | objects | select(has("Labels")) | (.Labels // {})[$l] // ""] | unique | .[]' \
   <<<"$inspected")"
 
 if [ -z "$revisions" ] || grep -qx '' <<<"$revisions"; then

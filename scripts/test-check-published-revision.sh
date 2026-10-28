@@ -31,13 +31,13 @@ case "$STUB_MODE" in
   same-index)
     echo "{\"Manifest\":{\"digest\":\"sha256:bbbb\"},\"Image\":{\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}}}}" ;;
   other)
-    echo "{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}" ;;
+    echo "{\"Manifest\":{\"digest\":\"sha256:cccc\"},\"Image\":{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}}" ;;
   mixed)
-    echo "{\"linux/amd64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}}" ;;
+    echo "{\"Manifest\":{\"digest\":\"sha256:dddd\"},\"Image\":{\"linux/amd64\":{\"config\":{\"Labels\":{$label:\"$STUB_SHA\"}}},\"linux/arm64\":{\"config\":{\"Labels\":{$label:\"$STUB_OTHER\"}}}}}" ;;
   unlabelled)
-    echo '{"config":{"Labels":{"io.hass.type":"addon"}}}' ;;
+    echo '{"Manifest":{"digest":"sha256:eeee"},"Image":{"config":{"Labels":{"io.hass.type":"addon"}}}}' ;;
   no-labels)
-    echo '{"config":{}}' ;;
+    echo '{"Manifest":{"digest":"sha256:ffff"},"Image":{"config":{}}}' ;;
   *)
     echo "stub: unknown STUB_MODE '$STUB_MODE'" >&2; exit 99 ;;
 esac
