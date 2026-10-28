@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.5 — 2026-10-28
+
+Setup keeps working across restarts, and saving tells you when Home Assistant has not caught up.
+
+- The app's password is kept across restarts, so a **Discovered** card, or an announcement
+  Home Assistant missed, no longer goes stale. Set `save_token` yourself to choose your own.
+- After a save, the status line warns when Home Assistant has not yet re-read your zones,
+  instead of saying only that the save worked.
+- A device on the map no longer freezes the live overlay when Home Assistant is slow to
+  answer, and a coarse position no longer stretches the "here since" radius across a town.
+- The documentation's setup steps match what the **Discovered** card now does: it connects
+  first, and you pick the devices to watch afterwards with **Reconfigure**.
+
+Needs the Polygonal Zones integration with the matching update for the card to pick up the
+new password on its own.
+
 ## 0.7.4 — 2026-10-25
 
 Says why a device is missing from the map.

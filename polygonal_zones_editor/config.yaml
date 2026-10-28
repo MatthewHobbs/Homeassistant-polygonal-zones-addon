@@ -1,6 +1,6 @@
 name: "Polygonal Zones"
 description: "Helper app for the polygonal zones integration."
-version: "0.7.4"
+version: "0.7.5"
 # Auto-update stops here. 0.5.8 closed LAN access without save_token; 0.7.0
 # removes the push_to_core option and the /push_status endpoint, and refuses a
 # zone with no name, so every install below it needs a manual update.
