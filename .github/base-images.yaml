@@ -3,5 +3,5 @@
 # that file. Renovate keeps the digests fresh (.github/renovate.json5); the refresh
 # recipe is in the comment on build.yml's matrix step.
 build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.24@sha256:aacbf5d8c17fe5682b0d0bc5a523cd14cbd5481bd9124eb312d8aa2e9d796840
-  amd64:   ghcr.io/home-assistant/amd64-base:3.24@sha256:20d9028d56eaa3dd3013f6e0a7957b4911e4c71e14f85d1f609bba4fe429e84a
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.24@sha256:4925dc4a4e3c23a3a27e6936929ad33afb4d255027944a6054edff7e179f47b7
+  amd64:   ghcr.io/home-assistant/amd64-base:3.24@sha256:f6b6afddb05fc459d4ebf3b99887035571bd90a0ca96237f9d90c8d25a3951e2
