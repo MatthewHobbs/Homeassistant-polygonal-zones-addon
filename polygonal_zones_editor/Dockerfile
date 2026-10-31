@@ -9,7 +9,7 @@ ARG BUILD_FROM
 # Verified: trivy reports none on the result. Tracking upstream fix:
 # https://github.com/home-assistant/tempio/issues/132
 # Remove this stage (and the COPY below) once a patched tempio ships in the base image.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS tempio
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS tempio
 # Pinned to an immutable commit for reproducible builds. The SHA is an upstream *release*
 # rather than an arbitrary main commit, so Renovate can follow it: the version comment and the
 # SHA below are captured together by a custom manager and rewritten as a pair, which keeps the
