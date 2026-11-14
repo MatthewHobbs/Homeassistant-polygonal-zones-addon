@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.6 — 2026-11-14
+
+Routine update of what the add-on is built on. Nothing changes in how it works.
+
+- Updated the Home Assistant base images and the Python packages the editor runs on
+  (Starlette, AnyIO and Click).
+
 ## 0.7.5 — 2026-10-28
 
 Setup keeps working across restarts, and saving tells you when Home Assistant has not caught up.
