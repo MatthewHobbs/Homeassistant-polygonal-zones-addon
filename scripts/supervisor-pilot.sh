@@ -119,14 +119,16 @@ poll() {
 # already up (run 36235596621). The sleeps total 75s, so a real outage
 # still fails well inside the job timeout.
 pull_image() {
-  local image="$1" attempt delay=5
+  local image="$1" attempt delay=5 run=(docker)
+  # "inner": pull on the devcontainer's daemon.
+  [[ "${2:-}" == inner ]] && run=(docker exec "$NAME" docker)
   # The references are digest-pinned, so a local hit is the exact image and
   # needs no registry: a run on a warm daemon survives an outage.
-  if docker image inspect "$image" >/dev/null 2>&1; then
+  if "${run[@]}" image inspect "$image" >/dev/null 2>&1; then
     return
   fi
   for attempt in 1 2 3 4 5; do
-    if docker pull --quiet "$image" >/dev/null; then
+    if "${run[@]}" pull --quiet "$image" >/dev/null; then
       return
     fi
     ((attempt < 5)) || fail "could not pull $image after $attempt attempts"
@@ -184,9 +186,7 @@ cmd_build() {
     --load \
     "$REPO_ROOT/$ADDON_DIR"
 
-  pull_image "$REGISTRY_IMAGE"
-  docker tag "$REGISTRY_IMAGE" "$REGISTRY_TAG"
-  docker save "$tag" "$REGISTRY_TAG" -o "$WORKDIR/images.tar"
+  docker save "$tag" -o "$WORKDIR/images.tar"
   {
     echo "PILOT_TAG=$tag"
     echo "PILOT_PROVENANCE=$provenance"
@@ -343,6 +343,13 @@ cmd_sideload() {
   docker cp "$WORKDIR/images.tar" "$NAME:/var/tmp/images.tar"
   dc docker load -i /var/tmp/images.tar
   dc rm -f /var/tmp/images.tar
+  # The containerd store's save can omit layer blobs and load still succeeds;
+  # such an image has no platform and `docker run` cannot find it.
+  [[ -n "$(dc docker image inspect "$PILOT_TAG" --format '{{.Architecture}}')" ]] ||
+    fail "loaded $PILOT_TAG has no layers for this platform (incomplete save)"
+  # Pulled here, not saved on the host: a multi-image save dropped its blobs.
+  pull_image "$REGISTRY_IMAGE" inner
+  dc docker tag "$REGISTRY_IMAGE" "$REGISTRY_TAG"
   # After supervisor_run, which removes every container on the inner daemon.
   if ! dc docker inspect pz-pilot-registry >/dev/null 2>&1; then
     dc docker run -d --restart=always --name pz-pilot-registry \
@@ -559,7 +566,6 @@ cmd_diagnostics() {
 cmd_down() {
   docker rm -f -v "$NAME" >/dev/null 2>&1 || true
   docker volume rm "${NAME}-docker" "${NAME}-containerd" "${NAME}-mnt" >/dev/null 2>&1 || true
-  docker image rm "$REGISTRY_TAG" >/dev/null 2>&1 || true
   log "Removed $NAME and its volumes"
 }
 
