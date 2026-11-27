@@ -8,6 +8,11 @@
  * them without duplicating values.
  */
 
+/* Filter only the dark basemap tiles, never zones, markers or controls. */
+.pz-dark-tiles {
+    filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+}
+
 :root {
     --sidebar-color: #ffffff;
     --save-button-color: #000000;

@@ -228,7 +228,7 @@ _CSP = (
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' https://*.tile.openstreetmap.org "
-    "https://*.basemaps.cartocdn.com https://server.arcgisonline.com "
+    "https://server.arcgisonline.com "
     "data: blob:; "
     "connect-src 'self'; "
     "object-src 'none'; "

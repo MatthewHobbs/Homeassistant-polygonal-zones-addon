@@ -101,7 +101,7 @@ Only list a device whose owner is comfortable having it on this map. A household
 
 - **Where your zones live.** Inside Home Assistant, on the same device, kept with the app's own data. They are in every Home Assistant backup that includes this app.
 - **Deleting a zone does not delete it from old backups.** If you are removing zones for privacy, remove the old backups too: **Settings → System → Backups**.
-- **The map background** comes from OpenStreetMap, CARTO or Esri, whichever you pick. Those providers see which part of the map you are looking at, and your Home Assistant address as the page you came from.
+- **The map background** comes from OpenStreetMap or Esri, whichever you pick. Dark mode uses darkened OpenStreetMap tiles. Those providers see which part of the map you are looking at, and your Home Assistant address as the page you came from.
 - **Your browser remembers the last map view** for each device you use, so it opens where you left it. Clearing your browser's data for Home Assistant forgets it.
 - **The app's log** records the address of anything the app refuses, and names a listed device it cannot read or that reports no position. Any Home Assistant user who can open the app's log can read it.
 - **The app's password.** With automatic setup you never see it: unless you set `save_token` yourself, the app makes one once, keeps it in its own data, and hands it to Home Assistant (which keeps it in its own storage and discovery records), so it is in backups of both.

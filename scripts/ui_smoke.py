@@ -161,7 +161,7 @@ async def main():
             "() => Array.from(document.querySelectorAll('#pz-basemap-select option'))"
             ".map(o => o.value)"
         )
-        expected_options = ["auto", "osm", "carto-dark", "esri-imagery"]
+        expected_options = ["auto", "osm", "osm-dark", "esri-imagery"]
         if picker_options != expected_options:
             fail(f"picker options {picker_options!r} != {expected_options!r}", errors)
 
@@ -170,6 +170,28 @@ async def main():
         )
         if picker_initial != "auto":
             fail(f"picker default value {picker_initial!r} != 'auto' on fresh load", errors)
+
+        await page.select_option("#pz-basemap-select", "osm-dark")
+        dark_layer = await page.evaluate(
+            """() => {
+                let result = null;
+                map.eachLayer(l => {
+                    if (l instanceof L.TileLayer) result = {
+                        url: l._url,
+                        filter: getComputedStyle(l.getContainer()).filter,
+                        overlayFilter: getComputedStyle(map.getPane('overlayPane')).filter,
+                    };
+                });
+                return result;
+            }"""
+        )
+        if (
+            not dark_layer
+            or "tile.openstreetmap.org" not in dark_layer["url"]
+            or "invert(1)" not in dark_layer["filter"]
+            or dark_layer["overlayFilter"] != "none"
+        ):
+            fail(f"dark basemap must filter OSM tiles only: {dark_layer!r}", errors)
 
         await page.select_option("#pz-basemap-select", "esri-imagery")
         await page.wait_for_timeout(150)

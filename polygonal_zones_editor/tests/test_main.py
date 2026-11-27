@@ -1071,7 +1071,7 @@ def test_security_headers_applied(ingress_client):
     # CodeQL's py/incomplete-url-substring-sanitization fires on any URL literal
     # in a containment check, and `==` is exact and still clears it.
     assert "https://*.tile.openstreetmap.org" in csp
-    assert "https://*.basemaps.cartocdn.com" in csp
+    assert "cartocdn.com" not in csp
     img_src_sources = next(
         d.strip().split() for d in csp.split(";") if d.strip().startswith("img-src")
     )

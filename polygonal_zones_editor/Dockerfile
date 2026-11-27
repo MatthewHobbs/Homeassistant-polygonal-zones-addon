@@ -46,7 +46,8 @@ COPY --from=tempio /tempio /usr/bin/tempio
 # The base image's apk world is fixed at its own build date, so a package patched
 # upstream since then stays vulnerable in every add-on built on it. Take Alpine's
 # current security patches here, where the release scan can see them.
-RUN apk --no-cache upgrade
+RUN apk --no-cache upgrade \
+ && apk add --no-cache 'libxml2>=2.13.9-r5'
 
 # The venv's own pip, bundled by ensurepip, does the hashed install below; an
 # unpinned `--upgrade pip` would be the one unhashed download here.
