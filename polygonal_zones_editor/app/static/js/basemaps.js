@@ -9,7 +9,7 @@
         {
             id: 'osm',
             label: 'Street map',
-            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             attribution: osmAttrib,
             options: {maxZoom: 18},
             darkAffinity: 'light',
@@ -17,7 +17,7 @@
         {
             id: 'osm-dark',
             label: 'Dark',
-            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             attribution: osmAttrib,
             options: {maxZoom: 18, className: 'pz-dark-tiles'},
             darkAffinity: 'dark',

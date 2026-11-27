@@ -217,7 +217,7 @@ class AuthoriseMiddleware(BaseHTTPMiddleware):
 
 
 # CSP for the addon's frontend. Leaflet and Geoman are vendored, so no CDN and
-# no inline script; img-src covers the three tile providers plus data:/blob:
+# no inline script; img-src covers the two tile providers plus data:/blob:
 # for markers. frame-ancestors allows HA ingress and Nabu Casa remote.
 
 # style-src keeps 'unsafe-inline': Leaflet injects tile transforms at runtime
@@ -227,7 +227,7 @@ _CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' https://*.tile.openstreetmap.org "
+    "img-src 'self' https://tile.openstreetmap.org "
     "https://server.arcgisonline.com "
     "data: blob:; "
     "connect-src 'self'; "

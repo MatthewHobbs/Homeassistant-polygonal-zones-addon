@@ -28,7 +28,8 @@ test('basemaps use key-free OSM for dark mode and filter only its layer', () => 
     window.matchMedia = () => ({ matches: false });
     assert.equal(maps.getDefaultBasemap('auto').id, 'osm');
     const dark = maps.createLayer('osm-dark');
-    assert.match(dark.url, /tile\.openstreetmap\.org/);
+    assert.equal(dark.url, 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+    assert.equal(maps.createLayer('osm').url, dark.url);
     assert.equal(dark.options.className, 'pz-dark-tiles');
     assert.equal(maps.createLayer('osm').options.className, undefined);
     assert.equal(maps.createLayer('esri-imagery').options.className, undefined);

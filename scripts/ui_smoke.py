@@ -171,6 +171,20 @@ async def main():
         if picker_initial != "auto":
             fail(f"picker default value {picker_initial!r} != 'auto' on fresh load", errors)
 
+        await page.evaluate("() => localStorage.setItem('pz:basemap', 'carto-dark')")
+        await page.reload(wait_until="networkidle")
+        if await page.locator("#pz-basemap-select").input_value() != "auto":
+            fail("retired CARTO selection did not fall back to Auto", errors)
+        fallback = await page.evaluate(
+            """() => {
+                const urls = [];
+                map.eachLayer(l => { if (l instanceof L.TileLayer) urls.push(l._url); });
+                return urls;
+            }"""
+        )
+        if fallback != ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]:
+            fail(f"retired CARTO selection did not load OSM: {fallback!r}", errors)
+
         await page.select_option("#pz-basemap-select", "osm-dark")
         dark_layer = await page.evaluate(
             """() => {

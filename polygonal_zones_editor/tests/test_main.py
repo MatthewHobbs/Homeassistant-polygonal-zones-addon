@@ -1066,11 +1066,11 @@ def test_security_headers_applied(ingress_client):
     # The map libraries are vendored; guard against a CDN dep creeping back.
     assert "unpkg.com" not in csp
     assert "object-src 'none'" in csp
-    # OSM, CARTO and Esri hosts must stay in img-src or those basemaps break
+    # OSM and Esri hosts must stay in img-src or those basemaps break
     # (#31). The Esri check compares split tokens with `==` rather than `in`:
     # CodeQL's py/incomplete-url-substring-sanitization fires on any URL literal
     # in a containment check, and `==` is exact and still clears it.
-    assert "https://*.tile.openstreetmap.org" in csp
+    assert "https://tile.openstreetmap.org" in csp
     assert "cartocdn.com" not in csp
     img_src_sources = next(
         d.strip().split() for d in csp.split(";") if d.strip().startswith("img-src")
