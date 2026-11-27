@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.7 — 2026-11-27
+
+- Dark maps work without an API key, using darkened OpenStreetMap tiles. Zone and
+  marker colours are unchanged. A saved CARTO selection falls back to Auto.
+- Updated the runtime system packages.
+
 ## 0.7.6 — 2026-11-14
 
 Routine update of what the add-on is built on. Nothing changes in how it works.
