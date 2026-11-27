@@ -11,6 +11,7 @@ directory is then on sys.path, so draw_and_save imports by name.
 """
 
 import asyncio
+import base64
 
 from draw_and_save import (
     SMOKE_TOKEN,
@@ -37,6 +38,16 @@ async def main():
         # The browser reaches the container directly, not through ingress, so
         # every request it makes, page loads included, carries the token.
         context = await browser.new_context(extra_http_headers={"X-Save-Token": SMOKE_TOKEN})
+        # Local tiles keep rendering/CSP checks independent of provider availability.
+        await context.route(
+            "https://tile.openstreetmap.org/**",
+            lambda route: route.fulfill(
+                content_type="image/png",
+                body=base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII="
+                ),
+            ),
+        )
         page = await context.new_page()
         watch_errors(page, errors)
         await page.goto(f"{BASE}/", wait_until="networkidle")
@@ -161,7 +172,7 @@ async def main():
             "() => Array.from(document.querySelectorAll('#pz-basemap-select option'))"
             ".map(o => o.value)"
         )
-        expected_options = ["auto", "osm", "carto-dark", "esri-imagery"]
+        expected_options = ["auto", "osm", "osm-dark", "esri-imagery"]
         if picker_options != expected_options:
             fail(f"picker options {picker_options!r} != {expected_options!r}", errors)
 
@@ -170,6 +181,46 @@ async def main():
         )
         if picker_initial != "auto":
             fail(f"picker default value {picker_initial!r} != 'auto' on fresh load", errors)
+
+        await page.evaluate("() => localStorage.setItem('pz:basemap', 'carto-dark')")
+        await page.reload(wait_until="networkidle")
+        if await page.locator("#pz-basemap-select").input_value() != "auto":
+            fail("retired CARTO selection did not fall back to Auto", errors)
+        fallback = await page.evaluate(
+            """() => {
+                const urls = [];
+                map.eachLayer(l => { if (l instanceof L.TileLayer) urls.push(l._url); });
+                return urls;
+            }"""
+        )
+        if fallback != ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]:
+            fail(f"retired CARTO selection did not load OSM: {fallback!r}", errors)
+        await page.wait_for_function("() => !!document.querySelector('.leaflet-tile-loaded')")
+
+        await page.select_option("#pz-basemap-select", "osm-dark")
+        await page.wait_for_function(
+            "() => !!document.querySelector('.pz-dark-tiles .leaflet-tile-loaded')"
+        )
+        dark_layer = await page.evaluate(
+            """() => {
+                let result = null;
+                map.eachLayer(l => {
+                    if (l instanceof L.TileLayer) result = {
+                        url: l._url,
+                        filter: getComputedStyle(l.getContainer()).filter,
+                        overlayFilter: getComputedStyle(map.getPane('overlayPane')).filter,
+                    };
+                });
+                return result;
+            }"""
+        )
+        if (
+            not dark_layer
+            or "tile.openstreetmap.org" not in dark_layer["url"]
+            or "invert(1)" not in dark_layer["filter"]
+            or dark_layer["overlayFilter"] != "none"
+        ):
+            fail(f"dark basemap must filter OSM tiles only: {dark_layer!r}", errors)
 
         await page.select_option("#pz-basemap-select", "esri-imagery")
         await page.wait_for_timeout(150)

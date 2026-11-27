@@ -9,17 +9,17 @@
         {
             id: 'osm',
             label: 'Street map',
-            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             attribution: osmAttrib,
             options: {maxZoom: 18},
             darkAffinity: 'light',
         },
         {
-            id: 'carto-dark',
+            id: 'osm-dark',
             label: 'Dark',
-            url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-            attribution: osmAttrib + ' &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            options: {maxZoom: 19, subdomains: 'abcd'},
+            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            attribution: osmAttrib,
+            options: {maxZoom: 18, className: 'pz-dark-tiles'},
             darkAffinity: 'dark',
         },
         {
