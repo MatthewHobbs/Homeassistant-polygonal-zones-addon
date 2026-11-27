@@ -1070,11 +1070,11 @@ def test_security_headers_applied(ingress_client):
     # (#31). The Esri check compares split tokens with `==` rather than `in`:
     # CodeQL's py/incomplete-url-substring-sanitization fires on any URL literal
     # in a containment check, and `==` is exact and still clears it.
-    assert "https://tile.openstreetmap.org" in csp
     assert "cartocdn.com" not in csp
     img_src_sources = next(
         d.strip().split() for d in csp.split(";") if d.strip().startswith("img-src")
     )
+    assert any(t == "https://tile.openstreetmap.org" for t in img_src_sources)
     assert any(t == "https://server.arcgisonline.com" for t in img_src_sources)
 
 
