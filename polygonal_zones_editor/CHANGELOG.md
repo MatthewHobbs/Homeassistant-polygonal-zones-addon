@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Refreshed the toolchain used to build the bundled template helper. No change to editing or saving zones.
+
 ## 0.7.7 — 2026-11-27
 
 - Dark maps work without an API key, using darkened OpenStreetMap tiles. Zone and
